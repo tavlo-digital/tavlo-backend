@@ -1,0 +1,1643 @@
+<!-- create modal -->
+<div
+    class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+>
+    <div
+        class="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-xl bg-white p-6"
+    >
+        <div class="mb-6 flex items-center justify-between">
+            <h2 class="text-xl font-semibold">Create New Plan</h2>
+            <button class="rounded-lg p-2 hover:bg-gray-100">
+                <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="24"
+                    height="24"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    class="lucide lucide-x h-5 w-5"
+                    aria-hidden="true"
+                >
+                    <path d="M18 6 6 18"></path>
+                    <path d="m6 6 12 12"></path>
+                </svg>
+            </button>
+        </div>
+        <div class="space-y-6">
+            <div>
+                <label class="mb-2 block text-sm font-medium">Plan Name</label
+                ><input
+                    type="text"
+                    data-slot="input"
+                    class="bg-input-background flex h-9 w-full min-w-0 rounded-md border border-input px-3 py-1 text-base transition-[color,box-shadow] outline-none selection:bg-primary selection:text-primary-foreground file:inline-flex file:h-7 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:aria-invalid:ring-destructive/40"
+                    placeholder="Premium"
+                    value=""
+                />
+            </div>
+            <div>
+                <h3
+                    class="mb-3 text-sm font-semibold tracking-wide text-gray-900 uppercase"
+                >
+                    Pricing
+                </h3>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="mb-2 block text-sm font-medium"
+                            >Monthly Price (€)</label
+                        ><input
+                            type="number"
+                            data-slot="input"
+                            class="bg-input-background flex h-9 w-full min-w-0 rounded-md border border-input px-3 py-1 text-base transition-[color,box-shadow] outline-none selection:bg-primary selection:text-primary-foreground file:inline-flex file:h-7 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:aria-invalid:ring-destructive/40"
+                            placeholder="99"
+                            value="0"
+                        />
+                    </div>
+                    <div>
+                        <label class="mb-2 block text-sm font-medium"
+                            >Yearly Price (€)</label
+                        ><input
+                            type="number"
+                            data-slot="input"
+                            class="bg-input-background flex h-9 w-full min-w-0 rounded-md border border-input px-3 py-1 text-base transition-[color,box-shadow] outline-none selection:bg-primary selection:text-primary-foreground file:inline-flex file:h-7 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:aria-invalid:ring-destructive/40"
+                            placeholder="950"
+                            value="0"
+                        />
+                        <p class="mt-1 text-xs text-gray-500">
+                            Yearly billing typically offers a discount (~20%)
+                        </p>
+                    </div>
+                </div>
+            </div>
+            <div>
+                <h3
+                    class="mb-3 text-sm font-semibold tracking-wide text-gray-900 uppercase"
+                >
+                    Limits
+                </h3>
+                <div>
+                    <label class="mb-2 block text-sm font-medium"
+                        >Maximum users</label
+                    ><input
+                        type="number"
+                        data-slot="input"
+                        class="bg-input-background flex h-9 w-full min-w-0 rounded-md border border-input px-3 py-1 text-base transition-[color,box-shadow] outline-none selection:bg-primary selection:text-primary-foreground file:inline-flex file:h-7 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:aria-invalid:ring-destructive/40"
+                        min="1"
+                        placeholder="5"
+                        value="5"
+                    />
+                    <p class="mt-1 text-xs text-gray-500">
+                        Maximum number of staff accounts allowed for this plan.
+                    </p>
+                </div>
+            </div>
+            <div>
+                <h3
+                    class="mb-3 text-sm font-semibold tracking-wide text-gray-900 uppercase"
+                >
+                    Base Plan (Optional)
+                </h3>
+                <div>
+                    <label class="mb-2 block text-sm font-medium"
+                        >Inherit from</label
+                    ><select
+                        class="block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 focus:outline-none sm:text-sm"
+                    >
+                        <option value="">None (Start from scratch)</option>
+                        <option value="basic">Basic</option>
+                        <option value="standard">Standard</option>
+                    </select>
+                    <p class="mt-1 text-xs text-gray-500">
+                        Select a base plan to inherit features from.
+                    </p>
+                </div>
+            </div>
+            <div>
+                <div class="mb-3 flex items-center justify-between">
+                    <h3
+                        class="text-sm font-semibold tracking-wide text-gray-900 uppercase"
+                    >
+                        Features
+                    </h3>
+                    <span class="text-sm text-gray-600"
+                        >0 features selected</span
+                    >
+                </div>
+                <div class="space-y-4">
+                    <div class="rounded-lg border border-gray-200 p-4">
+                        <h4 class="mb-3 text-sm font-semibold text-gray-900">
+                            Menu &amp; Content
+                        </h4>
+                        <div class="space-y-2">
+                            <div
+                                class="flex items-start gap-3 rounded-lg p-2 hover:bg-gray-50"
+                            >
+                                <input type="checkbox" class="mt-1 rounded" />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-900"
+                                            >Basic Menu Management</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        Create and manage menu items
+                                    </p>
+                                </div>
+                            </div>
+                            <div
+                                class="flex items-start gap-3 rounded-lg p-2 hover:bg-gray-50"
+                            >
+                                <input type="checkbox" class="mt-1 rounded" />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-900"
+                                            >Menu Categories</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        Organize items by category
+                                    </p>
+                                    <p class="mt-1 text-xs text-blue-600">
+                                        Requires: Basic Menu Management
+                                    </p>
+                                </div>
+                            </div>
+                            <div
+                                class="flex items-start gap-3 rounded-lg p-2 hover:bg-gray-50"
+                            >
+                                <input type="checkbox" class="mt-1 rounded" />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-900"
+                                            >Menu Item Images</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        Upload photos for menu items
+                                    </p>
+                                </div>
+                            </div>
+                            <div
+                                class="flex items-start gap-3 rounded-lg p-2 hover:bg-gray-50"
+                            >
+                                <input type="checkbox" class="mt-1 rounded" />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-900"
+                                            >Unlimited Menu Items</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        No limit on menu items
+                                    </p>
+                                    <p class="mt-1 text-xs text-blue-600">
+                                        Requires: Basic Menu Management
+                                    </p>
+                                </div>
+                            </div>
+                            <div
+                                class="flex items-start gap-3 rounded-lg p-2 hover:bg-gray-50"
+                            >
+                                <input type="checkbox" class="mt-1 rounded" />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-900"
+                                            >Item Modifiers &amp; Options</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        Size, extras, customizations
+                                    </p>
+                                    <p class="mt-1 text-xs text-blue-600">
+                                        Requires: Basic Menu Management
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="rounded-lg border border-gray-200 p-4">
+                        <h4 class="mb-3 text-sm font-semibold text-gray-900">
+                            Ordering &amp; Payments
+                        </h4>
+                        <div class="space-y-2">
+                            <div
+                                class="flex items-start gap-3 rounded-lg p-2 hover:bg-gray-50"
+                            >
+                                <input type="checkbox" class="mt-1 rounded" />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-900"
+                                            >QR Code Ordering</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        Customer QR-based ordering
+                                    </p>
+                                </div>
+                            </div>
+                            <div
+                                class="flex items-start gap-3 rounded-lg p-2 hover:bg-gray-50"
+                            >
+                                <input type="checkbox" class="mt-1 rounded" />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-900"
+                                            >Table Management</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        Assign orders to tables
+                                    </p>
+                                    <p class="mt-1 text-xs text-blue-600">
+                                        Requires: QR Code Ordering
+                                    </p>
+                                </div>
+                            </div>
+                            <div
+                                class="flex items-start gap-3 rounded-lg p-2 hover:bg-gray-50"
+                            >
+                                <input type="checkbox" class="mt-1 rounded" />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-900"
+                                            >Card Payments</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        Stripe card processing
+                                    </p>
+                                </div>
+                            </div>
+                            <div
+                                class="flex items-start gap-3 rounded-lg p-2 hover:bg-gray-50"
+                            >
+                                <input type="checkbox" class="mt-1 rounded" />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-900"
+                                            >Cash Payment Option</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        Mark orders as cash paid
+                                    </p>
+                                </div>
+                            </div>
+                            <div
+                                class="flex items-start gap-3 rounded-lg p-2 hover:bg-gray-50"
+                            >
+                                <input type="checkbox" class="mt-1 rounded" />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-900"
+                                            >Split Bill</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        Divide order among customers
+                                    </p>
+                                    <p class="mt-1 text-xs text-blue-600">
+                                        Requires: Card Payments
+                                    </p>
+                                </div>
+                            </div>
+                            <div
+                                class="flex items-start gap-3 rounded-lg p-2 hover:bg-gray-50"
+                            >
+                                <input type="checkbox" class="mt-1 rounded" />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-900"
+                                            >Tipping</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        Customer tips at checkout
+                                    </p>
+                                    <p class="mt-1 text-xs text-blue-600">
+                                        Requires: Card Payments
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="rounded-lg border border-gray-200 p-4">
+                        <h4 class="mb-3 text-sm font-semibold text-gray-900">
+                            Analytics
+                        </h4>
+                        <div class="space-y-2">
+                            <div
+                                class="flex items-start gap-3 rounded-lg p-2 hover:bg-gray-50"
+                            >
+                                <input type="checkbox" class="mt-1 rounded" />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-900"
+                                            >Basic Analytics</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        Sales overview &amp; trends
+                                    </p>
+                                </div>
+                            </div>
+                            <div
+                                class="flex items-start gap-3 rounded-lg p-2 hover:bg-gray-50"
+                            >
+                                <input type="checkbox" class="mt-1 rounded" />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-900"
+                                            >Advanced Analytics</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        Detailed reports &amp; insights
+                                    </p>
+                                    <p class="mt-1 text-xs text-blue-600">
+                                        Requires: Basic Analytics
+                                    </p>
+                                </div>
+                            </div>
+                            <div
+                                class="flex items-start gap-3 rounded-lg p-2 hover:bg-gray-50"
+                            >
+                                <input type="checkbox" class="mt-1 rounded" />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-900"
+                                            >Export Reports</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        Download CSV/Excel reports
+                                    </p>
+                                    <p class="mt-1 text-xs text-blue-600">
+                                        Requires: Basic Analytics
+                                    </p>
+                                </div>
+                            </div>
+                            <div
+                                class="flex items-start gap-3 rounded-lg p-2 hover:bg-gray-50"
+                            >
+                                <input type="checkbox" class="mt-1 rounded" />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-900"
+                                            >Real-Time Dashboard</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        Live order monitoring
+                                    </p>
+                                    <p class="mt-1 text-xs text-blue-600">
+                                        Requires: Advanced Analytics
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="rounded-lg border border-gray-200 p-4">
+                        <h4 class="mb-3 text-sm font-semibold text-gray-900">
+                            Customer Engagement
+                        </h4>
+                        <div class="space-y-2">
+                            <div
+                                class="flex items-start gap-3 rounded-lg p-2 hover:bg-gray-50"
+                            >
+                                <input type="checkbox" class="mt-1 rounded" />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-900"
+                                            >Multi-Language Support</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        German, English, Arabic
+                                    </p>
+                                </div>
+                            </div>
+                            <div
+                                class="flex items-start gap-3 rounded-lg p-2 hover:bg-gray-50"
+                            >
+                                <input type="checkbox" class="mt-1 rounded" />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-900"
+                                            >Loyalty Program</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        Points &amp; rewards system
+                                    </p>
+                                </div>
+                            </div>
+                            <div
+                                class="flex items-start gap-3 rounded-lg p-2 hover:bg-gray-50"
+                            >
+                                <input type="checkbox" class="mt-1 rounded" />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-900"
+                                            >Customer Reviews</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        Order feedback &amp; ratings
+                                    </p>
+                                </div>
+                            </div>
+                            <div
+                                class="flex items-start gap-3 rounded-lg p-2 hover:bg-gray-50"
+                            >
+                                <input type="checkbox" class="mt-1 rounded" />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-900"
+                                            >Email Marketing</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        Send promotions to customers
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="rounded-lg border border-gray-200 p-4">
+                        <h4 class="mb-3 text-sm font-semibold text-gray-900">
+                            Support &amp; Admin
+                        </h4>
+                        <div class="space-y-2">
+                            <div
+                                class="flex items-start gap-3 rounded-lg p-2 hover:bg-gray-50"
+                            >
+                                <input type="checkbox" class="mt-1 rounded" />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-900"
+                                            >Email Support</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        Support via email (48h)
+                                    </p>
+                                </div>
+                            </div>
+                            <div
+                                class="flex items-start gap-3 rounded-lg p-2 hover:bg-gray-50"
+                            >
+                                <input type="checkbox" class="mt-1 rounded" />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-900"
+                                            >Priority Support</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        Faster response (24h)
+                                    </p>
+                                </div>
+                            </div>
+                            <div
+                                class="flex items-start gap-3 rounded-lg p-2 hover:bg-gray-50"
+                            >
+                                <input type="checkbox" class="mt-1 rounded" />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-900"
+                                            >Dedicated Account Manager</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        Personal account rep
+                                    </p>
+                                    <p class="mt-1 text-xs text-blue-600">
+                                        Requires: Priority Support
+                                    </p>
+                                </div>
+                            </div>
+                            <div
+                                class="flex items-start gap-3 rounded-lg p-2 hover:bg-gray-50"
+                            >
+                                <input type="checkbox" class="mt-1 rounded" />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-900"
+                                            >Multi-User Access</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        Multiple vendor admin accounts
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="rounded-lg border border-gray-200 p-4">
+                        <h4 class="mb-3 text-sm font-semibold text-gray-900">
+                            Integrations
+                        </h4>
+                        <div class="space-y-2">
+                            <div
+                                class="flex items-start gap-3 rounded-lg p-2 hover:bg-gray-50"
+                            >
+                                <input type="checkbox" class="mt-1 rounded" />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-900"
+                                            >API Access</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        REST API for integrations
+                                    </p>
+                                </div>
+                            </div>
+                            <div
+                                class="flex items-start gap-3 rounded-lg p-2 hover:bg-gray-50"
+                            >
+                                <input type="checkbox" class="mt-1 rounded" />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-900"
+                                            >Webhooks</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        Real-time event notifications
+                                    </p>
+                                    <p class="mt-1 text-xs text-blue-600">
+                                        Requires: API Access
+                                    </p>
+                                </div>
+                            </div>
+                            <div
+                                class="flex items-start gap-3 rounded-lg p-2 hover:bg-gray-50"
+                            >
+                                <input type="checkbox" class="mt-1 rounded" />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-900"
+                                            >White-Label Options</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        Custom branding &amp; domain
+                                    </p>
+                                </div>
+                            </div>
+                            <div
+                                class="flex items-start gap-3 rounded-lg p-2 hover:bg-gray-50"
+                            >
+                                <input type="checkbox" class="mt-1 rounded" />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-900"
+                                            >POS Integration</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        Connect to existing POS
+                                    </p>
+                                    <p class="mt-1 text-xs text-blue-600">
+                                        Requires: API Access
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <label class="flex items-center gap-2"
+                ><input type="checkbox" class="rounded" /><span
+                    class="text-sm font-medium"
+                    >Mark as "Most Popular"</span
+                ></label
+            >
+        </div>
+        <div class="mt-6 flex gap-3 border-t border-gray-200 pt-6">
+            <button
+                class="flex-1 rounded-lg border border-gray-300 py-2.5 font-medium hover:bg-gray-50"
+            >
+                Cancel</button
+            ><button
+                class="flex-1 rounded-lg bg-purple-600 py-2.5 font-medium text-white hover:bg-purple-700"
+            >
+                Create Plan
+            </button>
+        </div>
+    </div>
+</div>
+<!-- edit modal -->
+<div
+    class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+>
+    <div
+        class="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-xl bg-white p-6"
+    >
+        <div class="mb-6 flex items-center justify-between">
+            <h2 class="text-xl font-semibold">Edit Plan: Standard</h2>
+            <button class="rounded-lg p-2 hover:bg-gray-100">
+                <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="24"
+                    height="24"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    class="lucide lucide-x h-5 w-5"
+                    aria-hidden="true"
+                >
+                    <path d="M18 6 6 18"></path>
+                    <path d="m6 6 12 12"></path>
+                </svg>
+            </button>
+        </div>
+        <div
+            class="mb-6 flex items-start gap-3 rounded-lg border border-blue-200 bg-blue-50 p-4"
+        >
+            <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="24"
+                height="24"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                class="lucide lucide-info mt-0.5 h-5 w-5 flex-shrink-0 text-blue-600"
+                aria-hidden="true"
+            >
+                <circle cx="12" cy="12" r="10"></circle>
+                <path d="M12 16v-4"></path>
+                <path d="M12 8h.01"></path>
+            </svg>
+            <div>
+                <p class="text-sm font-medium text-blue-900">
+                    Hierarchical Plan
+                </p>
+                <p class="mt-1 text-sm text-blue-800">
+                    This plan inherits all features from <strong>basic</strong>.
+                    Inherited features are locked and cannot be removed.
+                </p>
+            </div>
+        </div>
+        <div class="space-y-6">
+            <div>
+                <h3
+                    class="mb-3 text-sm font-semibold tracking-wide text-gray-900 uppercase"
+                >
+                    Pricing
+                </h3>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="mb-2 block text-sm font-medium"
+                            >Monthly Price (€)</label
+                        ><input
+                            type="number"
+                            data-slot="input"
+                            class="bg-input-background flex h-9 w-full min-w-0 rounded-md border border-input px-3 py-1 text-base transition-[color,box-shadow] outline-none selection:bg-primary selection:text-primary-foreground file:inline-flex file:h-7 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:aria-invalid:ring-destructive/40"
+                            placeholder="99"
+                            value="199"
+                        />
+                    </div>
+                    <div>
+                        <label class="mb-2 block text-sm font-medium"
+                            >Yearly Price (€)</label
+                        ><input
+                            type="number"
+                            data-slot="input"
+                            class="bg-input-background flex h-9 w-full min-w-0 rounded-md border border-input px-3 py-1 text-base transition-[color,box-shadow] outline-none selection:bg-primary selection:text-primary-foreground file:inline-flex file:h-7 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:aria-invalid:ring-destructive/40"
+                            placeholder="950"
+                            value="1910"
+                        />
+                        <p class="mt-1 text-xs text-gray-500">
+                            Yearly billing typically offers a discount (~20%)
+                        </p>
+                    </div>
+                </div>
+            </div>
+            <div>
+                <h3
+                    class="mb-3 text-sm font-semibold tracking-wide text-gray-900 uppercase"
+                >
+                    Limits
+                </h3>
+                <div>
+                    <label class="mb-2 block text-sm font-medium"
+                        >Maximum users</label
+                    ><input
+                        type="number"
+                        data-slot="input"
+                        class="bg-input-background flex h-9 w-full min-w-0 rounded-md border border-input px-3 py-1 text-base transition-[color,box-shadow] outline-none selection:bg-primary selection:text-primary-foreground file:inline-flex file:h-7 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:aria-invalid:ring-destructive/40"
+                        min="1"
+                        placeholder="5"
+                        value="10"
+                    />
+                    <p class="mt-1 text-xs text-gray-500">
+                        Maximum number of staff accounts allowed for this plan.
+                    </p>
+                </div>
+            </div>
+            <div>
+                <div class="mb-3 flex items-center justify-between">
+                    <h3
+                        class="text-sm font-semibold tracking-wide text-gray-900 uppercase"
+                    >
+                        Features
+                    </h3>
+                    <span class="text-sm text-gray-600"
+                        >18 features selected</span
+                    >
+                </div>
+                <div class="space-y-4">
+                    <div class="rounded-lg border border-gray-200 p-4">
+                        <h4 class="mb-3 text-sm font-semibold text-gray-900">
+                            Menu &amp; Content
+                        </h4>
+                        <div class="space-y-2">
+                            <div
+                                class="flex items-start gap-3 rounded-lg bg-gray-50 p-2"
+                            >
+                                <input
+                                    type="checkbox"
+                                    disabled=""
+                                    class="mt-1 rounded"
+                                    checked=""
+                                />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-600"
+                                            >Basic Menu Management</span
+                                        ><span
+                                            class="flex items-center gap-1 rounded bg-gray-200 px-2 py-0.5 text-xs text-gray-700"
+                                            ><svg
+                                                xmlns="http://www.w3.org/2000/svg"
+                                                width="24"
+                                                height="24"
+                                                viewBox="0 0 24 24"
+                                                fill="none"
+                                                stroke="currentColor"
+                                                stroke-width="2"
+                                                stroke-linecap="round"
+                                                stroke-linejoin="round"
+                                                class="lucide lucide-lock h-3 w-3"
+                                                aria-hidden="true"
+                                            >
+                                                <rect
+                                                    width="18"
+                                                    height="11"
+                                                    x="3"
+                                                    y="11"
+                                                    rx="2"
+                                                    ry="2"
+                                                ></rect>
+                                                <path
+                                                    d="M7 11V7a5 5 0 0 1 10 0v4"
+                                                ></path></svg
+                                            >Included from basic</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        Create and manage menu items
+                                    </p>
+                                </div>
+                            </div>
+                            <div
+                                class="flex items-start gap-3 rounded-lg bg-gray-50 p-2"
+                            >
+                                <input
+                                    type="checkbox"
+                                    disabled=""
+                                    class="mt-1 rounded"
+                                    checked=""
+                                />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-600"
+                                            >Menu Categories</span
+                                        ><span
+                                            class="flex items-center gap-1 rounded bg-gray-200 px-2 py-0.5 text-xs text-gray-700"
+                                            ><svg
+                                                xmlns="http://www.w3.org/2000/svg"
+                                                width="24"
+                                                height="24"
+                                                viewBox="0 0 24 24"
+                                                fill="none"
+                                                stroke="currentColor"
+                                                stroke-width="2"
+                                                stroke-linecap="round"
+                                                stroke-linejoin="round"
+                                                class="lucide lucide-lock h-3 w-3"
+                                                aria-hidden="true"
+                                            >
+                                                <rect
+                                                    width="18"
+                                                    height="11"
+                                                    x="3"
+                                                    y="11"
+                                                    rx="2"
+                                                    ry="2"
+                                                ></rect>
+                                                <path
+                                                    d="M7 11V7a5 5 0 0 1 10 0v4"
+                                                ></path></svg
+                                            >Included from basic</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        Organize items by category
+                                    </p>
+                                    <p class="mt-1 text-xs text-blue-600">
+                                        Requires: Basic Menu Management
+                                    </p>
+                                </div>
+                            </div>
+                            <div
+                                class="flex items-start gap-3 rounded-lg bg-gray-50 p-2"
+                            >
+                                <input
+                                    type="checkbox"
+                                    disabled=""
+                                    class="mt-1 rounded"
+                                    checked=""
+                                />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-600"
+                                            >Menu Item Images</span
+                                        ><span
+                                            class="flex items-center gap-1 rounded bg-gray-200 px-2 py-0.5 text-xs text-gray-700"
+                                            ><svg
+                                                xmlns="http://www.w3.org/2000/svg"
+                                                width="24"
+                                                height="24"
+                                                viewBox="0 0 24 24"
+                                                fill="none"
+                                                stroke="currentColor"
+                                                stroke-width="2"
+                                                stroke-linecap="round"
+                                                stroke-linejoin="round"
+                                                class="lucide lucide-lock h-3 w-3"
+                                                aria-hidden="true"
+                                            >
+                                                <rect
+                                                    width="18"
+                                                    height="11"
+                                                    x="3"
+                                                    y="11"
+                                                    rx="2"
+                                                    ry="2"
+                                                ></rect>
+                                                <path
+                                                    d="M7 11V7a5 5 0 0 1 10 0v4"
+                                                ></path></svg
+                                            >Included from basic</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        Upload photos for menu items
+                                    </p>
+                                </div>
+                            </div>
+                            <div
+                                class="flex items-start gap-3 rounded-lg p-2 hover:bg-gray-50"
+                            >
+                                <input type="checkbox" class="mt-1 rounded" />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-900"
+                                            >Unlimited Menu Items</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        No limit on menu items
+                                    </p>
+                                    <p class="mt-1 text-xs text-blue-600">
+                                        Requires: Basic Menu Management
+                                    </p>
+                                </div>
+                            </div>
+                            <div
+                                class="flex items-start gap-3 rounded-lg p-2 hover:bg-gray-50"
+                            >
+                                <input
+                                    type="checkbox"
+                                    class="mt-1 rounded"
+                                    checked=""
+                                />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-900"
+                                            >Item Modifiers &amp; Options</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        Size, extras, customizations
+                                    </p>
+                                    <p class="mt-1 text-xs text-blue-600">
+                                        Requires: Basic Menu Management
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="rounded-lg border border-gray-200 p-4">
+                        <h4 class="mb-3 text-sm font-semibold text-gray-900">
+                            Ordering &amp; Payments
+                        </h4>
+                        <div class="space-y-2">
+                            <div
+                                class="flex items-start gap-3 rounded-lg bg-gray-50 p-2"
+                            >
+                                <input
+                                    type="checkbox"
+                                    disabled=""
+                                    class="mt-1 rounded"
+                                    checked=""
+                                />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-600"
+                                            >QR Code Ordering</span
+                                        ><span
+                                            class="flex items-center gap-1 rounded bg-gray-200 px-2 py-0.5 text-xs text-gray-700"
+                                            ><svg
+                                                xmlns="http://www.w3.org/2000/svg"
+                                                width="24"
+                                                height="24"
+                                                viewBox="0 0 24 24"
+                                                fill="none"
+                                                stroke="currentColor"
+                                                stroke-width="2"
+                                                stroke-linecap="round"
+                                                stroke-linejoin="round"
+                                                class="lucide lucide-lock h-3 w-3"
+                                                aria-hidden="true"
+                                            >
+                                                <rect
+                                                    width="18"
+                                                    height="11"
+                                                    x="3"
+                                                    y="11"
+                                                    rx="2"
+                                                    ry="2"
+                                                ></rect>
+                                                <path
+                                                    d="M7 11V7a5 5 0 0 1 10 0v4"
+                                                ></path></svg
+                                            >Included from basic</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        Customer QR-based ordering
+                                    </p>
+                                </div>
+                            </div>
+                            <div
+                                class="flex items-start gap-3 rounded-lg bg-gray-50 p-2"
+                            >
+                                <input
+                                    type="checkbox"
+                                    disabled=""
+                                    class="mt-1 rounded"
+                                    checked=""
+                                />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-600"
+                                            >Table Management</span
+                                        ><span
+                                            class="flex items-center gap-1 rounded bg-gray-200 px-2 py-0.5 text-xs text-gray-700"
+                                            ><svg
+                                                xmlns="http://www.w3.org/2000/svg"
+                                                width="24"
+                                                height="24"
+                                                viewBox="0 0 24 24"
+                                                fill="none"
+                                                stroke="currentColor"
+                                                stroke-width="2"
+                                                stroke-linecap="round"
+                                                stroke-linejoin="round"
+                                                class="lucide lucide-lock h-3 w-3"
+                                                aria-hidden="true"
+                                            >
+                                                <rect
+                                                    width="18"
+                                                    height="11"
+                                                    x="3"
+                                                    y="11"
+                                                    rx="2"
+                                                    ry="2"
+                                                ></rect>
+                                                <path
+                                                    d="M7 11V7a5 5 0 0 1 10 0v4"
+                                                ></path></svg
+                                            >Included from basic</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        Assign orders to tables
+                                    </p>
+                                    <p class="mt-1 text-xs text-blue-600">
+                                        Requires: QR Code Ordering
+                                    </p>
+                                </div>
+                            </div>
+                            <div
+                                class="flex items-start gap-3 rounded-lg bg-gray-50 p-2"
+                            >
+                                <input
+                                    type="checkbox"
+                                    disabled=""
+                                    class="mt-1 rounded"
+                                    checked=""
+                                />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-600"
+                                            >Card Payments</span
+                                        ><span
+                                            class="flex items-center gap-1 rounded bg-gray-200 px-2 py-0.5 text-xs text-gray-700"
+                                            ><svg
+                                                xmlns="http://www.w3.org/2000/svg"
+                                                width="24"
+                                                height="24"
+                                                viewBox="0 0 24 24"
+                                                fill="none"
+                                                stroke="currentColor"
+                                                stroke-width="2"
+                                                stroke-linecap="round"
+                                                stroke-linejoin="round"
+                                                class="lucide lucide-lock h-3 w-3"
+                                                aria-hidden="true"
+                                            >
+                                                <rect
+                                                    width="18"
+                                                    height="11"
+                                                    x="3"
+                                                    y="11"
+                                                    rx="2"
+                                                    ry="2"
+                                                ></rect>
+                                                <path
+                                                    d="M7 11V7a5 5 0 0 1 10 0v4"
+                                                ></path></svg
+                                            >Included from basic</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        Stripe card processing
+                                    </p>
+                                </div>
+                            </div>
+                            <div
+                                class="flex items-start gap-3 rounded-lg bg-gray-50 p-2"
+                            >
+                                <input
+                                    type="checkbox"
+                                    disabled=""
+                                    class="mt-1 rounded"
+                                    checked=""
+                                />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-600"
+                                            >Cash Payment Option</span
+                                        ><span
+                                            class="flex items-center gap-1 rounded bg-gray-200 px-2 py-0.5 text-xs text-gray-700"
+                                            ><svg
+                                                xmlns="http://www.w3.org/2000/svg"
+                                                width="24"
+                                                height="24"
+                                                viewBox="0 0 24 24"
+                                                fill="none"
+                                                stroke="currentColor"
+                                                stroke-width="2"
+                                                stroke-linecap="round"
+                                                stroke-linejoin="round"
+                                                class="lucide lucide-lock h-3 w-3"
+                                                aria-hidden="true"
+                                            >
+                                                <rect
+                                                    width="18"
+                                                    height="11"
+                                                    x="3"
+                                                    y="11"
+                                                    rx="2"
+                                                    ry="2"
+                                                ></rect>
+                                                <path
+                                                    d="M7 11V7a5 5 0 0 1 10 0v4"
+                                                ></path></svg
+                                            >Included from basic</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        Mark orders as cash paid
+                                    </p>
+                                </div>
+                            </div>
+                            <div
+                                class="flex items-start gap-3 rounded-lg p-2 hover:bg-gray-50"
+                            >
+                                <input type="checkbox" class="mt-1 rounded" />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-900"
+                                            >Split Bill</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        Divide order among customers
+                                    </p>
+                                    <p class="mt-1 text-xs text-blue-600">
+                                        Requires: Card Payments
+                                    </p>
+                                </div>
+                            </div>
+                            <div
+                                class="flex items-start gap-3 rounded-lg p-2 hover:bg-gray-50"
+                            >
+                                <input
+                                    type="checkbox"
+                                    class="mt-1 rounded"
+                                    checked=""
+                                />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-900"
+                                            >Tipping</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        Customer tips at checkout
+                                    </p>
+                                    <p class="mt-1 text-xs text-blue-600">
+                                        Requires: Card Payments
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="rounded-lg border border-gray-200 p-4">
+                        <h4 class="mb-3 text-sm font-semibold text-gray-900">
+                            Analytics
+                        </h4>
+                        <div class="space-y-2">
+                            <div
+                                class="flex items-start gap-3 rounded-lg bg-gray-50 p-2"
+                            >
+                                <input
+                                    type="checkbox"
+                                    disabled=""
+                                    class="mt-1 rounded"
+                                    checked=""
+                                />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-600"
+                                            >Basic Analytics</span
+                                        ><span
+                                            class="flex items-center gap-1 rounded bg-gray-200 px-2 py-0.5 text-xs text-gray-700"
+                                            ><svg
+                                                xmlns="http://www.w3.org/2000/svg"
+                                                width="24"
+                                                height="24"
+                                                viewBox="0 0 24 24"
+                                                fill="none"
+                                                stroke="currentColor"
+                                                stroke-width="2"
+                                                stroke-linecap="round"
+                                                stroke-linejoin="round"
+                                                class="lucide lucide-lock h-3 w-3"
+                                                aria-hidden="true"
+                                            >
+                                                <rect
+                                                    width="18"
+                                                    height="11"
+                                                    x="3"
+                                                    y="11"
+                                                    rx="2"
+                                                    ry="2"
+                                                ></rect>
+                                                <path
+                                                    d="M7 11V7a5 5 0 0 1 10 0v4"
+                                                ></path></svg
+                                            >Included from basic</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        Sales overview &amp; trends
+                                    </p>
+                                </div>
+                            </div>
+                            <div
+                                class="flex items-start gap-3 rounded-lg p-2 hover:bg-gray-50"
+                            >
+                                <input
+                                    type="checkbox"
+                                    class="mt-1 rounded"
+                                    checked=""
+                                />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-900"
+                                            >Advanced Analytics</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        Detailed reports &amp; insights
+                                    </p>
+                                    <p class="mt-1 text-xs text-blue-600">
+                                        Requires: Basic Analytics
+                                    </p>
+                                </div>
+                            </div>
+                            <div
+                                class="flex items-start gap-3 rounded-lg p-2 hover:bg-gray-50"
+                            >
+                                <input
+                                    type="checkbox"
+                                    class="mt-1 rounded"
+                                    checked=""
+                                />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-900"
+                                            >Export Reports</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        Download CSV/Excel reports
+                                    </p>
+                                    <p class="mt-1 text-xs text-blue-600">
+                                        Requires: Basic Analytics
+                                    </p>
+                                </div>
+                            </div>
+                            <div
+                                class="flex items-start gap-3 rounded-lg p-2 hover:bg-gray-50"
+                            >
+                                <input type="checkbox" class="mt-1 rounded" />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-900"
+                                            >Real-Time Dashboard</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        Live order monitoring
+                                    </p>
+                                    <p class="mt-1 text-xs text-blue-600">
+                                        Requires: Advanced Analytics
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="rounded-lg border border-gray-200 p-4">
+                        <h4 class="mb-3 text-sm font-semibold text-gray-900">
+                            Customer Engagement
+                        </h4>
+                        <div class="space-y-2">
+                            <div
+                                class="flex items-start gap-3 rounded-lg p-2 hover:bg-gray-50"
+                            >
+                                <input
+                                    type="checkbox"
+                                    class="mt-1 rounded"
+                                    checked=""
+                                />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-900"
+                                            >Multi-Language Support</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        German, English, Arabic
+                                    </p>
+                                </div>
+                            </div>
+                            <div
+                                class="flex items-start gap-3 rounded-lg p-2 hover:bg-gray-50"
+                            >
+                                <input
+                                    type="checkbox"
+                                    class="mt-1 rounded"
+                                    checked=""
+                                />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-900"
+                                            >Loyalty Program</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        Points &amp; rewards system
+                                    </p>
+                                </div>
+                            </div>
+                            <div
+                                class="flex items-start gap-3 rounded-lg p-2 hover:bg-gray-50"
+                            >
+                                <input
+                                    type="checkbox"
+                                    class="mt-1 rounded"
+                                    checked=""
+                                />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-900"
+                                            >Customer Reviews</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        Order feedback &amp; ratings
+                                    </p>
+                                </div>
+                            </div>
+                            <div
+                                class="flex items-start gap-3 rounded-lg p-2 hover:bg-gray-50"
+                            >
+                                <input type="checkbox" class="mt-1 rounded" />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-900"
+                                            >Email Marketing</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        Send promotions to customers
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="rounded-lg border border-gray-200 p-4">
+                        <h4 class="mb-3 text-sm font-semibold text-gray-900">
+                            Support &amp; Admin
+                        </h4>
+                        <div class="space-y-2">
+                            <div
+                                class="flex items-start gap-3 rounded-lg bg-gray-50 p-2"
+                            >
+                                <input
+                                    type="checkbox"
+                                    disabled=""
+                                    class="mt-1 rounded"
+                                    checked=""
+                                />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-600"
+                                            >Email Support</span
+                                        ><span
+                                            class="flex items-center gap-1 rounded bg-gray-200 px-2 py-0.5 text-xs text-gray-700"
+                                            ><svg
+                                                xmlns="http://www.w3.org/2000/svg"
+                                                width="24"
+                                                height="24"
+                                                viewBox="0 0 24 24"
+                                                fill="none"
+                                                stroke="currentColor"
+                                                stroke-width="2"
+                                                stroke-linecap="round"
+                                                stroke-linejoin="round"
+                                                class="lucide lucide-lock h-3 w-3"
+                                                aria-hidden="true"
+                                            >
+                                                <rect
+                                                    width="18"
+                                                    height="11"
+                                                    x="3"
+                                                    y="11"
+                                                    rx="2"
+                                                    ry="2"
+                                                ></rect>
+                                                <path
+                                                    d="M7 11V7a5 5 0 0 1 10 0v4"
+                                                ></path></svg
+                                            >Included from basic</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        Support via email (48h)
+                                    </p>
+                                </div>
+                            </div>
+                            <div
+                                class="flex items-start gap-3 rounded-lg p-2 hover:bg-gray-50"
+                            >
+                                <input
+                                    type="checkbox"
+                                    class="mt-1 rounded"
+                                    checked=""
+                                />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-900"
+                                            >Priority Support</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        Faster response (24h)
+                                    </p>
+                                </div>
+                            </div>
+                            <div
+                                class="flex items-start gap-3 rounded-lg p-2 hover:bg-gray-50"
+                            >
+                                <input type="checkbox" class="mt-1 rounded" />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-900"
+                                            >Dedicated Account Manager</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        Personal account rep
+                                    </p>
+                                    <p class="mt-1 text-xs text-blue-600">
+                                        Requires: Priority Support
+                                    </p>
+                                </div>
+                            </div>
+                            <div
+                                class="flex items-start gap-3 rounded-lg p-2 hover:bg-gray-50"
+                            >
+                                <input
+                                    type="checkbox"
+                                    class="mt-1 rounded"
+                                    checked=""
+                                />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-900"
+                                            >Multi-User Access</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        Multiple vendor admin accounts
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="rounded-lg border border-gray-200 p-4">
+                        <h4 class="mb-3 text-sm font-semibold text-gray-900">
+                            Integrations
+                        </h4>
+                        <div class="space-y-2">
+                            <div
+                                class="flex items-start gap-3 rounded-lg p-2 hover:bg-gray-50"
+                            >
+                                <input type="checkbox" class="mt-1 rounded" />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-900"
+                                            >API Access</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        REST API for integrations
+                                    </p>
+                                </div>
+                            </div>
+                            <div
+                                class="flex items-start gap-3 rounded-lg p-2 hover:bg-gray-50"
+                            >
+                                <input type="checkbox" class="mt-1 rounded" />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-900"
+                                            >Webhooks</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        Real-time event notifications
+                                    </p>
+                                    <p class="mt-1 text-xs text-blue-600">
+                                        Requires: API Access
+                                    </p>
+                                </div>
+                            </div>
+                            <div
+                                class="flex items-start gap-3 rounded-lg p-2 hover:bg-gray-50"
+                            >
+                                <input type="checkbox" class="mt-1 rounded" />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-900"
+                                            >White-Label Options</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        Custom branding &amp; domain
+                                    </p>
+                                </div>
+                            </div>
+                            <div
+                                class="flex items-start gap-3 rounded-lg p-2 hover:bg-gray-50"
+                            >
+                                <input type="checkbox" class="mt-1 rounded" />
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span
+                                            class="text-sm font-medium text-gray-900"
+                                            >POS Integration</span
+                                        >
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-gray-500">
+                                        Connect to existing POS
+                                    </p>
+                                    <p class="mt-1 text-xs text-blue-600">
+                                        Requires: API Access
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <label class="flex items-center gap-2"
+                ><input type="checkbox" class="rounded" checked="" /><span
+                    class="text-sm font-medium"
+                    >Mark as "Most Popular"</span
+                ></label
+            >
+        </div>
+        <div class="mt-6 flex gap-3 border-t border-gray-200 pt-6">
+            <button
+                class="flex-1 rounded-lg border border-gray-300 py-2.5 font-medium hover:bg-gray-50"
+            >
+                Cancel</button
+            ><button
+                class="flex-1 rounded-lg bg-purple-600 py-2.5 font-medium text-white hover:bg-purple-700"
+            >
+                Update Plan
+            </button>
+        </div>
+    </div>
+</div>
