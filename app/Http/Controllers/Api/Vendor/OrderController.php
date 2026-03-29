@@ -98,33 +98,86 @@ class OrderController extends Controller
         return response()->json($this->formatOrder($order->fresh()->load('customer')));
     }
 
+    /**
+     * PATCH /api/orders/{orderId}/served
+     */
+    public function markServed(Request $request, string $orderId): JsonResponse
+    {
+        $order = Order::where('order_public_id', $orderId)
+            ->orWhere('id', $orderId)
+            ->firstOrFail();
+
+        $this->authorizeVendor($request, $order->vendor);
+
+        $order->update([
+            'status'    => 'served',
+            'served_at' => now(),
+        ]);
+
+        return response()->json($this->formatOrder($order->fresh()->load('customer')));
+    }
+
+    /**
+     * PATCH /api/orders/{orderId}/cancel
+     */
+    public function cancel(Request $request, string $orderId): JsonResponse
+    {
+        $order = Order::where('order_public_id', $orderId)
+            ->orWhere('id', $orderId)
+            ->firstOrFail();
+
+        $this->authorizeVendor($request, $order->vendor);
+
+        $data = $request->validate([
+            'reason' => ['nullable', 'string', 'max:500'],
+        ]);
+
+        $order->update([
+            'status'            => 'cancelled',
+            'cancelled_at'      => now(),
+            'cancelled_reason'  => $data['reason'] ?? null,
+        ]);
+
+        return response()->json($this->formatOrder($order->fresh()->load('customer')));
+    }
+
     // ----------------------------------------------------------------
 
     private function formatOrder(Order $order): array
     {
         return [
-            'id' => (string) $order->id,
-            'orderPublicId' => $order->order_public_id,
+            'id'                   => (string) $order->id,
+            'orderPublicId'        => $order->order_public_id,
+            'orderNumber'          => $order->order_number ?? "#{$order->id}",
+            'orderType'            => $order->order_type ?? 'dine-in',
+            'tableNumber'          => $order->table_number,
+            'course'               => $order->course,
+            'guestCount'           => $order->guest_count,
             'customer' => $order->customer ? [
-                'id' => (string) $order->customer->id,
-                'name' => $order->customer->name,
+                'id'    => (string) $order->customer->id,
+                'name'  => $order->customer->name,
                 'email' => $order->customer->email,
                 'phone' => $order->customer->phone,
             ] : null,
-            'status' => $order->status,
-            'itemsCount' => $order->items_count,
-            'items' => $order->items ?? [],
-            'amount' => (float) $order->amount,
-            'currency' => $order->currency,
-            'paymentMethod' => $order->payment_method,
-            'paymentPending' => $order->payment_pending,
-            'paymentReceived' => $order->payment_received,
-            'paymentConfirmedAt' => $order->payment_confirmed_at?->toISOString(),
-            'paymentNote' => $order->payment_note,
-            'readyAt' => $order->ready_at?->toISOString(),
-            'pickedUpAt' => $order->picked_up_at?->toISOString(),
-            'createdAt' => $order->created_at->toISOString(),
-            'updatedAt' => $order->updated_at->toISOString(),
+            'status'               => $order->status,
+            'itemsCount'           => $order->items_count,
+            'items'                => $order->items ?? [],
+            'amount'               => (float) $order->amount,
+            'serviceFee'           => (float) ($order->service_fee ?? 0),
+            'vatAmount'            => (float) ($order->vat_amount ?? 0),
+            'currency'             => $order->currency,
+            'paymentMethod'        => $order->payment_method,
+            'paymentPending'       => $order->payment_pending,
+            'paymentReceived'      => $order->payment_received,
+            'paymentConfirmedAt'   => $order->payment_confirmed_at?->toISOString(),
+            'paymentNote'          => $order->payment_note,
+            'readyAt'              => $order->ready_at?->toISOString(),
+            'pickedUpAt'           => $order->picked_up_at?->toISOString(),
+            'servedAt'             => $order->served_at?->toISOString(),
+            'cancelledAt'          => $order->cancelled_at?->toISOString(),
+            'cancelledReason'      => $order->cancelled_reason,
+            'createdAt'            => $order->created_at->toISOString(),
+            'updatedAt'            => $order->updated_at->toISOString(),
         ];
     }
 

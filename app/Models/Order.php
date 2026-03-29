@@ -24,18 +24,33 @@ class Order extends Model
         'payment_note',
         'ready_at',
         'picked_up_at',
+        // extended fields
+        'order_number',
+        'order_type',
+        'table_number',
+        'service_fee',
+        'vat_amount',
+        'course',
+        'guest_count',
+        'served_at',
+        'cancelled_at',
+        'cancelled_reason',
     ];
 
     protected function casts(): array
     {
         return [
-            'amount' => 'decimal:2',
-            'items' => 'array',
-            'payment_pending' => 'boolean',
-            'payment_received' => 'boolean',
+            'amount'               => 'decimal:2',
+            'service_fee'          => 'decimal:2',
+            'vat_amount'           => 'decimal:2',
+            'items'                => 'array',
+            'payment_pending'      => 'boolean',
+            'payment_received'     => 'boolean',
             'payment_confirmed_at' => 'datetime',
-            'ready_at' => 'datetime',
-            'picked_up_at' => 'datetime',
+            'ready_at'             => 'datetime',
+            'picked_up_at'         => 'datetime',
+            'served_at'            => 'datetime',
+            'cancelled_at'         => 'datetime',
         ];
     }
 

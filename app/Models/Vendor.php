@@ -99,4 +99,19 @@ class Vendor extends Authenticatable
     {
         return $this->hasMany(Reservation::class);
     }
+
+    public function vendorSetting(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(VendorSetting::class);
+    }
+
+    public function restaurantTables(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(RestaurantTable::class);
+    }
+
+    public function teamMembers(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(TeamMember::class);
+    }
 }

@@ -9,8 +9,7 @@ The vendor can:
 3. Delete an existing category
 4. Create a new menu item (dish)
 5. Edit an existing menu item
-6. Upload the full menu using bulk upload (Excel / CSV) — **🔜 COMING SOON**
-7. AI Menu Assistant — **🔜 COMING SOON**
+6. Upload the full menu using bulk upload (Excel / CSV)
 
 ---
 
@@ -466,9 +465,7 @@ Analytics
 
 ---
 
-# 6. Bulk Menu Upload (Excel / CSV) — 🔜 COMING SOON
-
-> **Status: PENDING — Not implemented in Phase 1. UI shows "Coming Soon" button.**
+# 6. Bulk Menu Upload (Excel / CSV)
 
 Vendor can upload many menu items at once.
 
@@ -527,14 +524,6 @@ If errors exist in the uploaded file:
 The system highlights incorrect rows
 
 Vendor receives explanation message
-
----
-
-# 7. AI Menu Assistant — 🔜 COMING SOON
-
-> **Status: PENDING — Not implemented in Phase 1. UI shows "Coming Soon" button.**
-
-AI-powered assistant to help vendors create and optimize their menu. Details TBD.
 
 ---
 

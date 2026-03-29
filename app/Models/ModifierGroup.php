@@ -5,15 +5,17 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
-class MenuCategory extends Model
+class ModifierGroup extends Model
 {
     protected $fillable = [
         'vendor_id',
         'name',
-        'slug',
-        'default_tax_category',
-        'tax_category_id',
+        'type',
+        'min_selection',
+        'max_selection',
+        'is_required',
         'sort_order',
         'is_active',
     ];
@@ -21,6 +23,7 @@ class MenuCategory extends Model
     protected function casts(): array
     {
         return [
+            'is_required' => 'boolean',
             'is_active' => 'boolean',
         ];
     }
@@ -30,13 +33,15 @@ class MenuCategory extends Model
         return $this->belongsTo(Vendor::class);
     }
 
-    public function taxCategory(): BelongsTo
+    public function options(): HasMany
     {
-        return $this->belongsTo(TaxCategory::class);
+        return $this->hasMany(ModifierOption::class)->orderBy('sort_order');
     }
 
-    public function items(): HasMany
+    public function menuItems(): BelongsToMany
     {
-        return $this->hasMany(MenuItem::class);
+        return $this->belongsToMany(MenuItem::class, 'menu_item_modifier_groups')
+            ->withPivot('sort_order')
+            ->withTimestamps();
     }
 }

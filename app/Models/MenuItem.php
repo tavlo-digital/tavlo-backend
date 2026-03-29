@@ -4,6 +4,8 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 class MenuItem extends Model
 {
@@ -15,6 +17,7 @@ class MenuItem extends Model
         'price',
         'image_url',
         'available',
+        'is_active',
         'calories',
         'fat',
         'carbs',
@@ -69,5 +72,33 @@ class MenuItem extends Model
     public function category(): BelongsTo
     {
         return $this->belongsTo(MenuCategory::class, 'menu_category_id');
+    }
+
+    public function itemTranslations(): HasMany
+    {
+        return $this->hasMany(MenuItemTranslation::class);
+    }
+
+    public function allergens(): BelongsToMany
+    {
+        return $this->belongsToMany(Allergen::class, 'menu_item_allergens')->withTimestamps();
+    }
+
+    public function tags(): BelongsToMany
+    {
+        return $this->belongsToMany(SpecialTag::class, 'menu_item_tags')->withTimestamps();
+    }
+
+    public function modifierGroups(): BelongsToMany
+    {
+        return $this->belongsToMany(ModifierGroup::class, 'menu_item_modifier_groups')
+            ->withPivot('sort_order')
+            ->withTimestamps()
+            ->orderByPivot('sort_order');
+    }
+
+    public function recipeIngredients(): HasMany
+    {
+        return $this->hasMany(MenuItemIngredient::class);
     }
 }
