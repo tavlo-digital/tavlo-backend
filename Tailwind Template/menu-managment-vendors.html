@@ -1,0 +1,1882 @@
+<main class="flex-1 overflow-y-auto">
+    <div class="mx-auto max-w-[1400px] space-y-6 p-6">
+        <div class="flex items-center justify-between">
+            <div>
+                <h2 class="text-2xl font-semibold text-neutral-900">
+                    Menu Management
+                </h2>
+                <p class="mt-1 text-neutral-600">
+                    Manage your menu items, pricing, and availability
+                </p>
+            </div>
+            <div class="flex gap-2">
+                <button
+                    data-slot="button"
+                    class="[&amp;_svg]:pointer-events-none [&amp;_svg:not([class*='size-'])]:size-4 [&amp;_svg]:shrink-0 has-[&gt;svg]:px-3 inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-md border border-blue-600 bg-background px-4 py-2 text-sm font-medium whitespace-nowrap text-blue-600 transition-all outline-none hover:bg-blue-50 hover:text-accent-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:border-input dark:bg-input/30 dark:hover:bg-input/50 dark:aria-invalid:ring-destructive/40"
+                >
+                    <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="24"
+                        height="24"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        class="lucide lucide-file-spreadsheet mr-2 h-4 w-4"
+                    >
+                        <path
+                            d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"
+                        ></path>
+                        <path d="M14 2v4a2 2 0 0 0 2 2h4"></path>
+                        <path d="M8 13h2"></path>
+                        <path d="M14 13h2"></path>
+                        <path d="M8 17h2"></path>
+                        <path d="M14 17h2"></path></svg
+                    >Bulk Upload</button
+                ><button
+                    data-slot="button"
+                    class="[&amp;_svg]:pointer-events-none [&amp;_svg:not([class*='size-'])]:size-4 [&amp;_svg]:shrink-0 has-[&gt;svg]:px-3 inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-md border border-purple-600 bg-background px-4 py-2 text-sm font-medium whitespace-nowrap text-purple-600 transition-all outline-none hover:bg-purple-50 hover:text-accent-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:border-input dark:bg-input/30 dark:hover:bg-input/50 dark:aria-invalid:ring-destructive/40"
+                >
+                    <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="24"
+                        height="24"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        class="lucide lucide-sparkles mr-2 h-4 w-4"
+                    >
+                        <path
+                            d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"
+                        ></path>
+                        <path d="M20 3v4"></path>
+                        <path d="M22 5h-4"></path>
+                        <path d="M4 17v2"></path>
+                        <path d="M5 18H3"></path></svg
+                    >AI Menu Assistant</button
+                ><button
+                    data-slot="button"
+                    class="[&amp;_svg]:pointer-events-none [&amp;_svg:not([class*='size-'])]:size-4 [&amp;_svg]:shrink-0 has-[&gt;svg]:px-3 inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-md border bg-background px-4 py-2 text-sm font-medium whitespace-nowrap text-foreground transition-all outline-none hover:bg-accent hover:text-accent-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:border-input dark:bg-input/30 dark:hover:bg-input/50 dark:aria-invalid:ring-destructive/40"
+                >
+                    <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="24"
+                        height="24"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        class="lucide lucide-plus mr-2 h-4 w-4"
+                    >
+                        <path d="M5 12h14"></path>
+                        <path d="M12 5v14"></path></svg
+                    >Add Category</button
+                ><button
+                    data-slot="button"
+                    class="[&amp;_svg]:pointer-events-none [&amp;_svg:not([class*='size-'])]:size-4 [&amp;_svg]:shrink-0 has-[&gt;svg]:px-3 inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium whitespace-nowrap text-primary-foreground transition-all outline-none hover:bg-blue-700 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40"
+                >
+                    <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="24"
+                        height="24"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        class="lucide lucide-plus mr-2 h-4 w-4"
+                    >
+                        <path d="M5 12h14"></path>
+                        <path d="M12 5v14"></path></svg
+                    >Add New Item
+                </button>
+            </div>
+        </div>
+        <div class="grid grid-cols-1 gap-4 md:grid-cols-4">
+            <div
+                data-slot="card"
+                class="flex flex-col gap-6 rounded-xl border bg-card text-card-foreground"
+            >
+                <div
+                    data-slot="card-content"
+                    class="[&amp;:last-child]:pb-6 p-6"
+                >
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-sm text-neutral-600">Total Items</p>
+                            <p class="mt-1 text-2xl font-semibold">10</p>
+                        </div>
+                        <div
+                            class="flex h-12 w-12 items-center justify-center rounded-lg bg-blue-100"
+                        >
+                            <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                width="24"
+                                height="24"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                class="lucide lucide-utensils-crossed h-6 w-6 text-blue-600"
+                            >
+                                <path
+                                    d="m16 2-2.3 2.3a3 3 0 0 0 0 4.2l1.8 1.8a3 3 0 0 0 4.2 0L22 8"
+                                ></path>
+                                <path
+                                    d="M15 15 3.3 3.3a4.2 4.2 0 0 0 0 6l7.3 7.3c.7.7 2 .7 2.8 0L15 15Zm0 0 7 7"
+                                ></path>
+                                <path d="m2.1 21.8 6.4-6.3"></path>
+                                <path d="m19 5-7 7"></path>
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div
+                data-slot="card"
+                class="flex flex-col gap-6 rounded-xl border bg-card text-card-foreground"
+            >
+                <div
+                    data-slot="card-content"
+                    class="[&amp;:last-child]:pb-6 p-6"
+                >
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-sm text-neutral-600">Categories</p>
+                            <p class="mt-1 text-2xl font-semibold">7</p>
+                        </div>
+                        <div
+                            class="flex h-12 w-12 items-center justify-center rounded-lg bg-green-100"
+                        >
+                            <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                width="24"
+                                height="24"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                class="lucide lucide-funnel h-6 w-6 text-green-600"
+                            >
+                                <path
+                                    d="M10 20a1 1 0 0 0 .553.895l2 1A1 1 0 0 0 14 21v-7a2 2 0 0 1 .517-1.341L21.74 4.67A1 1 0 0 0 21 3H3a1 1 0 0 0-.742 1.67l7.225 7.989A2 2 0 0 1 10 14z"
+                                ></path>
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div
+                data-slot="card"
+                class="flex flex-col gap-6 rounded-xl border bg-card text-card-foreground"
+            >
+                <div
+                    data-slot="card-content"
+                    class="[&amp;:last-child]:pb-6 p-6"
+                >
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-sm text-neutral-600">Avg. Price</p>
+                            <p class="mt-1 text-2xl font-semibold">€12.95</p>
+                        </div>
+                        <div
+                            class="flex h-12 w-12 items-center justify-center rounded-lg bg-orange-100"
+                        >
+                            <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                width="24"
+                                height="24"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                class="lucide lucide-dollar-sign h-6 w-6 text-orange-600"
+                            >
+                                <line x1="12" x2="12" y1="2" y2="22"></line>
+                                <path
+                                    d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"
+                                ></path>
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div
+                data-slot="card"
+                class="flex flex-col gap-6 rounded-xl border bg-card text-card-foreground"
+            >
+                <div
+                    data-slot="card-content"
+                    class="[&amp;:last-child]:pb-6 p-6"
+                >
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-sm text-neutral-600">Avg. Rating</p>
+                            <p class="mt-1 text-2xl font-semibold">
+                                4.7<svg
+                                    xmlns="http://www.w3.org/2000/svg"
+                                    width="24"
+                                    height="24"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    class="lucide lucide-star ml-1 inline h-4 w-4 fill-yellow-500 text-yellow-500"
+                                >
+                                    <path
+                                        d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"
+                                    ></path>
+                                </svg>
+                            </p>
+                        </div>
+                        <div
+                            class="flex h-12 w-12 items-center justify-center rounded-lg bg-yellow-100"
+                        >
+                            <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                width="24"
+                                height="24"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                class="lucide lucide-star h-6 w-6 text-yellow-600"
+                            >
+                                <path
+                                    d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"
+                                ></path>
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div
+            data-slot="card"
+            class="flex flex-col gap-6 rounded-xl border bg-card text-card-foreground"
+        >
+            <div data-slot="card-content" class="[&amp;:last-child]:pb-6 p-4">
+                <div class="flex flex-col gap-4 md:flex-row">
+                    <div class="relative flex-1">
+                        <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            width="24"
+                            height="24"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            class="lucide lucide-search absolute top-1/2 left-3 h-5 w-5 -translate-y-1/2 text-neutral-400"
+                        >
+                            <circle cx="11" cy="11" r="8"></circle>
+                            <path d="m21 21-4.3-4.3"></path></svg
+                        ><input
+                            type="text"
+                            data-slot="input"
+                            class="bg-input-background flex h-9 w-full min-w-0 rounded-md border border-input px-3 py-1 pl-10 text-base transition-[color,box-shadow] outline-none selection:bg-primary selection:text-primary-foreground file:inline-flex file:h-7 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:aria-invalid:ring-destructive/40"
+                            placeholder="Search menu items..."
+                            value=""
+                        />
+                    </div>
+                    <button
+                        type="button"
+                        role="combobox"
+                        aria-controls="radix-:r0:"
+                        aria-expanded="false"
+                        aria-autocomplete="none"
+                        dir="ltr"
+                        data-state="closed"
+                        data-slot="select-trigger"
+                        data-size="default"
+                        class="[&amp;_svg:not([class*='text-'])]:text-muted-foreground bg-input-background [&amp;_svg]:pointer-events-none [&amp;_svg]:shrink-0 [&amp;_svg:not([class*='size-'])]:size-4 flex w-full items-center justify-between gap-2 rounded-md border border-input px-3 py-2 text-sm whitespace-nowrap transition-[color,box-shadow] outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 data-[placeholder]:text-muted-foreground data-[size=default]:h-9 data-[size=sm]:h-8 *:data-[slot=select-value]:line-clamp-1 *:data-[slot=select-value]:flex *:data-[slot=select-value]:items-center *:data-[slot=select-value]:gap-2 md:w-[200px] dark:bg-input/30 dark:hover:bg-input/50 dark:aria-invalid:ring-destructive/40"
+                    >
+                        <span
+                            data-slot="select-value"
+                            style="pointer-events: none"
+                            >All Categories</span
+                        ><svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            width="24"
+                            height="24"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            class="lucide lucide-chevron-down size-4 opacity-50"
+                            aria-hidden="true"
+                        >
+                            <path d="m6 9 6 6 6-6"></path>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+        <div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+            <div
+                data-slot="card"
+                class="flex flex-col gap-6 overflow-hidden rounded-xl border bg-card text-card-foreground transition-shadow hover:shadow-lg"
+            >
+                <div class="relative h-48">
+                    <img
+                        src="https://images.unsplash.com/photo-1558679582-4d81ce75993a?crop=entropy&amp;cs=tinysrgb&amp;fit=max&amp;fm=jpg&amp;ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxicnVzY2hldHRhJTIwdG9tYXRvfGVufDF8fHx8MTc2MzkwMzM0MHww&amp;ixlib=rb-4.1.0&amp;q=80&amp;w=1080"
+                        alt="Bruschetta al Pomodoro"
+                        class="h-full w-full object-cover"
+                    />
+                    <div class="absolute top-2 left-2 flex flex-wrap gap-1">
+                        <span
+                            data-slot="badge"
+                            class="[&amp;&gt;svg]:size-3 [&amp;&gt;svg]:pointer-events-none [a&amp;]:hover:bg-primary/90 inline-flex w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-md border border-transparent bg-neutral-900 px-2 py-0.5 text-xs font-medium whitespace-nowrap text-white transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40"
+                            >Most Ordered</span
+                        >
+                    </div>
+                </div>
+                <div
+                    data-slot="card-content"
+                    class="[&amp;:last-child]:pb-6 p-4"
+                >
+                    <div class="mb-2 flex items-start justify-between">
+                        <div class="flex-1">
+                            <h3 class="font-semibold text-neutral-900">
+                                Bruschetta al Pomodoro
+                            </h3>
+                            <p class="mt-1 text-xs text-neutral-500">
+                                Appetizers
+                            </p>
+                        </div>
+                        <div class="text-right">
+                            <p class="font-semibold text-neutral-900">€8.50</p>
+                            <div
+                                class="mt-1 flex items-center gap-1 text-xs text-neutral-600"
+                            >
+                                <svg
+                                    xmlns="http://www.w3.org/2000/svg"
+                                    width="24"
+                                    height="24"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    class="lucide lucide-star h-3 w-3 fill-yellow-400 text-yellow-400"
+                                >
+                                    <path
+                                        d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"
+                                    ></path></svg
+                                ><span>4.5</span
+                                ><span class="text-neutral-400">(28)</span>
+                            </div>
+                        </div>
+                    </div>
+                    <p class="mb-3 line-clamp-2 text-sm text-neutral-600">
+                        Grilled bread rubbed with garlic and topped with fresh
+                        tomatoes, basil, and extra virgin olive oil.
+                    </p>
+                    <div
+                        class="mb-3 grid grid-cols-4 gap-2 rounded-md bg-neutral-50 p-2"
+                    >
+                        <div class="text-center">
+                            <p class="text-xs text-neutral-500">Cal</p>
+                            <p class="text-xs font-semibold">180</p>
+                        </div>
+                    </div>
+                    <div
+                        class="mb-3 rounded-md border border-blue-100 bg-blue-50 p-2"
+                    >
+                        <p class="mb-1 text-xs font-semibold text-blue-900">
+                            🔧 Customizable
+                        </p>
+                        <div class="space-y-0.5 text-xs text-blue-700">
+                            <p>• 2 paid add-on(s)</p>
+                            <p>• 3 free add-on(s)</p>
+                            <p>• 3 removable item(s)</p>
+                        </div>
+                    </div>
+                    <div
+                        class="mb-3 flex items-center justify-between border-t pt-2 text-xs text-neutral-500"
+                    >
+                        <span>Ordered 342x</span><span>VAT: 10%</span>
+                    </div>
+                    <div
+                        class="mb-3 flex items-center justify-between rounded-md bg-gray-50 p-2"
+                    >
+                        <div class="flex items-center gap-2">
+                            <div
+                                class="h-2 w-2 rounded-full bg-green-500"
+                            ></div>
+                            <span class="text-sm font-medium text-gray-700"
+                                >Available</span
+                            >
+                        </div>
+                        <label
+                            class="relative inline-flex cursor-pointer items-center"
+                            ><input
+                                type="checkbox"
+                                class="peer sr-only"
+                                checked="" />
+                            <div
+                                class="peer h-6 w-11 rounded-full bg-gray-200 peer-checked:bg-green-600 peer-focus:ring-4 peer-focus:ring-blue-300 peer-focus:outline-none after:absolute after:start-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all after:content-[''] peer-checked:after:translate-x-full peer-checked:after:border-white rtl:peer-checked:after:-translate-x-full"
+                            ></div
+                        ></label>
+                    </div>
+                    <div class="mb-3 flex flex-wrap gap-1">
+                        <span
+                            data-slot="badge"
+                            class="[&amp;&gt;svg]:size-3 [&amp;&gt;svg]:pointer-events-none [a&amp;]:hover:bg-accent [a&amp;]:hover:text-accent-foreground inline-flex w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-md border px-2 py-0.5 text-xs font-medium whitespace-nowrap text-foreground transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40"
+                            >vegetarian</span
+                        >
+                    </div>
+                    <div class="flex gap-2 border-t pt-3">
+                        <button
+                            data-slot="button"
+                            class="[&amp;_svg]:pointer-events-none [&amp;_svg:not([class*='size-'])]:size-4 [&amp;_svg]:shrink-0 has-[&gt;svg]:px-2.5 inline-flex h-8 flex-1 items-center justify-center gap-1.5 rounded-md border bg-background px-3 text-sm font-medium whitespace-nowrap text-foreground transition-all outline-none hover:bg-accent hover:text-accent-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:border-input dark:bg-input/30 dark:hover:bg-input/50 dark:aria-invalid:ring-destructive/40"
+                        >
+                            <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                width="24"
+                                height="24"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                class="lucide lucide-pen mr-1 h-3 w-3"
+                            >
+                                <path
+                                    d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"
+                                ></path></svg
+                            >Edit</button
+                        ><button
+                            data-slot="button"
+                            class="[&amp;_svg]:pointer-events-none [&amp;_svg:not([class*='size-'])]:size-4 [&amp;_svg]:shrink-0 has-[&gt;svg]:px-2.5 inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md border bg-background px-3 text-sm font-medium whitespace-nowrap text-red-600 transition-all outline-none hover:bg-red-50 hover:text-red-700 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:border-input dark:bg-input/30 dark:hover:bg-input/50 dark:aria-invalid:ring-destructive/40"
+                        >
+                            <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                width="24"
+                                height="24"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                class="lucide lucide-trash2 lucide-trash-2 h-3 w-3"
+                            >
+                                <path d="M3 6h18"></path>
+                                <path
+                                    d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"
+                                ></path>
+                                <path
+                                    d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"
+                                ></path>
+                                <line x1="10" x2="10" y1="11" y2="17"></line>
+                                <line x1="14" x2="14" y1="11" y2="17"></line>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div
+                data-slot="card"
+                class="flex flex-col gap-6 overflow-hidden rounded-xl border bg-card text-card-foreground transition-shadow hover:shadow-lg"
+            >
+                <div class="relative h-48">
+                    <img
+                        src="https://images.unsplash.com/photo-1595587870672-c79b47875c6a?crop=entropy&amp;cs=tinysrgb&amp;fit=max&amp;fm=jpg&amp;ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxjYXByZXNlJTIwc2FsYWR8ZW58MXx8fHwxNzYzOTI4NDk2fDA&amp;ixlib=rb-4.1.0&amp;q=80&amp;w=1080"
+                        alt="Caprese Salad"
+                        class="h-full w-full object-cover"
+                    />
+                    <div
+                        class="absolute top-2 left-2 flex flex-wrap gap-1"
+                    ></div>
+                </div>
+                <div
+                    data-slot="card-content"
+                    class="[&amp;:last-child]:pb-6 p-4"
+                >
+                    <div class="mb-2 flex items-start justify-between">
+                        <div class="flex-1">
+                            <h3 class="font-semibold text-neutral-900">
+                                Caprese Salad
+                            </h3>
+                            <p class="mt-1 text-xs text-neutral-500">Salads</p>
+                        </div>
+                        <div class="text-right">
+                            <p class="font-semibold text-neutral-900">€12.00</p>
+                            <div
+                                class="mt-1 flex items-center gap-1 text-xs text-neutral-600"
+                            >
+                                <svg
+                                    xmlns="http://www.w3.org/2000/svg"
+                                    width="24"
+                                    height="24"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    class="lucide lucide-star h-3 w-3 fill-yellow-400 text-yellow-400"
+                                >
+                                    <path
+                                        d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"
+                                    ></path></svg
+                                ><span>4.8</span
+                                ><span class="text-neutral-400">(45)</span>
+                            </div>
+                        </div>
+                    </div>
+                    <p class="mb-3 line-clamp-2 text-sm text-neutral-600">
+                        Fresh mozzarella, tomatoes, and basil drizzled with
+                        balsamic glaze.
+                    </p>
+                    <div
+                        class="mb-3 grid grid-cols-4 gap-2 rounded-md bg-neutral-50 p-2"
+                    >
+                        <div class="text-center">
+                            <p class="text-xs text-neutral-500">Cal</p>
+                            <p class="text-xs font-semibold">220</p>
+                        </div>
+                    </div>
+                    <div
+                        class="mb-3 flex items-center justify-between border-t pt-2 text-xs text-neutral-500"
+                    >
+                        <span>Ordered 287x</span><span>VAT: 10%</span>
+                    </div>
+                    <div
+                        class="mb-3 flex items-center justify-between rounded-md bg-gray-50 p-2"
+                    >
+                        <div class="flex items-center gap-2">
+                            <div
+                                class="h-2 w-2 rounded-full bg-green-500"
+                            ></div>
+                            <span class="text-sm font-medium text-gray-700"
+                                >Available</span
+                            >
+                        </div>
+                        <label
+                            class="relative inline-flex cursor-pointer items-center"
+                            ><input
+                                type="checkbox"
+                                class="peer sr-only"
+                                checked="" />
+                            <div
+                                class="peer h-6 w-11 rounded-full bg-gray-200 peer-checked:bg-green-600 peer-focus:ring-4 peer-focus:ring-blue-300 peer-focus:outline-none after:absolute after:start-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all after:content-[''] peer-checked:after:translate-x-full peer-checked:after:border-white rtl:peer-checked:after:-translate-x-full"
+                            ></div
+                        ></label>
+                    </div>
+                    <div class="mb-3 flex flex-wrap gap-1">
+                        <span
+                            data-slot="badge"
+                            class="[&amp;&gt;svg]:size-3 [&amp;&gt;svg]:pointer-events-none [a&amp;]:hover:bg-accent [a&amp;]:hover:text-accent-foreground inline-flex w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-md border px-2 py-0.5 text-xs font-medium whitespace-nowrap text-foreground transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40"
+                            >vegetarian</span
+                        ><span
+                            data-slot="badge"
+                            class="[&amp;&gt;svg]:size-3 [&amp;&gt;svg]:pointer-events-none [a&amp;]:hover:bg-accent [a&amp;]:hover:text-accent-foreground inline-flex w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-md border px-2 py-0.5 text-xs font-medium whitespace-nowrap text-foreground transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40"
+                            >gluten-free</span
+                        >
+                    </div>
+                    <div class="flex gap-2 border-t pt-3">
+                        <button
+                            data-slot="button"
+                            class="[&amp;_svg]:pointer-events-none [&amp;_svg:not([class*='size-'])]:size-4 [&amp;_svg]:shrink-0 has-[&gt;svg]:px-2.5 inline-flex h-8 flex-1 items-center justify-center gap-1.5 rounded-md border bg-background px-3 text-sm font-medium whitespace-nowrap text-foreground transition-all outline-none hover:bg-accent hover:text-accent-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:border-input dark:bg-input/30 dark:hover:bg-input/50 dark:aria-invalid:ring-destructive/40"
+                        >
+                            <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                width="24"
+                                height="24"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                class="lucide lucide-pen mr-1 h-3 w-3"
+                            >
+                                <path
+                                    d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"
+                                ></path></svg
+                            >Edit</button
+                        ><button
+                            data-slot="button"
+                            class="[&amp;_svg]:pointer-events-none [&amp;_svg:not([class*='size-'])]:size-4 [&amp;_svg]:shrink-0 has-[&gt;svg]:px-2.5 inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md border bg-background px-3 text-sm font-medium whitespace-nowrap text-red-600 transition-all outline-none hover:bg-red-50 hover:text-red-700 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:border-input dark:bg-input/30 dark:hover:bg-input/50 dark:aria-invalid:ring-destructive/40"
+                        >
+                            <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                width="24"
+                                height="24"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                class="lucide lucide-trash2 lucide-trash-2 h-3 w-3"
+                            >
+                                <path d="M3 6h18"></path>
+                                <path
+                                    d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"
+                                ></path>
+                                <path
+                                    d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"
+                                ></path>
+                                <line x1="10" x2="10" y1="11" y2="17"></line>
+                                <line x1="14" x2="14" y1="11" y2="17"></line>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div
+                data-slot="card"
+                class="flex flex-col gap-6 overflow-hidden rounded-xl border bg-card text-card-foreground transition-shadow hover:shadow-lg"
+            >
+                <div class="relative h-48">
+                    <img
+                        src="https://images.unsplash.com/photo-1723476654474-77baaeb27012?crop=entropy&amp;cs=tinysrgb&amp;fit=max&amp;fm=jpg&amp;ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxyaXNvdHRvJTIwbXVzaHJvb218ZW58MXx8fHwxNzYzOTE3NzkwfDA&amp;ixlib=rb-4.1.0&amp;q=80&amp;w=1080"
+                        alt="Truffle Mushroom Risotto"
+                        class="h-full w-full object-cover"
+                    />
+                    <div class="absolute top-2 left-2 flex flex-wrap gap-1">
+                        <span
+                            data-slot="badge"
+                            class="[&amp;&gt;svg]:size-3 [&amp;&gt;svg]:pointer-events-none [a&amp;]:hover:bg-primary/90 inline-flex w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-md border border-transparent bg-neutral-900 px-2 py-0.5 text-xs font-medium whitespace-nowrap text-white transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40"
+                            >Most Ordered</span
+                        >
+                    </div>
+                </div>
+                <div
+                    data-slot="card-content"
+                    class="[&amp;:last-child]:pb-6 p-4"
+                >
+                    <div class="mb-2 flex items-start justify-between">
+                        <div class="flex-1">
+                            <h3 class="font-semibold text-neutral-900">
+                                Truffle Mushroom Risotto
+                            </h3>
+                            <p class="mt-1 text-xs text-neutral-500">Mains</p>
+                        </div>
+                        <div class="text-right">
+                            <p class="font-semibold text-neutral-900">€22.00</p>
+                            <div
+                                class="mt-1 flex items-center gap-1 text-xs text-neutral-600"
+                            >
+                                <svg
+                                    xmlns="http://www.w3.org/2000/svg"
+                                    width="24"
+                                    height="24"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    class="lucide lucide-star h-3 w-3 fill-yellow-400 text-yellow-400"
+                                >
+                                    <path
+                                        d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"
+                                    ></path></svg
+                                ><span>4.9</span
+                                ><span class="text-neutral-400">(78)</span>
+                            </div>
+                        </div>
+                    </div>
+                    <p class="mb-3 line-clamp-2 text-sm text-neutral-600">
+                        Creamy Arborio rice with wild mushrooms, black truffle,
+                        and Parmigiano-Reggiano.
+                    </p>
+                    <div
+                        class="mb-3 grid grid-cols-4 gap-2 rounded-md bg-neutral-50 p-2"
+                    >
+                        <div class="text-center">
+                            <p class="text-xs text-neutral-500">Cal</p>
+                            <p class="text-xs font-semibold">520</p>
+                        </div>
+                    </div>
+                    <div
+                        class="mb-3 rounded-md border border-blue-100 bg-blue-50 p-2"
+                    >
+                        <p class="mb-1 text-xs font-semibold text-blue-900">
+                            🔧 Customizable
+                        </p>
+                        <div class="space-y-0.5 text-xs text-blue-700">
+                            <p>• 4 paid add-on(s)</p>
+                            <p>• 4 free add-on(s)</p>
+                            <p>• 3 removable item(s)</p>
+                        </div>
+                    </div>
+                    <div
+                        class="mb-3 flex items-center justify-between border-t pt-2 text-xs text-neutral-500"
+                    >
+                        <span>Ordered 445x</span><span>VAT: 10%</span>
+                    </div>
+                    <div
+                        class="mb-3 flex items-center justify-between rounded-md bg-gray-50 p-2"
+                    >
+                        <div class="flex items-center gap-2">
+                            <div
+                                class="h-2 w-2 rounded-full bg-green-500"
+                            ></div>
+                            <span class="text-sm font-medium text-gray-700"
+                                >Available</span
+                            >
+                        </div>
+                        <label
+                            class="relative inline-flex cursor-pointer items-center"
+                            ><input
+                                type="checkbox"
+                                class="peer sr-only"
+                                checked="" />
+                            <div
+                                class="peer h-6 w-11 rounded-full bg-gray-200 peer-checked:bg-green-600 peer-focus:ring-4 peer-focus:ring-blue-300 peer-focus:outline-none after:absolute after:start-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all after:content-[''] peer-checked:after:translate-x-full peer-checked:after:border-white rtl:peer-checked:after:-translate-x-full"
+                            ></div
+                        ></label>
+                    </div>
+                    <div class="mb-3 flex flex-wrap gap-1">
+                        <span
+                            data-slot="badge"
+                            class="[&amp;&gt;svg]:size-3 [&amp;&gt;svg]:pointer-events-none [a&amp;]:hover:bg-accent [a&amp;]:hover:text-accent-foreground inline-flex w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-md border px-2 py-0.5 text-xs font-medium whitespace-nowrap text-foreground transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40"
+                            >vegetarian</span
+                        ><span
+                            data-slot="badge"
+                            class="[&amp;&gt;svg]:size-3 [&amp;&gt;svg]:pointer-events-none [a&amp;]:hover:bg-accent [a&amp;]:hover:text-accent-foreground inline-flex w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-md border px-2 py-0.5 text-xs font-medium whitespace-nowrap text-foreground transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40"
+                            >gluten-free</span
+                        >
+                    </div>
+                    <div class="flex gap-2 border-t pt-3">
+                        <button
+                            data-slot="button"
+                            class="[&amp;_svg]:pointer-events-none [&amp;_svg:not([class*='size-'])]:size-4 [&amp;_svg]:shrink-0 has-[&gt;svg]:px-2.5 inline-flex h-8 flex-1 items-center justify-center gap-1.5 rounded-md border bg-background px-3 text-sm font-medium whitespace-nowrap text-foreground transition-all outline-none hover:bg-accent hover:text-accent-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:border-input dark:bg-input/30 dark:hover:bg-input/50 dark:aria-invalid:ring-destructive/40"
+                        >
+                            <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                width="24"
+                                height="24"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                class="lucide lucide-pen mr-1 h-3 w-3"
+                            >
+                                <path
+                                    d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"
+                                ></path></svg
+                            >Edit</button
+                        ><button
+                            data-slot="button"
+                            class="[&amp;_svg]:pointer-events-none [&amp;_svg:not([class*='size-'])]:size-4 [&amp;_svg]:shrink-0 has-[&gt;svg]:px-2.5 inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md border bg-background px-3 text-sm font-medium whitespace-nowrap text-red-600 transition-all outline-none hover:bg-red-50 hover:text-red-700 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:border-input dark:bg-input/30 dark:hover:bg-input/50 dark:aria-invalid:ring-destructive/40"
+                        >
+                            <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                width="24"
+                                height="24"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                class="lucide lucide-trash2 lucide-trash-2 h-3 w-3"
+                            >
+                                <path d="M3 6h18"></path>
+                                <path
+                                    d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"
+                                ></path>
+                                <path
+                                    d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"
+                                ></path>
+                                <line x1="10" x2="10" y1="11" y2="17"></line>
+                                <line x1="14" x2="14" y1="11" y2="17"></line>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div
+                data-slot="card"
+                class="flex flex-col gap-6 overflow-hidden rounded-xl border bg-card text-card-foreground transition-shadow hover:shadow-lg"
+            >
+                <div class="relative h-48">
+                    <img
+                        src="https://images.unsplash.com/photo-1519708227418-c8fd9a32b7a2?crop=entropy&amp;cs=tinysrgb&amp;fit=max&amp;fm=jpg&amp;ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxncmlsbGVkJTIwc2FsbW9ufGVufDF8fHx8MTc2MzkyMTQ5OXww&amp;ixlib=rb-4.1.0&amp;q=80&amp;w=1080"
+                        alt="Grilled Salmon Fillet"
+                        class="h-full w-full object-cover"
+                    />
+                    <div
+                        class="absolute top-2 left-2 flex flex-wrap gap-1"
+                    ></div>
+                </div>
+                <div
+                    data-slot="card-content"
+                    class="[&amp;:last-child]:pb-6 p-4"
+                >
+                    <div class="mb-2 flex items-start justify-between">
+                        <div class="flex-1">
+                            <h3 class="font-semibold text-neutral-900">
+                                Grilled Salmon Fillet
+                            </h3>
+                            <p class="mt-1 text-xs text-neutral-500">Mains</p>
+                        </div>
+                        <div class="text-right">
+                            <p class="font-semibold text-neutral-900">€24.50</p>
+                            <div
+                                class="mt-1 flex items-center gap-1 text-xs text-neutral-600"
+                            >
+                                <svg
+                                    xmlns="http://www.w3.org/2000/svg"
+                                    width="24"
+                                    height="24"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    class="lucide lucide-star h-3 w-3 fill-yellow-400 text-yellow-400"
+                                >
+                                    <path
+                                        d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"
+                                    ></path></svg
+                                ><span>4.7</span
+                                ><span class="text-neutral-400">(56)</span>
+                            </div>
+                        </div>
+                    </div>
+                    <p class="mb-3 line-clamp-2 text-sm text-neutral-600">
+                        Fresh Atlantic salmon grilled to perfection, served with
+                        seasonal vegetables and lemon butter sauce.
+                    </p>
+                    <div
+                        class="mb-3 grid grid-cols-4 gap-2 rounded-md bg-neutral-50 p-2"
+                    >
+                        <div class="text-center">
+                            <p class="text-xs text-neutral-500">Cal</p>
+                            <p class="text-xs font-semibold">420</p>
+                        </div>
+                    </div>
+                    <div
+                        class="mb-3 rounded-md border border-blue-100 bg-blue-50 p-2"
+                    >
+                        <p class="mb-1 text-xs font-semibold text-blue-900">
+                            🔧 Customizable
+                        </p>
+                        <div class="space-y-0.5 text-xs text-blue-700">
+                            <p>• 4 paid add-on(s)</p>
+                            <p>• 3 free add-on(s)</p>
+                            <p>• 3 removable item(s)</p>
+                        </div>
+                    </div>
+                    <div
+                        class="mb-3 flex items-center justify-between border-t pt-2 text-xs text-neutral-500"
+                    >
+                        <span>Ordered 312x</span><span>VAT: 10%</span>
+                    </div>
+                    <div
+                        class="mb-3 flex items-center justify-between rounded-md bg-gray-50 p-2"
+                    >
+                        <div class="flex items-center gap-2">
+                            <div
+                                class="h-2 w-2 rounded-full bg-green-500"
+                            ></div>
+                            <span class="text-sm font-medium text-gray-700"
+                                >Available</span
+                            >
+                        </div>
+                        <label
+                            class="relative inline-flex cursor-pointer items-center"
+                            ><input
+                                type="checkbox"
+                                class="peer sr-only"
+                                checked="" />
+                            <div
+                                class="peer h-6 w-11 rounded-full bg-gray-200 peer-checked:bg-green-600 peer-focus:ring-4 peer-focus:ring-blue-300 peer-focus:outline-none after:absolute after:start-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all after:content-[''] peer-checked:after:translate-x-full peer-checked:after:border-white rtl:peer-checked:after:-translate-x-full"
+                            ></div
+                        ></label>
+                    </div>
+                    <div class="mb-3 flex flex-wrap gap-1">
+                        <span
+                            data-slot="badge"
+                            class="[&amp;&gt;svg]:size-3 [&amp;&gt;svg]:pointer-events-none [a&amp;]:hover:bg-accent [a&amp;]:hover:text-accent-foreground inline-flex w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-md border px-2 py-0.5 text-xs font-medium whitespace-nowrap text-foreground transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40"
+                            >pescatarian</span
+                        ><span
+                            data-slot="badge"
+                            class="[&amp;&gt;svg]:size-3 [&amp;&gt;svg]:pointer-events-none [a&amp;]:hover:bg-accent [a&amp;]:hover:text-accent-foreground inline-flex w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-md border px-2 py-0.5 text-xs font-medium whitespace-nowrap text-foreground transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40"
+                            >gluten-free</span
+                        >
+                    </div>
+                    <div class="flex gap-2 border-t pt-3">
+                        <button
+                            data-slot="button"
+                            class="[&amp;_svg]:pointer-events-none [&amp;_svg:not([class*='size-'])]:size-4 [&amp;_svg]:shrink-0 has-[&gt;svg]:px-2.5 inline-flex h-8 flex-1 items-center justify-center gap-1.5 rounded-md border bg-background px-3 text-sm font-medium whitespace-nowrap text-foreground transition-all outline-none hover:bg-accent hover:text-accent-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:border-input dark:bg-input/30 dark:hover:bg-input/50 dark:aria-invalid:ring-destructive/40"
+                        >
+                            <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                width="24"
+                                height="24"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                class="lucide lucide-pen mr-1 h-3 w-3"
+                            >
+                                <path
+                                    d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"
+                                ></path></svg
+                            >Edit</button
+                        ><button
+                            data-slot="button"
+                            class="[&amp;_svg]:pointer-events-none [&amp;_svg:not([class*='size-'])]:size-4 [&amp;_svg]:shrink-0 has-[&gt;svg]:px-2.5 inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md border bg-background px-3 text-sm font-medium whitespace-nowrap text-red-600 transition-all outline-none hover:bg-red-50 hover:text-red-700 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:border-input dark:bg-input/30 dark:hover:bg-input/50 dark:aria-invalid:ring-destructive/40"
+                        >
+                            <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                width="24"
+                                height="24"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                class="lucide lucide-trash2 lucide-trash-2 h-3 w-3"
+                            >
+                                <path d="M3 6h18"></path>
+                                <path
+                                    d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"
+                                ></path>
+                                <path
+                                    d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"
+                                ></path>
+                                <line x1="10" x2="10" y1="11" y2="17"></line>
+                                <line x1="14" x2="14" y1="11" y2="17"></line>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div
+                data-slot="card"
+                class="flex flex-col gap-6 overflow-hidden rounded-xl border bg-card text-card-foreground transition-shadow hover:shadow-lg"
+            >
+                <div class="relative h-48">
+                    <img
+                        src="https://images.unsplash.com/photo-1550304943-4f24f54ddde9?crop=entropy&amp;cs=tinysrgb&amp;fit=max&amp;fm=jpg&amp;ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxjYWVzYXIlMjBzYWxhZHxlbnwxfHx8fDE3NjM5MDI0MDh8MA&amp;ixlib=rb-4.1.0&amp;q=80&amp;w=1080"
+                        alt="Classic Caesar Salad"
+                        class="h-full w-full object-cover"
+                    />
+                    <div class="absolute top-2 left-2 flex flex-wrap gap-1">
+                        <span
+                            data-slot="badge"
+                            class="[&amp;&gt;svg]:size-3 [&amp;&gt;svg]:pointer-events-none [a&amp;]:hover:bg-primary/90 inline-flex w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-md border border-transparent bg-neutral-900 px-2 py-0.5 text-xs font-medium whitespace-nowrap text-white transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40"
+                            >Most Ordered</span
+                        >
+                    </div>
+                </div>
+                <div
+                    data-slot="card-content"
+                    class="[&amp;:last-child]:pb-6 p-4"
+                >
+                    <div class="mb-2 flex items-start justify-between">
+                        <div class="flex-1">
+                            <h3 class="font-semibold text-neutral-900">
+                                Classic Caesar Salad
+                            </h3>
+                            <p class="mt-1 text-xs text-neutral-500">Salads</p>
+                        </div>
+                        <div class="text-right">
+                            <p class="font-semibold text-neutral-900">€11.50</p>
+                            <div
+                                class="mt-1 flex items-center gap-1 text-xs text-neutral-600"
+                            >
+                                <svg
+                                    xmlns="http://www.w3.org/2000/svg"
+                                    width="24"
+                                    height="24"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    class="lucide lucide-star h-3 w-3 fill-yellow-400 text-yellow-400"
+                                >
+                                    <path
+                                        d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"
+                                    ></path></svg
+                                ><span>4.6</span
+                                ><span class="text-neutral-400">(62)</span>
+                            </div>
+                        </div>
+                    </div>
+                    <p class="mb-3 line-clamp-2 text-sm text-neutral-600">
+                        Crisp romaine lettuce with Caesar dressing, croutons,
+                        and shaved Parmesan.
+                    </p>
+                    <div
+                        class="mb-3 grid grid-cols-4 gap-2 rounded-md bg-neutral-50 p-2"
+                    >
+                        <div class="text-center">
+                            <p class="text-xs text-neutral-500">Cal</p>
+                            <p class="text-xs font-semibold">280</p>
+                        </div>
+                    </div>
+                    <div
+                        class="mb-3 flex items-center justify-between border-t pt-2 text-xs text-neutral-500"
+                    >
+                        <span>Ordered 398x</span><span>VAT: 10%</span>
+                    </div>
+                    <div
+                        class="mb-3 flex items-center justify-between rounded-md bg-gray-50 p-2"
+                    >
+                        <div class="flex items-center gap-2">
+                            <div
+                                class="h-2 w-2 rounded-full bg-green-500"
+                            ></div>
+                            <span class="text-sm font-medium text-gray-700"
+                                >Available</span
+                            >
+                        </div>
+                        <label
+                            class="relative inline-flex cursor-pointer items-center"
+                            ><input
+                                type="checkbox"
+                                class="peer sr-only"
+                                checked="" />
+                            <div
+                                class="peer h-6 w-11 rounded-full bg-gray-200 peer-checked:bg-green-600 peer-focus:ring-4 peer-focus:ring-blue-300 peer-focus:outline-none after:absolute after:start-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all after:content-[''] peer-checked:after:translate-x-full peer-checked:after:border-white rtl:peer-checked:after:-translate-x-full"
+                            ></div
+                        ></label>
+                    </div>
+                    <div class="mb-3 flex flex-wrap gap-1">
+                        <span
+                            data-slot="badge"
+                            class="[&amp;&gt;svg]:size-3 [&amp;&gt;svg]:pointer-events-none [a&amp;]:hover:bg-accent [a&amp;]:hover:text-accent-foreground inline-flex w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-md border px-2 py-0.5 text-xs font-medium whitespace-nowrap text-foreground transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40"
+                            >vegetarian</span
+                        >
+                    </div>
+                    <div class="flex gap-2 border-t pt-3">
+                        <button
+                            data-slot="button"
+                            class="[&amp;_svg]:pointer-events-none [&amp;_svg:not([class*='size-'])]:size-4 [&amp;_svg]:shrink-0 has-[&gt;svg]:px-2.5 inline-flex h-8 flex-1 items-center justify-center gap-1.5 rounded-md border bg-background px-3 text-sm font-medium whitespace-nowrap text-foreground transition-all outline-none hover:bg-accent hover:text-accent-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:border-input dark:bg-input/30 dark:hover:bg-input/50 dark:aria-invalid:ring-destructive/40"
+                        >
+                            <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                width="24"
+                                height="24"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                class="lucide lucide-pen mr-1 h-3 w-3"
+                            >
+                                <path
+                                    d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"
+                                ></path></svg
+                            >Edit</button
+                        ><button
+                            data-slot="button"
+                            class="[&amp;_svg]:pointer-events-none [&amp;_svg:not([class*='size-'])]:size-4 [&amp;_svg]:shrink-0 has-[&gt;svg]:px-2.5 inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md border bg-background px-3 text-sm font-medium whitespace-nowrap text-red-600 transition-all outline-none hover:bg-red-50 hover:text-red-700 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:border-input dark:bg-input/30 dark:hover:bg-input/50 dark:aria-invalid:ring-destructive/40"
+                        >
+                            <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                width="24"
+                                height="24"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                class="lucide lucide-trash2 lucide-trash-2 h-3 w-3"
+                            >
+                                <path d="M3 6h18"></path>
+                                <path
+                                    d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"
+                                ></path>
+                                <path
+                                    d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"
+                                ></path>
+                                <line x1="10" x2="10" y1="11" y2="17"></line>
+                                <line x1="14" x2="14" y1="11" y2="17"></line>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div
+                data-slot="card"
+                class="flex flex-col gap-6 overflow-hidden rounded-xl border bg-card text-card-foreground transition-shadow hover:shadow-lg"
+            >
+                <div class="relative h-48">
+                    <img
+                        src="https://images.unsplash.com/photo-1588013273468-315fd88ea34c?crop=entropy&amp;cs=tinysrgb&amp;fit=max&amp;fm=jpg&amp;ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxjYXJib25hcmElMjBwYXN0YXxlbnwxfHx8fDE3NjM4MjgyOTd8MA&amp;ixlib=rb-4.1.0&amp;q=80&amp;w=1080"
+                        alt="Spaghetti Carbonara"
+                        class="h-full w-full object-cover"
+                    />
+                    <div class="absolute top-2 left-2 flex flex-wrap gap-1">
+                        <span
+                            data-slot="badge"
+                            class="[&amp;&gt;svg]:size-3 [&amp;&gt;svg]:pointer-events-none [a&amp;]:hover:bg-primary/90 inline-flex w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-md border border-transparent bg-neutral-900 px-2 py-0.5 text-xs font-medium whitespace-nowrap text-white transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40"
+                            >Most Ordered</span
+                        >
+                    </div>
+                </div>
+                <div
+                    data-slot="card-content"
+                    class="[&amp;:last-child]:pb-6 p-4"
+                >
+                    <div class="mb-2 flex items-start justify-between">
+                        <div class="flex-1">
+                            <h3 class="font-semibold text-neutral-900">
+                                Spaghetti Carbonara
+                            </h3>
+                            <p class="mt-1 text-xs text-neutral-500">Mains</p>
+                        </div>
+                        <div class="text-right">
+                            <p class="font-semibold text-neutral-900">€16.50</p>
+                            <div
+                                class="mt-1 flex items-center gap-1 text-xs text-neutral-600"
+                            >
+                                <svg
+                                    xmlns="http://www.w3.org/2000/svg"
+                                    width="24"
+                                    height="24"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    class="lucide lucide-star h-3 w-3 fill-yellow-400 text-yellow-400"
+                                >
+                                    <path
+                                        d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"
+                                    ></path></svg
+                                ><span>4.7</span
+                                ><span class="text-neutral-400">(62)</span>
+                            </div>
+                        </div>
+                    </div>
+                    <p class="mb-3 line-clamp-2 text-sm text-neutral-600">
+                        Classic Roman pasta with guanciale, eggs, Pecorino
+                        Romano, and black pepper.
+                    </p>
+                    <div
+                        class="mb-3 grid grid-cols-4 gap-2 rounded-md bg-neutral-50 p-2"
+                    >
+                        <div class="text-center">
+                            <p class="text-xs text-neutral-500">Cal</p>
+                            <p class="text-xs font-semibold">580</p>
+                        </div>
+                    </div>
+                    <div
+                        class="mb-3 flex items-center justify-between border-t pt-2 text-xs text-neutral-500"
+                    >
+                        <span>Ordered 521x</span><span>VAT: 10%</span>
+                    </div>
+                    <div
+                        class="mb-3 flex items-center justify-between rounded-md bg-gray-50 p-2"
+                    >
+                        <div class="flex items-center gap-2">
+                            <div
+                                class="h-2 w-2 rounded-full bg-green-500"
+                            ></div>
+                            <span class="text-sm font-medium text-gray-700"
+                                >Available</span
+                            >
+                        </div>
+                        <label
+                            class="relative inline-flex cursor-pointer items-center"
+                            ><input
+                                type="checkbox"
+                                class="peer sr-only"
+                                checked="" />
+                            <div
+                                class="peer h-6 w-11 rounded-full bg-gray-200 peer-checked:bg-green-600 peer-focus:ring-4 peer-focus:ring-blue-300 peer-focus:outline-none after:absolute after:start-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all after:content-[''] peer-checked:after:translate-x-full peer-checked:after:border-white rtl:peer-checked:after:-translate-x-full"
+                            ></div
+                        ></label>
+                    </div>
+                    <div class="flex gap-2 border-t pt-3">
+                        <button
+                            data-slot="button"
+                            class="[&amp;_svg]:pointer-events-none [&amp;_svg:not([class*='size-'])]:size-4 [&amp;_svg]:shrink-0 has-[&gt;svg]:px-2.5 inline-flex h-8 flex-1 items-center justify-center gap-1.5 rounded-md border bg-background px-3 text-sm font-medium whitespace-nowrap text-foreground transition-all outline-none hover:bg-accent hover:text-accent-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:border-input dark:bg-input/30 dark:hover:bg-input/50 dark:aria-invalid:ring-destructive/40"
+                        >
+                            <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                width="24"
+                                height="24"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                class="lucide lucide-pen mr-1 h-3 w-3"
+                            >
+                                <path
+                                    d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"
+                                ></path></svg
+                            >Edit</button
+                        ><button
+                            data-slot="button"
+                            class="[&amp;_svg]:pointer-events-none [&amp;_svg:not([class*='size-'])]:size-4 [&amp;_svg]:shrink-0 has-[&gt;svg]:px-2.5 inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md border bg-background px-3 text-sm font-medium whitespace-nowrap text-red-600 transition-all outline-none hover:bg-red-50 hover:text-red-700 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:border-input dark:bg-input/30 dark:hover:bg-input/50 dark:aria-invalid:ring-destructive/40"
+                        >
+                            <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                width="24"
+                                height="24"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                class="lucide lucide-trash2 lucide-trash-2 h-3 w-3"
+                            >
+                                <path d="M3 6h18"></path>
+                                <path
+                                    d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"
+                                ></path>
+                                <path
+                                    d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"
+                                ></path>
+                                <line x1="10" x2="10" y1="11" y2="17"></line>
+                                <line x1="14" x2="14" y1="11" y2="17"></line>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div
+                data-slot="card"
+                class="flex flex-col gap-6 overflow-hidden rounded-xl border bg-card text-card-foreground transition-shadow hover:shadow-lg"
+            >
+                <div class="relative h-48">
+                    <img
+                        src="https://images.unsplash.com/photo-1574071318508-1cdbab80d002?crop=entropy&amp;cs=tinysrgb&amp;fit=max&amp;fm=jpg&amp;ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxtYXJnaGVyaXRhJTIwcGl6emF8ZW58MXx8fHwxNzYzODkwMDM2fDA&amp;ixlib=rb-4.1.0&amp;q=80&amp;w=1080"
+                        alt="Margherita Pizza"
+                        class="h-full w-full object-cover"
+                    />
+                    <div class="absolute top-2 left-2 flex flex-wrap gap-1">
+                        <span
+                            data-slot="badge"
+                            class="[&amp;&gt;svg]:size-3 [&amp;&gt;svg]:pointer-events-none [a&amp;]:hover:bg-primary/90 inline-flex w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-md border border-transparent bg-neutral-900 px-2 py-0.5 text-xs font-medium whitespace-nowrap text-white transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40"
+                            >Most Ordered</span
+                        >
+                    </div>
+                </div>
+                <div
+                    data-slot="card-content"
+                    class="[&amp;:last-child]:pb-6 p-4"
+                >
+                    <div class="mb-2 flex items-start justify-between">
+                        <div class="flex-1">
+                            <h3 class="font-semibold text-neutral-900">
+                                Margherita Pizza
+                            </h3>
+                            <p class="mt-1 text-xs text-neutral-500">Mains</p>
+                        </div>
+                        <div class="text-right">
+                            <p class="font-semibold text-neutral-900">€14.00</p>
+                            <div
+                                class="mt-1 flex items-center gap-1 text-xs text-neutral-600"
+                            >
+                                <svg
+                                    xmlns="http://www.w3.org/2000/svg"
+                                    width="24"
+                                    height="24"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    class="lucide lucide-star h-3 w-3 fill-yellow-400 text-yellow-400"
+                                >
+                                    <path
+                                        d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"
+                                    ></path></svg
+                                ><span>4.9</span
+                                ><span class="text-neutral-400">(89)</span>
+                            </div>
+                        </div>
+                    </div>
+                    <p class="mb-3 line-clamp-2 text-sm text-neutral-600">
+                        Wood-fired pizza with San Marzano tomatoes, fresh
+                        mozzarella, and basil.
+                    </p>
+                    <div
+                        class="mb-3 grid grid-cols-4 gap-2 rounded-md bg-neutral-50 p-2"
+                    >
+                        <div class="text-center">
+                            <p class="text-xs text-neutral-500">Cal</p>
+                            <p class="text-xs font-semibold">680</p>
+                        </div>
+                    </div>
+                    <div
+                        class="mb-3 flex items-center justify-between border-t pt-2 text-xs text-neutral-500"
+                    >
+                        <span>Ordered 698x</span><span>VAT: 10%</span>
+                    </div>
+                    <div
+                        class="mb-3 flex items-center justify-between rounded-md bg-gray-50 p-2"
+                    >
+                        <div class="flex items-center gap-2">
+                            <div
+                                class="h-2 w-2 rounded-full bg-green-500"
+                            ></div>
+                            <span class="text-sm font-medium text-gray-700"
+                                >Available</span
+                            >
+                        </div>
+                        <label
+                            class="relative inline-flex cursor-pointer items-center"
+                            ><input
+                                type="checkbox"
+                                class="peer sr-only"
+                                checked="" />
+                            <div
+                                class="peer h-6 w-11 rounded-full bg-gray-200 peer-checked:bg-green-600 peer-focus:ring-4 peer-focus:ring-blue-300 peer-focus:outline-none after:absolute after:start-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all after:content-[''] peer-checked:after:translate-x-full peer-checked:after:border-white rtl:peer-checked:after:-translate-x-full"
+                            ></div
+                        ></label>
+                    </div>
+                    <div class="mb-3 flex flex-wrap gap-1">
+                        <span
+                            data-slot="badge"
+                            class="[&amp;&gt;svg]:size-3 [&amp;&gt;svg]:pointer-events-none [a&amp;]:hover:bg-accent [a&amp;]:hover:text-accent-foreground inline-flex w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-md border px-2 py-0.5 text-xs font-medium whitespace-nowrap text-foreground transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40"
+                            >vegetarian</span
+                        >
+                    </div>
+                    <div class="flex gap-2 border-t pt-3">
+                        <button
+                            data-slot="button"
+                            class="[&amp;_svg]:pointer-events-none [&amp;_svg:not([class*='size-'])]:size-4 [&amp;_svg]:shrink-0 has-[&gt;svg]:px-2.5 inline-flex h-8 flex-1 items-center justify-center gap-1.5 rounded-md border bg-background px-3 text-sm font-medium whitespace-nowrap text-foreground transition-all outline-none hover:bg-accent hover:text-accent-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:border-input dark:bg-input/30 dark:hover:bg-input/50 dark:aria-invalid:ring-destructive/40"
+                        >
+                            <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                width="24"
+                                height="24"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                class="lucide lucide-pen mr-1 h-3 w-3"
+                            >
+                                <path
+                                    d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"
+                                ></path></svg
+                            >Edit</button
+                        ><button
+                            data-slot="button"
+                            class="[&amp;_svg]:pointer-events-none [&amp;_svg:not([class*='size-'])]:size-4 [&amp;_svg]:shrink-0 has-[&gt;svg]:px-2.5 inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md border bg-background px-3 text-sm font-medium whitespace-nowrap text-red-600 transition-all outline-none hover:bg-red-50 hover:text-red-700 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:border-input dark:bg-input/30 dark:hover:bg-input/50 dark:aria-invalid:ring-destructive/40"
+                        >
+                            <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                width="24"
+                                height="24"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                class="lucide lucide-trash2 lucide-trash-2 h-3 w-3"
+                            >
+                                <path d="M3 6h18"></path>
+                                <path
+                                    d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"
+                                ></path>
+                                <path
+                                    d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"
+                                ></path>
+                                <line x1="10" x2="10" y1="11" y2="17"></line>
+                                <line x1="14" x2="14" y1="11" y2="17"></line>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div
+                data-slot="card"
+                class="flex flex-col gap-6 overflow-hidden rounded-xl border bg-card text-card-foreground transition-shadow hover:shadow-lg"
+            >
+                <div class="relative h-48">
+                    <img
+                        src="https://images.unsplash.com/photo-1714385905983-6f8e06fffae1?crop=entropy&amp;cs=tinysrgb&amp;fit=max&amp;fm=jpg&amp;ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHx0aXJhbWlzdSUyMGRlc3NlcnR8ZW58MXx8fHwxNzYzODQ2OTA2fDA&amp;ixlib=rb-4.1.0&amp;q=80&amp;w=1080"
+                        alt="Tiramisu"
+                        class="h-full w-full object-cover"
+                    />
+                    <div
+                        class="absolute top-2 left-2 flex flex-wrap gap-1"
+                    ></div>
+                </div>
+                <div
+                    data-slot="card-content"
+                    class="[&amp;:last-child]:pb-6 p-4"
+                >
+                    <div class="mb-2 flex items-start justify-between">
+                        <div class="flex-1">
+                            <h3 class="font-semibold text-neutral-900">
+                                Tiramisu
+                            </h3>
+                            <p class="mt-1 text-xs text-neutral-500">
+                                Desserts
+                            </p>
+                        </div>
+                        <div class="text-right">
+                            <p class="font-semibold text-neutral-900">€7.50</p>
+                            <div
+                                class="mt-1 flex items-center gap-1 text-xs text-neutral-600"
+                            >
+                                <svg
+                                    xmlns="http://www.w3.org/2000/svg"
+                                    width="24"
+                                    height="24"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    class="lucide lucide-star h-3 w-3 fill-yellow-400 text-yellow-400"
+                                >
+                                    <path
+                                        d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"
+                                    ></path></svg
+                                ><span>4.6</span
+                                ><span class="text-neutral-400">(34)</span>
+                            </div>
+                        </div>
+                    </div>
+                    <p class="mb-3 line-clamp-2 text-sm text-neutral-600">
+                        Classic Italian dessert with coffee-soaked ladyfingers
+                        and mascarpone cream.
+                    </p>
+                    <div
+                        class="mb-3 grid grid-cols-4 gap-2 rounded-md bg-neutral-50 p-2"
+                    >
+                        <div class="text-center">
+                            <p class="text-xs text-neutral-500">Cal</p>
+                            <p class="text-xs font-semibold">450</p>
+                        </div>
+                    </div>
+                    <div
+                        class="mb-3 flex items-center justify-between border-t pt-2 text-xs text-neutral-500"
+                    >
+                        <span>Ordered 234x</span><span>VAT: 10%</span>
+                    </div>
+                    <div
+                        class="mb-3 flex items-center justify-between rounded-md bg-gray-50 p-2"
+                    >
+                        <div class="flex items-center gap-2">
+                            <div
+                                class="h-2 w-2 rounded-full bg-green-500"
+                            ></div>
+                            <span class="text-sm font-medium text-gray-700"
+                                >Available</span
+                            >
+                        </div>
+                        <label
+                            class="relative inline-flex cursor-pointer items-center"
+                            ><input
+                                type="checkbox"
+                                class="peer sr-only"
+                                checked="" />
+                            <div
+                                class="peer h-6 w-11 rounded-full bg-gray-200 peer-checked:bg-green-600 peer-focus:ring-4 peer-focus:ring-blue-300 peer-focus:outline-none after:absolute after:start-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all after:content-[''] peer-checked:after:translate-x-full peer-checked:after:border-white rtl:peer-checked:after:-translate-x-full"
+                            ></div
+                        ></label>
+                    </div>
+                    <div class="mb-3 flex flex-wrap gap-1">
+                        <span
+                            data-slot="badge"
+                            class="[&amp;&gt;svg]:size-3 [&amp;&gt;svg]:pointer-events-none [a&amp;]:hover:bg-accent [a&amp;]:hover:text-accent-foreground inline-flex w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-md border px-2 py-0.5 text-xs font-medium whitespace-nowrap text-foreground transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40"
+                            >vegetarian</span
+                        >
+                    </div>
+                    <div class="flex gap-2 border-t pt-3">
+                        <button
+                            data-slot="button"
+                            class="[&amp;_svg]:pointer-events-none [&amp;_svg:not([class*='size-'])]:size-4 [&amp;_svg]:shrink-0 has-[&gt;svg]:px-2.5 inline-flex h-8 flex-1 items-center justify-center gap-1.5 rounded-md border bg-background px-3 text-sm font-medium whitespace-nowrap text-foreground transition-all outline-none hover:bg-accent hover:text-accent-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:border-input dark:bg-input/30 dark:hover:bg-input/50 dark:aria-invalid:ring-destructive/40"
+                        >
+                            <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                width="24"
+                                height="24"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                class="lucide lucide-pen mr-1 h-3 w-3"
+                            >
+                                <path
+                                    d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"
+                                ></path></svg
+                            >Edit</button
+                        ><button
+                            data-slot="button"
+                            class="[&amp;_svg]:pointer-events-none [&amp;_svg:not([class*='size-'])]:size-4 [&amp;_svg]:shrink-0 has-[&gt;svg]:px-2.5 inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md border bg-background px-3 text-sm font-medium whitespace-nowrap text-red-600 transition-all outline-none hover:bg-red-50 hover:text-red-700 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:border-input dark:bg-input/30 dark:hover:bg-input/50 dark:aria-invalid:ring-destructive/40"
+                        >
+                            <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                width="24"
+                                height="24"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                class="lucide lucide-trash2 lucide-trash-2 h-3 w-3"
+                            >
+                                <path d="M3 6h18"></path>
+                                <path
+                                    d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"
+                                ></path>
+                                <path
+                                    d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"
+                                ></path>
+                                <line x1="10" x2="10" y1="11" y2="17"></line>
+                                <line x1="14" x2="14" y1="11" y2="17"></line>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div
+                data-slot="card"
+                class="flex flex-col gap-6 overflow-hidden rounded-xl border bg-card text-card-foreground transition-shadow hover:shadow-lg"
+            >
+                <div class="relative h-48">
+                    <img
+                        src="https://images.unsplash.com/photo-1488477181946-6428a0291777?crop=entropy&amp;cs=tinysrgb&amp;fit=max&amp;fm=jpg&amp;ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxwYW5uYSUyMGNvdHRhfGVufDF8fHx8MTc2MzkwMzM0NHww&amp;ixlib=rb-4.1.0&amp;q=80&amp;w=1080"
+                        alt="Panna Cotta"
+                        class="h-full w-full object-cover"
+                    />
+                    <div
+                        class="absolute top-2 left-2 flex flex-wrap gap-1"
+                    ></div>
+                </div>
+                <div
+                    data-slot="card-content"
+                    class="[&amp;:last-child]:pb-6 p-4"
+                >
+                    <div class="mb-2 flex items-start justify-between">
+                        <div class="flex-1">
+                            <h3 class="font-semibold text-neutral-900">
+                                Panna Cotta
+                            </h3>
+                            <p class="mt-1 text-xs text-neutral-500">
+                                Desserts
+                            </p>
+                        </div>
+                        <div class="text-right">
+                            <p class="font-semibold text-neutral-900">€6.50</p>
+                            <div
+                                class="mt-1 flex items-center gap-1 text-xs text-neutral-600"
+                            >
+                                <svg
+                                    xmlns="http://www.w3.org/2000/svg"
+                                    width="24"
+                                    height="24"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    class="lucide lucide-star h-3 w-3 fill-yellow-400 text-yellow-400"
+                                >
+                                    <path
+                                        d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"
+                                    ></path></svg
+                                ><span>4.5</span
+                                ><span class="text-neutral-400">(29)</span>
+                            </div>
+                        </div>
+                    </div>
+                    <p class="mb-3 line-clamp-2 text-sm text-neutral-600">
+                        Silky smooth Italian custard with berry compote.
+                    </p>
+                    <div
+                        class="mb-3 grid grid-cols-4 gap-2 rounded-md bg-neutral-50 p-2"
+                    >
+                        <div class="text-center">
+                            <p class="text-xs text-neutral-500">Cal</p>
+                            <p class="text-xs font-semibold">320</p>
+                        </div>
+                    </div>
+                    <div
+                        class="mb-3 flex items-center justify-between border-t pt-2 text-xs text-neutral-500"
+                    >
+                        <span>Ordered 187x</span><span>VAT: 10%</span>
+                    </div>
+                    <div
+                        class="mb-3 flex items-center justify-between rounded-md bg-gray-50 p-2"
+                    >
+                        <div class="flex items-center gap-2">
+                            <div
+                                class="h-2 w-2 rounded-full bg-green-500"
+                            ></div>
+                            <span class="text-sm font-medium text-gray-700"
+                                >Available</span
+                            >
+                        </div>
+                        <label
+                            class="relative inline-flex cursor-pointer items-center"
+                            ><input
+                                type="checkbox"
+                                class="peer sr-only"
+                                checked="" />
+                            <div
+                                class="peer h-6 w-11 rounded-full bg-gray-200 peer-checked:bg-green-600 peer-focus:ring-4 peer-focus:ring-blue-300 peer-focus:outline-none after:absolute after:start-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all after:content-[''] peer-checked:after:translate-x-full peer-checked:after:border-white rtl:peer-checked:after:-translate-x-full"
+                            ></div
+                        ></label>
+                    </div>
+                    <div class="mb-3 flex flex-wrap gap-1">
+                        <span
+                            data-slot="badge"
+                            class="[&amp;&gt;svg]:size-3 [&amp;&gt;svg]:pointer-events-none [a&amp;]:hover:bg-accent [a&amp;]:hover:text-accent-foreground inline-flex w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-md border px-2 py-0.5 text-xs font-medium whitespace-nowrap text-foreground transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40"
+                            >vegetarian</span
+                        ><span
+                            data-slot="badge"
+                            class="[&amp;&gt;svg]:size-3 [&amp;&gt;svg]:pointer-events-none [a&amp;]:hover:bg-accent [a&amp;]:hover:text-accent-foreground inline-flex w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-md border px-2 py-0.5 text-xs font-medium whitespace-nowrap text-foreground transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40"
+                            >gluten-free</span
+                        >
+                    </div>
+                    <div class="flex gap-2 border-t pt-3">
+                        <button
+                            data-slot="button"
+                            class="[&amp;_svg]:pointer-events-none [&amp;_svg:not([class*='size-'])]:size-4 [&amp;_svg]:shrink-0 has-[&gt;svg]:px-2.5 inline-flex h-8 flex-1 items-center justify-center gap-1.5 rounded-md border bg-background px-3 text-sm font-medium whitespace-nowrap text-foreground transition-all outline-none hover:bg-accent hover:text-accent-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:border-input dark:bg-input/30 dark:hover:bg-input/50 dark:aria-invalid:ring-destructive/40"
+                        >
+                            <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                width="24"
+                                height="24"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                class="lucide lucide-pen mr-1 h-3 w-3"
+                            >
+                                <path
+                                    d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"
+                                ></path></svg
+                            >Edit</button
+                        ><button
+                            data-slot="button"
+                            class="[&amp;_svg]:pointer-events-none [&amp;_svg:not([class*='size-'])]:size-4 [&amp;_svg]:shrink-0 has-[&gt;svg]:px-2.5 inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md border bg-background px-3 text-sm font-medium whitespace-nowrap text-red-600 transition-all outline-none hover:bg-red-50 hover:text-red-700 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:border-input dark:bg-input/30 dark:hover:bg-input/50 dark:aria-invalid:ring-destructive/40"
+                        >
+                            <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                width="24"
+                                height="24"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                class="lucide lucide-trash2 lucide-trash-2 h-3 w-3"
+                            >
+                                <path d="M3 6h18"></path>
+                                <path
+                                    d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"
+                                ></path>
+                                <path
+                                    d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"
+                                ></path>
+                                <line x1="10" x2="10" y1="11" y2="17"></line>
+                                <line x1="14" x2="14" y1="11" y2="17"></line>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div
+                data-slot="card"
+                class="flex flex-col gap-6 overflow-hidden rounded-xl border bg-card text-card-foreground transition-shadow hover:shadow-lg"
+            >
+                <div class="relative h-48">
+                    <img
+                        src="https://images.unsplash.com/photo-1620421381420-e7fa4a041b15?crop=entropy&amp;cs=tinysrgb&amp;fit=max&amp;fm=jpg&amp;ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxwcm9zZWNjbyUyMHdpbmV8ZW58MXx8fHwxNzYzOTI4NDk2fDA&amp;ixlib=rb-4.1.0&amp;q=80&amp;w=1080"
+                        alt="Prosecco DOC"
+                        class="h-full w-full object-cover"
+                    />
+                    <div
+                        class="absolute top-2 left-2 flex flex-wrap gap-1"
+                    ></div>
+                </div>
+                <div
+                    data-slot="card-content"
+                    class="[&amp;:last-child]:pb-6 p-4"
+                >
+                    <div class="mb-2 flex items-start justify-between">
+                        <div class="flex-1">
+                            <h3 class="font-semibold text-neutral-900">
+                                Prosecco DOC
+                            </h3>
+                            <p class="mt-1 text-xs text-neutral-500">Drinks</p>
+                        </div>
+                        <div class="text-right">
+                            <p class="font-semibold text-neutral-900">€6.50</p>
+                            <div
+                                class="mt-1 flex items-center gap-1 text-xs text-neutral-600"
+                            >
+                                <svg
+                                    xmlns="http://www.w3.org/2000/svg"
+                                    width="24"
+                                    height="24"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    class="lucide lucide-star h-3 w-3 fill-yellow-400 text-yellow-400"
+                                >
+                                    <path
+                                        d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"
+                                    ></path></svg
+                                ><span>4.4</span
+                                ><span class="text-neutral-400">(18)</span>
+                            </div>
+                        </div>
+                    </div>
+                    <p class="mb-3 line-clamp-2 text-sm text-neutral-600">
+                        Sparkling wine from Veneto region. Served chilled.
+                    </p>
+                    <div
+                        class="mb-3 grid grid-cols-4 gap-2 rounded-md bg-neutral-50 p-2"
+                    >
+                        <div class="text-center">
+                            <p class="text-xs text-neutral-500">Cal</p>
+                            <p class="text-xs font-semibold">98</p>
+                        </div>
+                    </div>
+                    <div
+                        class="mb-3 flex items-center justify-between border-t pt-2 text-xs text-neutral-500"
+                    >
+                        <span>Ordered 156x</span><span>VAT: 20%</span>
+                    </div>
+                    <div
+                        class="mb-3 flex items-center justify-between rounded-md bg-gray-50 p-2"
+                    >
+                        <div class="flex items-center gap-2">
+                            <div
+                                class="h-2 w-2 rounded-full bg-green-500"
+                            ></div>
+                            <span class="text-sm font-medium text-gray-700"
+                                >Available</span
+                            >
+                        </div>
+                        <label
+                            class="relative inline-flex cursor-pointer items-center"
+                            ><input
+                                type="checkbox"
+                                class="peer sr-only"
+                                checked="" />
+                            <div
+                                class="peer h-6 w-11 rounded-full bg-gray-200 peer-checked:bg-green-600 peer-focus:ring-4 peer-focus:ring-blue-300 peer-focus:outline-none after:absolute after:start-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all after:content-[''] peer-checked:after:translate-x-full peer-checked:after:border-white rtl:peer-checked:after:-translate-x-full"
+                            ></div
+                        ></label>
+                    </div>
+                    <div class="mb-3 flex flex-wrap gap-1">
+                        <span
+                            data-slot="badge"
+                            class="[&amp;&gt;svg]:size-3 [&amp;&gt;svg]:pointer-events-none [a&amp;]:hover:bg-accent [a&amp;]:hover:text-accent-foreground inline-flex w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-md border px-2 py-0.5 text-xs font-medium whitespace-nowrap text-foreground transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40"
+                            >vegan</span
+                        ><span
+                            data-slot="badge"
+                            class="[&amp;&gt;svg]:size-3 [&amp;&gt;svg]:pointer-events-none [a&amp;]:hover:bg-accent [a&amp;]:hover:text-accent-foreground inline-flex w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-md border px-2 py-0.5 text-xs font-medium whitespace-nowrap text-foreground transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40"
+                            >gluten-free</span
+                        >
+                    </div>
+                    <div class="flex gap-2 border-t pt-3">
+                        <button
+                            data-slot="button"
+                            class="[&amp;_svg]:pointer-events-none [&amp;_svg:not([class*='size-'])]:size-4 [&amp;_svg]:shrink-0 has-[&gt;svg]:px-2.5 inline-flex h-8 flex-1 items-center justify-center gap-1.5 rounded-md border bg-background px-3 text-sm font-medium whitespace-nowrap text-foreground transition-all outline-none hover:bg-accent hover:text-accent-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:border-input dark:bg-input/30 dark:hover:bg-input/50 dark:aria-invalid:ring-destructive/40"
+                        >
+                            <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                width="24"
+                                height="24"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                class="lucide lucide-pen mr-1 h-3 w-3"
+                            >
+                                <path
+                                    d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"
+                                ></path></svg
+                            >Edit</button
+                        ><button
+                            data-slot="button"
+                            class="[&amp;_svg]:pointer-events-none [&amp;_svg:not([class*='size-'])]:size-4 [&amp;_svg]:shrink-0 has-[&gt;svg]:px-2.5 inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md border bg-background px-3 text-sm font-medium whitespace-nowrap text-red-600 transition-all outline-none hover:bg-red-50 hover:text-red-700 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:border-input dark:bg-input/30 dark:hover:bg-input/50 dark:aria-invalid:ring-destructive/40"
+                        >
+                            <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                width="24"
+                                height="24"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                class="lucide lucide-trash2 lucide-trash-2 h-3 w-3"
+                            >
+                                <path d="M3 6h18"></path>
+                                <path
+                                    d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"
+                                ></path>
+                                <path
+                                    d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"
+                                ></path>
+                                <line x1="10" x2="10" y1="11" y2="17"></line>
+                                <line x1="14" x2="14" y1="11" y2="17"></line>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</main>

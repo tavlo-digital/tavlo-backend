@@ -1,0 +1,255 @@
+<?php
+
+namespace App\Http\Controllers\Api\Vendor;
+
+use App\Http\Controllers\Controller;
+use App\Models\MenuCategory;
+use App\Models\MenuItem;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Str;
+
+class MenuController extends Controller
+{
+    /**
+     * GET /api/restaurants/{vendorId}/menu
+     *
+     * Returns the full menu for a vendor: categories + items in the shape
+     * the frontend expects: { categories: [...], items: [...] }
+     */
+    public function show(string $vendorId): JsonResponse
+    {
+        $vendor = \App\Models\Vendor::where('vendor_public_id', $vendorId)
+            ->orWhere('id', $vendorId)
+            ->firstOrFail();
+
+        $categories = $vendor->menuCategories()
+            ->orderBy('sort_order')
+            ->get()
+            ->map(fn (MenuCategory $cat) => [
+                'id' => (string) $cat->id,
+                'name' => $cat->name,
+                'slug' => $cat->slug,
+                'defaultTaxCategory' => $cat->default_tax_category,
+                'sortOrder' => $cat->sort_order,
+                'isActive' => $cat->is_active,
+            ]);
+
+        $items = $vendor->menuItems()
+            ->with('category')
+            ->orderBy('sort_order')
+            ->get()
+            ->map(fn (MenuItem $item) => $this->formatItem($item));
+
+        return response()->json([
+            'categories' => $categories,
+            'items' => $items,
+        ]);
+    }
+
+    /**
+     * PUT /api/restaurants/{vendorId}/menu
+     *
+     * Full menu replacement – receives { categories, items } and syncs.
+     */
+    public function update(Request $request, string $vendorId): JsonResponse
+    {
+        $vendor = \App\Models\Vendor::where('vendor_public_id', $vendorId)
+            ->orWhere('id', $vendorId)
+            ->firstOrFail();
+
+        $this->authorizeVendor($request, $vendor);
+
+        $data = $request->validate([
+            'categories' => ['sometimes', 'array'],
+            'categories.*.id' => ['sometimes', 'string'],
+            'categories.*.name' => ['required', 'string', 'max:255'],
+            'categories.*.defaultTaxCategory' => ['sometimes', 'string'],
+            'items' => ['sometimes', 'array'],
+            'items.*.name' => ['required', 'string', 'max:255'],
+            'items.*.category' => ['required', 'string'],
+            'items.*.price' => ['required', 'numeric', 'min:0'],
+        ]);
+
+        // ---- Sync categories ----
+        $categoryMap = []; // frontend-id => db-id
+
+        if (isset($data['categories'])) {
+            $existingIds = [];
+
+            foreach ($data['categories'] as $i => $catData) {
+                $slug = Str::slug($catData['name']);
+
+                $category = $vendor->menuCategories()->updateOrCreate(
+                    ['slug' => $slug],
+                    [
+                        'name' => $catData['name'],
+                        'slug' => $slug,
+                        'default_tax_category' => $catData['defaultTaxCategory'] ?? 'food',
+                        'sort_order' => $i,
+                        'is_active' => true,
+                    ]
+                );
+
+                $frontendId = $catData['id'] ?? $catData['name'];
+                $categoryMap[$frontendId] = $category->id;
+                $categoryMap[$catData['name']] = $category->id;
+                $existingIds[] = $category->id;
+            }
+
+            // Remove categories not in the payload
+            $vendor->menuCategories()->whereNotIn('id', $existingIds)->delete();
+        }
+
+        // ---- Sync items ----
+        if (isset($data['items'])) {
+            $existingItemIds = [];
+
+            foreach ($data['items'] as $i => $itemData) {
+                // Resolve category
+                $categoryId = $categoryMap[$itemData['category']] ?? null;
+                if (! $categoryId) {
+                    // Try matching by name
+                    $cat = $vendor->menuCategories()->where('name', $itemData['category'])->first();
+                    if (! $cat) {
+                        $cat = $vendor->menuCategories()->create([
+                            'name' => $itemData['category'],
+                            'slug' => Str::slug($itemData['category']),
+                            'default_tax_category' => 'food',
+                            'sort_order' => 999,
+                        ]);
+                    }
+                    $categoryId = $cat->id;
+                }
+
+                // Determine if an existing item or new
+                $existingItem = null;
+                if (isset($itemData['id']) && is_numeric($itemData['id'])) {
+                    $existingItem = $vendor->menuItems()->find($itemData['id']);
+                }
+
+                $attributes = [
+                    'menu_category_id' => $categoryId,
+                    'name' => $itemData['name'],
+                    'description' => $itemData['description'] ?? null,
+                    'price' => $itemData['price'],
+                    'image_url' => $itemData['imageUrl'] ?? null,
+                    'available' => $itemData['available'] ?? true,
+                    'calories' => $itemData['calories'] ?? 0,
+                    'fat' => $itemData['fat'] ?? 0,
+                    'carbs' => $itemData['carbs'] ?? 0,
+                    'protein' => $itemData['protein'] ?? 0,
+                    'vat_rate' => $itemData['vatRate'] ?? 20,
+                    'tax_category' => $itemData['taxCategory'] ?? 'food',
+                    'dietary_preference' => $itemData['dietaryPreference'] ?? null,
+                    'allergies' => $itemData['allergies'] ?? [],
+                    'special_tags' => $itemData['specialTags'] ?? [],
+                    'has_discount' => $itemData['hasDiscount'] ?? false,
+                    'discount_percent' => $itemData['discountPercent'] ?? 0,
+                    'discounted_price' => $itemData['discountedPrice'] ?? null,
+                    'paid_addons' => $itemData['paidAddons'] ?? [],
+                    'free_addons' => $itemData['freeAddons'] ?? [],
+                    'removable_items' => $itemData['removableItems'] ?? [],
+                    'translations' => $itemData['translations'] ?? [],
+                    'ingredients' => $itemData['ingredients'] ?? [],
+                    'rating' => $itemData['rating'] ?? 0,
+                    'review_count' => $itemData['reviewCount'] ?? 0,
+                    'ordered_count' => $itemData['orderedCount'] ?? 0,
+                    'sort_order' => $i,
+                ];
+
+                if ($existingItem) {
+                    $existingItem->update($attributes);
+                    $existingItemIds[] = $existingItem->id;
+                } else {
+                    $newItem = $vendor->menuItems()->create(array_merge(
+                        $attributes,
+                        ['vendor_id' => $vendor->id]
+                    ));
+                    $existingItemIds[] = $newItem->id;
+                }
+            }
+
+            // Remove items not in the payload
+            $vendor->menuItems()->whereNotIn('id', $existingItemIds)->delete();
+        }
+
+        // Return updated menu
+        return $this->show($vendorId);
+    }
+
+    /**
+     * PATCH /api/vendor/{vendorId}/menu/items/{itemId}
+     *
+     * Partial update for a single menu item (e.g., toggle availability).
+     */
+    public function updateItem(Request $request, string $vendorId, int $itemId): JsonResponse
+    {
+        $vendor = \App\Models\Vendor::where('vendor_public_id', $vendorId)
+            ->orWhere('id', $vendorId)
+            ->firstOrFail();
+
+        $this->authorizeVendor($request, $vendor);
+
+        $item = $vendor->menuItems()->findOrFail($itemId);
+
+        $allowed = $request->only([
+            'available', 'name', 'description', 'price',
+            'calories', 'fat', 'carbs', 'protein',
+            'has_discount', 'discount_percent',
+        ]);
+
+        // Convert camelCase keys from the frontend to snake_case
+        $mapped = [];
+        foreach ($allowed as $key => $value) {
+            $mapped[Str::snake($key)] = $value;
+        }
+
+        $item->update($mapped);
+
+        return response()->json($this->formatItem($item->fresh()));
+    }
+
+    // ----------------------------------------------------------------
+
+    private function formatItem(MenuItem $item): array
+    {
+        return [
+            'id' => (string) $item->id,
+            'category' => $item->category?->name ?? '',
+            'name' => $item->name,
+            'description' => $item->description,
+            'price' => (float) $item->price,
+            'imageUrl' => $item->image_url,
+            'available' => $item->available,
+            'calories' => $item->calories,
+            'fat' => (float) $item->fat,
+            'carbs' => (float) $item->carbs,
+            'protein' => (float) $item->protein,
+            'vatRate' => (float) $item->vat_rate,
+            'taxCategory' => $item->tax_category,
+            'dietaryPreference' => $item->dietary_preference,
+            'allergies' => $item->allergies ?? [],
+            'specialTags' => $item->special_tags ?? [],
+            'hasDiscount' => $item->has_discount,
+            'discountPercent' => (float) $item->discount_percent,
+            'discountedPrice' => $item->discounted_price ? (float) $item->discounted_price : null,
+            'paidAddons' => $item->paid_addons ?? [],
+            'freeAddons' => $item->free_addons ?? [],
+            'removableItems' => $item->removable_items ?? [],
+            'translations' => $item->translations ?? (object) [],
+            'ingredients' => $item->ingredients ?? [],
+            'rating' => (float) $item->rating,
+            'reviewCount' => $item->review_count,
+            'orderedCount' => $item->ordered_count,
+        ];
+    }
+
+    private function authorizeVendor(Request $request, \App\Models\Vendor $vendor): void
+    {
+        $user = $request->user();
+        if ($user && $user->getTable() === 'vendors' && $user->id !== $vendor->id) {
+            abort(403, 'Unauthorized');
+        }
+    }
+}

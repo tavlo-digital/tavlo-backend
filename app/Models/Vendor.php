@@ -64,4 +64,39 @@ class Vendor extends Authenticatable
     {
         return $this->hasMany(VendorActivity::class);
     }
+
+    public function menuCategories(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(MenuCategory::class);
+    }
+
+    public function menuItems(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(MenuItem::class);
+    }
+
+    public function inventoryItems(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(InventoryItem::class);
+    }
+
+    public function inventorySettings(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(InventorySettings::class);
+    }
+
+    public function orders(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(Order::class);
+    }
+
+    public function reviews(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(Review::class);
+    }
+
+    public function reservations(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(Reservation::class);
+    }
 }

@@ -1,0 +1,105 @@
+🧪 HOW TO TEST VENDOR ONBOARDING
+===================================
+
+QUICK START (30 seconds):
+-------------------------
+1. Look at TOP-RIGHT corner of screen
+2. Click the dropdown button (shows current mode)
+3. Select "🚀 Vendor Onboarding"
+4. You're in! Start testing.
+
+
+COMPLETE TESTING FLOW (5 minutes):
+----------------------------------
+
+Step 1: REGISTER
+  - Fill in business name, country, email, password
+  - Click "Create account"
+  - ✅ Should see dashboard with 0% progress
+
+Step 2: COMPLETE SETUP (any order)
+  - Click "Restaurant Profile" → Fill form → Save
+  - Click "Menu Setup" → Add category → Add items → Save  
+  - Click "Tables & QR" → Add tables → Notice QR preview watermark
+  - ✅ Progress bar should show 100%
+
+Step 3: TRY TO ACTIVATE (PAYWALL TEST)
+  - Click big green "Activate restaurant" button
+  - ✅ Should see subscription gate (HARD STOP)
+  - ❌ Cannot bypass this screen
+
+Step 4: SUBSCRIBE (STRIPE CHECKOUT FLOW)
+  - Click "Subscribe & go live" on Monthly or Yearly
+  - ✅ Backend creates checkout session
+  - ✅ Shows "Redirecting to checkout..." button
+  - ✅ URL changes with session_id parameter
+  - ✅ Shows "Processing payment..." spinner
+  - ✅ Auto-verifies payment (2 seconds in demo mode)
+
+Step 5: VERIFY ACTIVATION
+  - ✅ Should see "You're Live! 🎉" screen
+  - Notice "Active" status badge
+  - Try downloading QR codes (should work now)
+  - ✅ Vendor is fully activated
+
+
+ADMIN MONITORING:
+-----------------
+1. Click mode switcher dropdown
+2. Select "🛠️ Vendor Management"
+3. See all vendors in table
+4. Try filtering by status
+5. Click "View" or "Suspend" buttons
+
+
+KEY THINGS TO VERIFY:
+---------------------
+✅ Can setup WITHOUT payment
+✅ CANNOT go live WITHOUT payment  
+✅ Stripe checkout session creates
+✅ Payment verification works
+✅ Auto-activates AFTER payment
+✅ Admin CANNOT manually activate
+✅ QR codes blocked until paid
+✅ Legal data is optional
+
+
+WHAT'S NEW (STRIPE INTEGRATION):
+---------------------------------
+✅ Real API calls to backend
+✅ Checkout session creation
+✅ Payment return flow with session_id
+✅ Backend verification endpoint
+✅ Webhook handler ready for production
+✅ Subscription status enforcement
+
+
+FILES TO REVIEW:
+----------------
+- /STRIPE_CHECKOUT_TESTING.md (detailed Stripe flow)
+- /STRIPE_INTEGRATION_GUIDE.md (production setup guide)
+- /VENDOR_ONBOARDING_DOCS.md (full documentation)
+- /components/vendor-onboarding/* (all UI components)
+- /supabase/functions/server/index.tsx (backend API)
+
+
+TROUBLESHOOTING:
+----------------
+If something breaks:
+1. Check browser console for errors
+2. Look for API response errors (should be JSON)
+3. Verify you clicked "Vendor Onboarding" in mode switcher
+4. Make sure all form fields are filled
+5. Check Network tab for failed requests
+
+
+DEMO DATA:
+----------
+Use these for testing:
+- Business: "Bella Italia Vienna"
+- Country: Austria
+- Email: test@restaurant.com
+- Password: password123
+
+
+That's it! Happy testing! 🎉

@@ -14,6 +14,8 @@ class Review extends Model
         'order_id',
         'rating',
         'text',
+        'vendor_reply',
+        'vendor_replied_at',
         'flagged',
         'flag_reason',
     ];
@@ -22,6 +24,7 @@ class Review extends Model
     {
         return [
             'flagged' => 'boolean',
+            'vendor_replied_at' => 'datetime',
         ];
     }
 

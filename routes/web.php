@@ -55,21 +55,3 @@ Route::middleware(['auth', 'verified', 'admin'])->prefix('admin')->name('admin.'
 
 require __DIR__.'/settings.php';
 
-// ────────────────────────────────────────────────
-// Customer portal (auth handled via Sanctum API)
-// ────────────────────────────────────────────────
-Route::prefix('customer')->name('customer.')->group(function () {
-    Route::inertia('login',     'customer/auth/login')->name('login');
-    Route::inertia('register',  'customer/auth/register')->name('register');
-    Route::inertia('dashboard', 'customer/dashboard')->name('dashboard');
-});
-
-// ──────────────────────────────────────────────── 
-// Vendor portal (auth handled via Sanctum API)
-// ────────────────────────────────────────────────
-Route::prefix('vendor')->name('vendor.')->group(function () {
-    Route::inertia('login',     'vendor/auth/login')->name('login');
-    Route::inertia('register',  'vendor/auth/register')->name('register');
-    Route::inertia('dashboard', 'vendor/dashboard')->name('dashboard');
-});
-

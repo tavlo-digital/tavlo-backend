@@ -15,8 +15,10 @@ class DatabaseSeeder extends Seeder
         $this->call(FeatureSeeder::class);
         $this->call(SubscriptionPlanSeeder::class);
         $this->call(VendorSeeder::class);
+        $this->call(AllergenAndTagSeeder::class);
         $this->call(CustomerSeeder::class);
         $this->call(CustomerDataSeeder::class);
+        $this->call(MenuSeeder::class);
 
         $adminRole = Role::where('name', 'admin')->first();
 
