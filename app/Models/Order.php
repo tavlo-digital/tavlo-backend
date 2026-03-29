@@ -35,6 +35,10 @@ class Order extends Model
         'served_at',
         'cancelled_at',
         'cancelled_reason',
+        // session fields
+        'table_session_id',
+        'waiter_confirmed',
+        'waiter_confirmed_at',
     ];
 
     protected function casts(): array
@@ -51,6 +55,8 @@ class Order extends Model
             'picked_up_at'         => 'datetime',
             'served_at'            => 'datetime',
             'cancelled_at'         => 'datetime',
+            'waiter_confirmed'     => 'boolean',
+            'waiter_confirmed_at'  => 'datetime',
         ];
     }
 
@@ -62,5 +68,10 @@ class Order extends Model
     public function vendor(): BelongsTo
     {
         return $this->belongsTo(Vendor::class);
+    }
+
+    public function tableSession(): BelongsTo
+    {
+        return $this->belongsTo(TableSession::class);
     }
 }
