@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { api } from '@/lib/api';
 import { 
   TrendingUp, 
   TrendingDown, 
@@ -79,10 +80,28 @@ export function Analytics({ vendorId, onNavigate }: AnalyticsProps) {
   const [insightCategory, setInsightCategory] = useState<InsightCategory>('all');
   const [expandedInsight, setExpandedInsight] = useState<string | null>(null);
   const [showActionPanel, setShowActionPanel] = useState<string | null>(null);
-  const [hasAIAccess] = useState(true); // Set to false to preview non-subscriber view
+  const [hasAIAccess] = useState(true);
+  const [analyticsData, setAnalyticsData] = useState<Record<string, any> | null>(null);
 
-  // Sample data for Standard Analytics
-  const revenueData = [
+  useEffect(() => {
+    if (vendorId) {
+      api.getAnalytics(vendorId, timePeriod)
+        .then((data) => setAnalyticsData(data as Record<string, any>))
+        .catch(() => { /* fall back to demo data */ });
+    }
+  }, [vendorId, timePeriod]);
+
+  // Revenue chart data — use API data if available
+  const revenueDataFromApi = analyticsData
+    ? (analyticsData.revenueChart?.labels ?? []).map((label: string, i: number) => ({
+        day: label,
+        revenue: analyticsData.revenueChart.data[i] ?? 0,
+        orders: analyticsData.ordersChart?.data[i] ?? 0,
+      }))
+    : null;
+
+  // Sample data for Standard Analytics (fallback demo data)
+  const revenueData = revenueDataFromApi ?? [
     { day: 'Mon', revenue: 2400, orders: 48 },
     { day: 'Tue', revenue: 2800, orders: 52 },
     { day: 'Wed', revenue: 2600, orders: 47 },
@@ -99,7 +118,14 @@ export function Analytics({ vendorId, onNavigate }: AnalyticsProps) {
     { name: 'Cash', value: 12, avgTime: '45s', icon: Banknote }
   ];
 
-  const menuPerformanceData = [
+  const menuPerformanceFromApi = analyticsData?.topItems?.map((i: any) => ({
+    name: i.name,
+    orders: i.orders ?? 0,
+    revenue: i.revenue ?? 0,
+    soldOut: 0,
+  }));
+
+  const menuPerformanceData = menuPerformanceFromApi ?? [
     { name: 'Margherita Pizza', orders: 156, revenue: 1872, soldOut: 2 },
     { name: 'Carbonara', orders: 142, revenue: 1988, soldOut: 0 },
     { name: 'Tiramisu', orders: 98, revenue: 686, soldOut: 1 },
@@ -775,7 +801,7 @@ export function Analytics({ vendorId, onNavigate }: AnalyticsProps) {
                       </tr>
                     </thead>
                     <tbody>
-                      {menuPerformanceData.map((item, index) => (
+                      {menuPerformanceData.map((item: { name: string; orders: number; revenue: number; soldOut: number }, index: number) => (
                         <tr key={item.name} className="border-b hover:bg-gray-50">
                           <td className="p-4">
                             <div className="flex items-center gap-2">

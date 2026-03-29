@@ -8,6 +8,12 @@ import {
   UtensilsCrossed,
   CreditCard,
   Settings,
+  QrCode,
+  BarChart3,
+  Star,
+  Package,
+  Gift,
+  Calendar,
 } from "lucide-react";
 import AppLogoIcon from "@/components/app-logo-icon";
 
@@ -20,16 +26,14 @@ interface NavItem {
 const navItems: NavItem[] = [
   { title: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { title: "Orders", href: "/orders", icon: ShoppingCart },
-  {
-    title: "Menu Management",
-    href: "/menu",
-    icon: UtensilsCrossed,
-  },
-  {
-    title: "Billing & Subscription",
-    href: "/billing",
-    icon: CreditCard,
-  },
+  { title: "Reservations", href: "/reservations", icon: Calendar },
+  { title: "Menu Management", href: "/menu", icon: UtensilsCrossed },
+  { title: "Inventory", href: "/inventory", icon: Package },
+  { title: "QR Codes", href: "/qr-codes", icon: QrCode },
+  { title: "Loyalty & Promotions", href: "/loyalty", icon: Gift },
+  { title: "Analytics", href: "/analytics", icon: BarChart3 },
+  { title: "Reviews", href: "/reviews", icon: Star },
+  { title: "Billing & Subscription", href: "/billing", icon: CreditCard },
   { title: "Settings", href: "/settings", icon: Settings },
 ];
 

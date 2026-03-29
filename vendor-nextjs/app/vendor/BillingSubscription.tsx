@@ -21,10 +21,8 @@ import {
   X
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { projectId, publicAnonKey } from '@/lib/supabase/info';
+import { api } from '@/lib/api';
 import { BillingLockedBanner } from '../vendor-onboarding/BillingLockedBanner';
-
-const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-1dccd8d3`;
 
 interface BillingSubscriptionProps {
   vendorId: string;
@@ -66,28 +64,14 @@ export function BillingSubscription({ vendorId, vendorStatus }: BillingSubscript
   const loadBillingData = async () => {
     try {
       setLoading(true);
-      
-      // Load subscription data
-      const subResponse = await fetch(`${API_BASE}/vendor/${vendorId}/subscription`, {
-        headers: { 'Authorization': `Bearer ${publicAnonKey}` }
-      });
-      const subData = await subResponse.json();
+
+      // Load subscription data from Laravel API
+      const subData = await api.getVendorSubscription(vendorId) as any;
       setSubscriptionData(subData);
 
-      // Load invoices
-      const invResponse = await fetch(`${API_BASE}/vendor/${vendorId}/invoices`, {
-        headers: { 'Authorization': `Bearer ${publicAnonKey}` }
-      });
-      const invData = await invResponse.json();
-      setInvoices(invData.invoices || []);
-
-      // Load usage stats
-      const usageResponse = await fetch(`${API_BASE}/vendor/${vendorId}/usage-stats`, {
-        headers: { 'Authorization': `Bearer ${publicAnonKey}` }
-      });
-      const usageData = await usageResponse.json();
-      setUsageStats(usageData);
-
+      // Invoices not yet available via backend API
+      setInvoices([]);
+      setUsageStats(null);
     } catch (error) {
       console.error('Error loading billing data:', error);
     } finally {
@@ -96,64 +80,15 @@ export function BillingSubscription({ vendorId, vendorStatus }: BillingSubscript
   };
 
   const handleUpdatePaymentMethod = async () => {
-    try {
-      const response = await fetch(`${API_BASE}/vendor/${vendorId}/create-portal-session`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${publicAnonKey}` 
-        }
-      });
-      const data = await response.json();
-      
-      if (data.portalUrl) {
-        window.open(data.portalUrl, '_blank');
-      }
-    } catch (error) {
-      console.error('Error creating portal session:', error);
-      alert('Failed to open billing portal. Please try again.');
-    }
+    alert('Billing portal coming soon. Please contact support to update your payment method.');
   };
 
   const handleRetryPayment = async () => {
-    try {
-      const response = await fetch(`${API_BASE}/vendor/${vendorId}/retry-payment`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${publicAnonKey}` 
-        }
-      });
-      const data = await response.json();
-      
-      if (data.success) {
-        alert('Payment retry initiated. Please check your email for confirmation.');
-        loadBillingData();
-      } else {
-        alert(data.error || 'Failed to retry payment');
-      }
-    } catch (error) {
-      console.error('Error retrying payment:', error);
-      alert('Failed to retry payment. Please try again.');
-    }
+    alert('Please contact support to retry your payment.');
   };
 
   const handleDownloadInvoice = async (invoiceId: string) => {
-    try {
-      const response = await fetch(`${API_BASE}/vendor/${vendorId}/invoice/${invoiceId}/pdf`, {
-        headers: { 'Authorization': `Bearer ${publicAnonKey}` }
-      });
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `invoice-${invoiceId}.pdf`;
-      a.click();
-      window.URL.revokeObjectURL(url);
-    } catch (error) {
-      console.error('Error downloading invoice:', error);
-      alert('Failed to download invoice. Please try again.');
-    }
+    alert('Invoice download coming soon.');
   };
 
   const getStatusConfig = (status: SubscriptionStatus) => {
@@ -700,17 +635,11 @@ export function BillingSubscription({ vendorId, vendorStatus }: BillingSubscript
                 className="flex-1 bg-red-600 hover:bg-red-700 text-white"
                 onClick={async () => {
                   try {
-                    // TODO: Implement actual cancellation API call
-                    await fetch(`${API_BASE}/vendor/${vendorId}/cancel-subscription`, {
-                      method: 'POST',
-                      headers: { 'Authorization': `Bearer ${publicAnonKey}` }
-                    });
-                    alert('Subscription cancellation initiated. You will receive a confirmation email.');
+                    alert('Subscription cancellation coming soon. Please contact support.');
                     setShowCancelModal(false);
-                    loadBillingData();
                   } catch (error) {
                     console.error('Error canceling subscription:', error);
-                    alert('Failed to cancel subscription. Please try again or contact support.');
+                    alert('Failed to cancel subscription. Please contact support.');
                   }
                 }}
               >

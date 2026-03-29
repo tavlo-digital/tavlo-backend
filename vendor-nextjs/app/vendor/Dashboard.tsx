@@ -1,3 +1,4 @@
+import { api } from '@/lib/api';
 import { useState, useEffect } from 'react';
 import { 
   AlertTriangle,
@@ -99,6 +100,16 @@ interface TopItem {
 export function Dashboard({ vendorId, onNavigate, vendorStatus = 'live', onActivateClick, onLockedActionClick, isLiveAndDiscoverable }: DashboardProps) {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [showKitchenLoadTooltip, setShowKitchenLoadTooltip] = useState(false);
+  const [dashboardData, setDashboardData] = useState<Record<string, any> | null>(null);
+
+  // Fetch live dashboard data
+  useEffect(() => {
+    if (vendorId && vendorStatus !== 'demo') {
+      api.getDashboard(vendorId as string)
+        .then((data) => setDashboardData(data as Record<string, any>))
+        .catch(() => { /* keep mock data on error */ });
+    }
+  }, [vendorId, vendorStatus]);
 
   const isLocked = vendorStatus === 'demo';
 
@@ -110,90 +121,70 @@ export function Dashboard({ vendorId, onNavigate, vendorStatus = 'live', onActiv
     return () => clearInterval(interval);
   }, []);
 
-  // Mock real-time data (in production, this would come from WebSocket or polling)
   // Event-driven alerts - only show when threshold crossed
-  const alerts: Alert[] = isLocked ? [] : [
-    {
-      id: '1',
-      severity: 'critical',
-      icon: Clock,
-      message: '2 tables unpaid for over 10 minutes',
-      timeReference: 'last 12 min',
-      action: 'View tables',
-      navigateTo: 'orders'
-    },
-    {
-      id: '2',
-      severity: 'warning',
-      icon: Package,
-      message: 'Truffle Pasta is sold out',
-      timeReference: 'just now',
-      action: 'Manage menu',
-      navigateTo: 'menu'
-    },
-    {
-      id: '3',
-      severity: 'warning',
-      icon: CreditCard,
-      message: 'Payment failures higher than usual in last 30 min',
-      timeReference: 'last 30 min',
-      action: 'Check payments',
-      navigateTo: 'billing'
-    }
-  ];
+  const apiAlerts: Alert[] = (dashboardData?.alerts ?? []).map((a: any) => ({
+    id: a.id,
+    severity: a.severity === 'danger' ? 'critical' : 'warning',
+    icon: a.navigateTo === 'inventory' ? Package : Clock,
+    message: a.message,
+    timeReference: '',
+    action: 'View',
+    navigateTo: a.navigateTo as Alert['navigateTo'],
+  }));
 
+  const alerts: Alert[] = isLocked ? [] : (apiAlerts.length > 0 ? apiAlerts : []);
+
+  const live = dashboardData?.liveStatus ?? {};
   const liveStatus: LiveStatus = {
-    openTables: 18,
-    totalTables: 24,
-    activeOrders: 12,
-    tablesWaitingToPay: 2,
+    openTables: live.openTables ?? 0,
+    totalTables: live.openTables ?? 0,
+    activeOrders: live.activeOrders ?? 0,
+    tablesWaitingToPay: live.tablesWaitingToPay ?? 0,
     kitchenLoad: 'medium',
     nextPeakWindow: 'Dinner rush',
     minutesUntilPeak: 25
   };
 
+  const risk = dashboardData?.revenueAtRisk ?? {};
   const revenueAtRisk: RevenueAtRisk = {
-    total: 287,
-    unpaidTables: 184,
-    soldOutItems: 78,
-    failedPayments: 25
+    total: risk.total ?? 0,
+    unpaidTables: risk.unpaidTables ?? 0,
+    soldOutItems: 0,
+    failedPayments: 0
   };
 
+  const kpis = dashboardData?.todayKPIs ?? {};
   const todayKPIs: TodayKPI = {
-    ordersToday: 156,
-    ordersYesterday: 142,
-    revenueToday: 8240,
-    revenueYesterday: 7890,
-    avgOrderValue: 52.80,
-    avgOrderValueYesterday: 55.50,
-    avgGuestsPerTable: 2.7,
-    avgGuestsPerTableYesterday: 2.5,
-    customerRating: 4.6,
-    customerRatingYesterday: 4.5
+    ordersToday: kpis.ordersToday ?? 0,
+    ordersYesterday: kpis.ordersYesterday ?? 0,
+    revenueToday: kpis.revenueToday ?? 0,
+    revenueYesterday: kpis.revenueYesterday ?? 0,
+    avgOrderValue: kpis.avgOrderValue ?? 0,
+    avgOrderValueYesterday: kpis.avgOrderValueYesterday ?? 0,
+    avgGuestsPerTable: 0,
+    avgGuestsPerTableYesterday: 0,
+    customerRating: kpis.customerRating ?? 0,
+    customerRatingYesterday: kpis.customerRatingYesterday ?? 0
   };
 
-  const aiInsight: AIInsightForDashboard | null = {
-    message: '16:00–17:00 is consistently empty. A short promotion could still help today.',
-    confidence: 'high',
-    cta: 'Create time-based offer',
-    affectsToday: true
-  };
+  const aiInsight = null as AIInsightForDashboard | null;
 
-  const recentOrders: RecentOrder[] = [
-    { id: 'ORD-1234', time: '2 min ago', table: 'Table 8', items: 3, amount: 67.50, status: 'preparing' },
-    { id: 'ORD-1233', time: '5 min ago', table: 'Table 15', items: 2, amount: 42.00, status: 'served' },
-    { id: 'ORD-1232', time: '8 min ago', table: 'Table 3', items: 4, amount: 89.20, status: 'paid' },
-    { id: 'ORD-1231', time: '12 min ago', table: 'Table 21', items: 2, amount: 38.50, status: 'paid' },
-    { id: 'ORD-1230', time: '15 min ago', table: 'Table 6', items: 5, amount: 124.00, status: 'paid' }
-  ];
+  const recentOrders: RecentOrder[] = (dashboardData?.recentOrders ?? []).map((o: any) => ({
+    id: o.orderNumber ?? o.id,
+    time: o.createdAt ? new Date(o.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '',
+    table: o.tableNumber ? `Table ${o.tableNumber}` : (o.orderType === 'takeaway' ? 'Takeaway' : '–'),
+    items: 0,
+    amount: o.amount ?? 0,
+    status: o.status === 'delivered' || o.status === 'served' ? 'served'
+          : o.paymentReceived ? 'paid'
+          : 'preparing',
+  }));
 
-  const topItems: TopItem[] = [
-    { name: 'Margherita Pizza', orders: 23, status: 'available' },
-    { name: 'Carbonara', orders: 19, status: 'available' },
-    { name: 'Caesar Salad', orders: 14, status: 'low-stock' },
-    { name: 'Truffle Pasta', orders: 12, status: 'sold-out' },
-    { name: 'Tiramisu', orders: 11, status: 'available' }
-  ];
+  const topItems: TopItem[] = (dashboardData?.topItems ?? []).map((i: any) => ({
+    name: i.name,
+    orders: i.orderedCount ?? 0,
+    status: 'available',
+  }));
 
   const getSeverityColor = (severity: AlertSeverity) => {
     switch (severity) {

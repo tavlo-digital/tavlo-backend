@@ -1,18 +1,34 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useVendorAuth } from "@/lib/vendor-auth";
+import { Dashboard } from "../../vendor/Dashboard";
+
+const SCREEN_ROUTES: Record<string, string> = {
+  orders: "/orders",
+  menu: "/menu",
+  billing: "/billing",
+  analytics: "/analytics",
+  loyalty: "/loyalty",
+  settings: "/settings",
+  inventory: "/inventory",
+  "qr-codes": "/qr-codes",
+};
 
 export default function VendorDashboardPage() {
   const { user } = useVendorAuth();
+  const router = useRouter();
+
+  if (!user) return null;
 
   return (
-    <div className="px-6 py-8">
-      <div className="mb-8">
-        <h1 className="text-2xl font-semibold text-gray-900">Dashboard</h1>
-        <p className="mt-1 text-sm text-gray-500">
-          Welcome back, {user?.name}
-        </p>
-      </div>
-    </div>
+    <Dashboard
+      vendorId={String(user.id)}
+      vendorStatus="live"
+      onNavigate={(screen) => {
+        const route = SCREEN_ROUTES[screen];
+        if (route) router.push(route);
+      }}
+    />
   );
 }

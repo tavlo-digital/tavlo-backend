@@ -1,14 +1,12 @@
 "use client";
 
+import { useVendorAuth } from "@/lib/vendor-auth";
+import { OrdersManagement } from "../../vendor/OrdersManagement";
+
 export default function VendorOrdersPage() {
-  return (
-    <div className="px-6 py-8">
-      <div className="mb-8">
-        <h1 className="text-2xl font-semibold text-gray-900">Orders</h1>
-        <p className="mt-1 text-sm text-gray-500">
-          Manage and track your orders
-        </p>
-      </div>
-    </div>
-  );
+  const { user } = useVendorAuth();
+
+  if (!user) return null;
+
+  return <OrdersManagement vendorId={String(user.id)} />;
 }

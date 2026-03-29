@@ -1,4 +1,5 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
+import { api } from '@/lib/api';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -34,43 +35,38 @@ interface QRCodesManagementProps {
 }
 
 export function QRCodesManagement({ vendorId }: QRCodesManagementProps) {
-  const restaurantId = 'rest_1';
-  
+  const APP_BASE = process.env.NEXT_PUBLIC_APP_URL || 'https://app.tavlo.io';
+
   // Mock settings data (in production, this would come from Settings API/context)
   const qrSettings = {
     sharedBasket: true,
     reservationsEnabled: false,
     maxGuestsPerTable: 10
   };
-  
-  // Mock data with usage health and table status
-  const [tables, setTables] = useState<Table[]>(() => 
-    Array.from({ length: 20 }, (_, i) => {
-      const daysSinceScanned = Math.floor(Math.random() * 10);
-      const lastScanned = daysSinceScanned === 0 
-        ? Date.now() - Math.random() * 24 * 60 * 60 * 1000 // Scanned today
-        : daysSinceScanned < 7
-        ? Date.now() - daysSinceScanned * 24 * 60 * 60 * 1000
-        : undefined;
-      
-      const statuses: Table['currentStatus'][] = ['idle', 'active', 'waiting-payment'];
-      const randomStatus = statuses[Math.floor(Math.random() * statuses.length)];
-      
-      return {
-        id: `table_${i + 1}`,
-        number: i + 1,
-        qrData: JSON.stringify({
-          restaurantId: restaurantId,
-          tableId: `${i + 1}`,
-          type: 'table'
-        }),
-        timestamp: Date.now() - Math.random() * 30 * 24 * 60 * 60 * 1000, // Random date in last 30 days
-        lastScanned: i % 5 === 0 ? undefined : lastScanned, // 20% never scanned
-        neverScanned: i % 5 === 0,
-        currentStatus: randomStatus
-      };
-    })
-  );
+
+  const [tables, setTables] = useState<Table[]>([]);
+
+  // Load tables from API on mount
+  useEffect(() => {
+    if (!vendorId) return;
+    api.getTables(vendorId as string)
+      .then((data: any) => {
+        const mapped: Table[] = (data as any[]).map((t: any) => ({
+          id: t.id,
+          number: t.number,
+          qrData: JSON.stringify({ restaurantId: vendorId, tableId: t.id, token: t.qrToken, type: 'table' }),
+          timestamp: t.qrCreatedAt ? new Date(t.qrCreatedAt).getTime() : Date.now(),
+          lastScanned: t.lastScannedAt ? new Date(t.lastScannedAt).getTime() : undefined,
+          neverScanned: !t.lastScannedAt,
+          currentStatus: 'idle' as Table['currentStatus'],
+        }));
+        setTables(mapped);
+      })
+      .catch(() => {
+        // If no tables yet, show empty state (user can seed or create tables in settings)
+        setTables([]);
+      });
+  }, [vendorId]);
 
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [showAdvanced, setShowAdvanced] = useState<{ [key: string]: boolean }>({});
@@ -146,21 +142,20 @@ export function QRCodesManagement({ vendorId }: QRCodesManagementProps) {
   };
 
   const refreshQRCode = (tableId: string) => {
-    setTables(tables.map(table => 
-      table.id === tableId 
-        ? {
-            ...table,
-            qrData: JSON.stringify({
-              restaurantId: restaurantId,
-              tableId: table.number.toString(),
-              type: 'table',
-              refreshToken: Math.random().toString(36).substr(2, 9)
-            }),
-            timestamp: Date.now()
-          }
-        : table
-    ));
-    toast.success(`QR code rotated for Table ${tables.find(t => t.id === tableId)?.number}`);
+    api.refreshTableQR(vendorId as string, tableId)
+      .then((updated: any) => {
+        setTables(tables.map(t =>
+          t.id === tableId
+            ? {
+                ...t,
+                qrData: JSON.stringify({ restaurantId: vendorId, tableId: updated.id, token: updated.qrToken, type: 'table' }),
+                timestamp: updated.qrCreatedAt ? new Date(updated.qrCreatedAt).getTime() : Date.now(),
+              }
+            : t
+        ));
+        toast.success(`QR code rotated for Table ${tables.find(t => t.id === tableId)?.number}`);
+      })
+      .catch(() => toast.error('Failed to refresh QR code'));
   };
 
   const regenerateAllQRCodes = () => {
@@ -169,20 +164,23 @@ export function QRCodesManagement({ vendorId }: QRCodesManagementProps) {
       return;
     }
 
-    setTables(tables.map(table => ({
-      ...table,
-      qrData: JSON.stringify({
-        restaurantId: restaurantId,
-        tableId: table.number.toString(),
-        type: 'table',
-        refreshToken: Math.random().toString(36).substr(2, 9)
-      }),
-      timestamp: Date.now()
-    })));
-
-    setShowRegenerateModal(false);
-    setRegenerateConfirmed(false);
-    toast.success('All QR codes have been replaced. Please reprint them.');
+    api.regenerateAllQR(vendorId as string)
+      .then((data: any) => {
+        const mapped: Table[] = (data as any[]).map((t: any) => ({
+          id: t.id,
+          number: t.number,
+          qrData: JSON.stringify({ restaurantId: vendorId, tableId: t.id, token: t.qrToken, type: 'table' }),
+          timestamp: t.qrCreatedAt ? new Date(t.qrCreatedAt).getTime() : Date.now(),
+          lastScanned: t.lastScannedAt ? new Date(t.lastScannedAt).getTime() : undefined,
+          neverScanned: !t.lastScannedAt,
+          currentStatus: 'idle' as Table['currentStatus'],
+        }));
+        setTables(mapped);
+        setShowRegenerateModal(false);
+        setRegenerateConfirmed(false);
+        toast.success('All QR codes have been replaced. Please reprint them.');
+      })
+      .catch(() => toast.error('Failed to regenerate QR codes'));
   };
 
   const printQRCode = (tableId: string) => {
@@ -349,7 +347,7 @@ export function QRCodesManagement({ vendorId }: QRCodesManagementProps) {
     if (!table) return;
 
     // Generate the customer-facing URL (not raw JSON)
-    const qrUrl = `https://tavlo.app/order?restaurant=${restaurantId}&table=${table.number}`;
+    const qrUrl = `${APP_BASE}/order?restaurant=${vendorId}&table=${table.number}`;
 
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(qrUrl)
@@ -623,7 +621,7 @@ export function QRCodesManagement({ vendorId }: QRCodesManagementProps) {
               <div>
                 <p className="text-sm text-neutral-600">Restaurant</p>
                 <p className="text-lg font-semibold mt-1">Bella Cucina</p>
-                <p className="text-xs text-neutral-500">ID: {restaurantId}</p>
+                <p className="text-xs text-neutral-500">ID: {vendorId}</p>
               </div>
               <div className="w-12 h-12 bg-orange-100 rounded-lg flex items-center justify-center">
                 <QrCode className="w-6 h-6 text-orange-600" />

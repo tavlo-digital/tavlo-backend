@@ -176,4 +176,46 @@ export const api = {
   // Seed
   seedData: (force = false) =>
     vendorApi.post(force ? '/seed?force=true' : '/seed'),
+
+  // Dashboard
+  getDashboard: (vendorId: string) =>
+    vendorApi.get(`/vendor/${vendorId}/dashboard`),
+
+  // Tables / QR
+  getTables: (vendorId: string) =>
+    vendorApi.get(`/vendor/${vendorId}/tables`),
+  createTable: (vendorId: string, data: { number: number; name?: string }) =>
+    vendorApi.post(`/vendor/${vendorId}/tables`, data as unknown as Record<string, unknown>),
+  updateTable: (vendorId: string, tableId: string, data: { name?: string; is_active?: boolean }) =>
+    vendorApi.patch(`/vendor/${vendorId}/tables/${tableId}`, data as unknown as Record<string, unknown>),
+  deleteTable: (vendorId: string, tableId: string) =>
+    vendorApi.delete(`/vendor/${vendorId}/tables/${tableId}`),
+  regenerateAllQR: (vendorId: string) =>
+    vendorApi.post(`/vendor/${vendorId}/tables/regenerate-all`),
+  refreshTableQR: (vendorId: string, tableId: string) =>
+    vendorApi.post(`/vendor/${vendorId}/tables/${tableId}/refresh-qr`),
+  getTakeawayQR: (vendorId: string) =>
+    vendorApi.get(`/vendor/${vendorId}/tables/takeaway-qr`),
+  syncTables: (vendorId: string, count: number) =>
+    vendorApi.post(`/vendor/${vendorId}/tables/sync`, { count }),
+
+  // Team
+  getTeamMembers: (vendorId: string) =>
+    vendorApi.get(`/vendor/${vendorId}/team`),
+  inviteTeamMember: (vendorId: string, data: { name: string; email: string; role: string; permissions?: string[] }) =>
+    vendorApi.post(`/vendor/${vendorId}/team/invite`, data as unknown as Record<string, unknown>),
+  updateTeamMember: (vendorId: string, memberId: string, data: { name?: string; role?: string; permissions?: string[]; status?: string }) =>
+    vendorApi.patch(`/vendor/${vendorId}/team/${memberId}`, data as unknown as Record<string, unknown>),
+  deleteTeamMember: (vendorId: string, memberId: string) =>
+    vendorApi.delete(`/vendor/${vendorId}/team/${memberId}`),
+
+  // Analytics
+  getAnalytics: (vendorId: string, period = 'weekly') =>
+    vendorApi.get(`/vendor/${vendorId}/analytics?period=${period}`),
+
+  // Extended order actions
+  markOrderServed: (orderId: string) =>
+    vendorApi.patch(`/orders/${orderId}/served`),
+  cancelOrder: (orderId: string, reason?: string) =>
+    vendorApi.patch(`/orders/${orderId}/cancel`, reason ? { reason } : undefined),
 };
