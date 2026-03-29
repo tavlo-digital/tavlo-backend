@@ -19,6 +19,11 @@ return new class extends Migration
             // Whether the order has been confirmed by a waiter (for non-prepaid orders)
             $table->boolean('waiter_confirmed')->default(false)->after('table_session_id');
             $table->timestamp('waiter_confirmed_at')->nullable()->after('waiter_confirmed');
+
+            // Status timestamps that were missing from earlier migrations
+            $table->timestamp('served_at')->nullable();
+            $table->timestamp('cancelled_at')->nullable();
+            $table->string('cancelled_reason')->nullable();
         });
     }
 
@@ -26,7 +31,10 @@ return new class extends Migration
     {
         Schema::table('orders', function (Blueprint $table) {
             $table->dropForeign(['table_session_id']);
-            $table->dropColumn(['table_session_id', 'waiter_confirmed', 'waiter_confirmed_at']);
+            $table->dropColumn([
+                'table_session_id', 'waiter_confirmed', 'waiter_confirmed_at',
+                'served_at', 'cancelled_at', 'cancelled_reason',
+            ]);
         });
     }
 };

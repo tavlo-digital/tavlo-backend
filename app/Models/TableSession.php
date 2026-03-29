@@ -86,7 +86,8 @@ class TableSession extends Model
             return false;
         }
 
-        return now()->diffInSeconds($this->batch_started_at, false) < $this->batch_window_seconds;
+        $elapsed = $this->batch_started_at->diffInSeconds(now());
+        return $elapsed < $this->batch_window_seconds;
     }
 
     /**
@@ -98,7 +99,7 @@ class TableSession extends Model
             return 0;
         }
 
-        $elapsed = (int) now()->diffInSeconds($this->batch_started_at, false);
+        $elapsed = (int) $this->batch_started_at->diffInSeconds(now());
         return max(0, $this->batch_window_seconds - $elapsed);
     }
 }

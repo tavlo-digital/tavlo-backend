@@ -120,4 +120,9 @@ class Vendor extends Authenticatable
     {
         return $this->hasOne(VendorTakeawayQr::class);
     }
+
+    public function tableSessions(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(TableSession::class);
+    }
 }

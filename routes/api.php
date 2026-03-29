@@ -91,12 +91,18 @@ Route::middleware('auth:vendor')->group(function () {
     Route::put('vendor/{vendorId}/inventory/settings',   [InventoryController::class, 'updateSettings']);
 
     // Orders
-    Route::get('vendor/{vendorId}/orders',               [OrderController::class, 'index']);
-    Route::patch('orders/{orderId}',                     [OrderController::class, 'update']);
-    Route::patch('orders/{orderId}/ready',               [OrderController::class, 'markReady']);
-    Route::patch('orders/{orderId}/picked-up',           [OrderController::class, 'markPickedUp']);
-    Route::patch('orders/{orderId}/served',              [OrderController::class, 'markServed']);
-    Route::patch('orders/{orderId}/cancel',              [OrderController::class, 'cancel']);
+    Route::get('vendor/{vendorId}/orders',                               [OrderController::class, 'index']);
+    Route::get('vendor/{vendorId}/orders/{orderId}',                     [OrderController::class, 'show']);
+    Route::patch('orders/{orderId}',                                     [OrderController::class, 'update']);
+    Route::patch('orders/{orderId}/confirm',                             [OrderController::class, 'confirm']);
+    Route::patch('orders/{orderId}/confirm-cash',                        [OrderController::class, 'confirmCashPayment']);
+    Route::patch('orders/{orderId}/ready',                               [OrderController::class, 'markReady']);
+    Route::patch('orders/{orderId}/picked-up',                           [OrderController::class, 'markPickedUp']);
+    Route::patch('orders/{orderId}/served',                              [OrderController::class, 'markServed']);
+    Route::patch('orders/{orderId}/cancel',                              [OrderController::class, 'cancel']);
+    Route::post('vendor/{vendorId}/sessions/{sessionId}/release',        [OrderController::class, 'releaseToKitchen']);
+    Route::post('vendor/{vendorId}/sessions/{sessionId}/fire-course',    [OrderController::class, 'fireNextCourse']);
+    Route::post('vendor/{vendorId}/sessions/{sessionId}/close',          [OrderController::class, 'closeSession']);
 
     // Vendor Settings
     Route::get('vendor/{vendorId}/settings',             [VendorSettingsController::class, 'show']);
