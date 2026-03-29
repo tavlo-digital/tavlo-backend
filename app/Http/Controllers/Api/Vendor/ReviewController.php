@@ -3,11 +3,11 @@
 namespace App\Http\Controllers\Api\Vendor;
 
 use App\Http\Controllers\Controller;
+use App\Models\Order;
 use App\Models\Review;
 use App\Models\Vendor;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 
 class ReviewController extends Controller
 {
@@ -92,31 +92,23 @@ class ReviewController extends Controller
 
         $since = now()->subMonths($months);
 
-        $topCustomers = DB::table('orders')
-            ->select([
-                'customers.id',
-                'customers.name',
-                'customers.email',
-                DB::raw('COUNT(orders.id) as order_count'),
-                DB::raw('SUM(orders.amount) as total_spent'),
-                DB::raw('MAX(orders.created_at) as last_order_at'),
-            ])
-            ->join('customers', 'customers.id', '=', 'orders.customer_id')
-            ->where('orders.vendor_id', $vendor->id)
-            ->where('orders.created_at', '>=', $since)
-            ->whereIn('orders.status', ['delivered', 'picked_up', 'completed'])
-            ->groupBy('customers.id', 'customers.name', 'customers.email')
-            ->orderByDesc('total_spent')
-            ->limit(20)
+        $topCustomers = Order::with('customer:id,name,email')
+            ->where('vendor_id', $vendor->id)
+            ->where('created_at', '>=', $since)
+            ->whereIn('status', ['delivered', 'picked_up', 'completed'])
             ->get()
-            ->map(fn ($c) => [
-                'id' => (string) $c->id,
-                'name' => $c->name,
-                'email' => $c->email,
-                'orderCount' => (int) $c->order_count,
-                'totalSpent' => (float) $c->total_spent,
-                'lastOrderAt' => $c->last_order_at,
-            ]);
+            ->groupBy('customer_id')
+            ->map(fn ($orders) => [
+                'id'          => (string) $orders->first()->customer?->id,
+                'name'        => $orders->first()->customer?->name,
+                'email'       => $orders->first()->customer?->email,
+                'orderCount'  => $orders->count(),
+                'totalSpent'  => (float) $orders->sum('amount'),
+                'lastOrderAt' => $orders->max('created_at'),
+            ])
+            ->sortByDesc('totalSpent')
+            ->take(20)
+            ->values();
 
         return response()->json($topCustomers);
     }

@@ -43,9 +43,10 @@ Route::prefix('vendor')->name('vendor.')->group(function () {
 });
 
 // ----------------------------------------------------------------
-// Public table scan endpoint (no auth — called from customer QR landing)
+// Public QR scan endpoints (no auth — called from customer QR landing)
 // ----------------------------------------------------------------
 Route::post('vendor/{vendorId}/tables/{tableId}/scan', [TableController::class, 'recordScan']);
+Route::post('vendor/{vendorId}/takeaway/scan',         [TableController::class, 'recordTakeawayScan']);
 
 // ----------------------------------------------------------------
 // Vendor API (authenticated)
@@ -116,14 +117,15 @@ Route::middleware('auth:vendor')->group(function () {
     Route::get('vendor/{vendorId}/dashboard',            [DashboardController::class, 'index']);
 
     // Tables / QR
-    Route::get('vendor/{vendorId}/tables',               [TableController::class, 'index']);
-    Route::post('vendor/{vendorId}/tables',              [TableController::class, 'store']);
-    Route::patch('vendor/{vendorId}/tables/{tableId}',   [TableController::class, 'update']);
-    Route::delete('vendor/{vendorId}/tables/{tableId}',  [TableController::class, 'destroy']);
-    Route::post('vendor/{vendorId}/tables/regenerate-all', [TableController::class, 'regenerateAll']);
-    Route::post('vendor/{vendorId}/tables/{tableId}/refresh-qr', [TableController::class, 'refreshQR']);
-    Route::get('vendor/{vendorId}/tables/takeaway-qr',   [TableController::class, 'takeawayQR']);
-    Route::post('vendor/{vendorId}/tables/sync',         [TableController::class, 'sync']);
+    Route::get('vendor/{vendorId}/tables',                            [TableController::class, 'index']);
+    Route::post('vendor/{vendorId}/tables',                           [TableController::class, 'store']);
+    Route::patch('vendor/{vendorId}/tables/{tableId}',                [TableController::class, 'update']);
+    Route::delete('vendor/{vendorId}/tables/{tableId}',               [TableController::class, 'destroy']);
+    Route::post('vendor/{vendorId}/tables/regenerate-all',            [TableController::class, 'regenerateAll']);
+    Route::post('vendor/{vendorId}/tables/{tableId}/refresh-qr',      [TableController::class, 'refreshQR']);
+    Route::get('vendor/{vendorId}/tables/takeaway-qr',                [TableController::class, 'takeawayQR']);
+    Route::post('vendor/{vendorId}/tables/takeaway-qr/refresh',       [TableController::class, 'refreshTakeawayQR']);
+    Route::post('vendor/{vendorId}/tables/sync',                      [TableController::class, 'sync']);
 
     // Team
     Route::get('vendor/{vendorId}/team',                 [TeamController::class, 'index']);

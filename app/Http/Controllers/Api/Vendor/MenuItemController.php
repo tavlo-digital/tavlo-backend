@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\Vendor;
 
 use App\Http\Controllers\Controller;
 use App\Models\MenuItem;
+use App\Models\OrderItem;
 use App\Models\TaxCategory;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -26,7 +27,7 @@ class MenuItemController extends Controller
         }
 
         if ($request->filled('search')) {
-            $query->where('name', 'ilike', '%' . $request->input('search') . '%');
+            $query->whereRaw('LOWER(name) LIKE ?', [strtolower('%' . $request->input('search') . '%')]);
         }
 
         if ($request->filled('available')) {
@@ -239,7 +240,7 @@ class MenuItemController extends Controller
         $vendor = $request->user();
         $item   = $vendor->menuItems()->findOrFail($itemId);
 
-        $hasOrders = \DB::table('order_items')->where('menu_item_id', $item->id)->exists();
+        $hasOrders = OrderItem::where('menu_item_id', $item->id)->exists();
 
         if ($hasOrders) {
             $item->update(['is_active' => false, 'available' => false]);
