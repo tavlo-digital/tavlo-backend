@@ -27,7 +27,12 @@ import {
   Eye,
   AlertCircle,
   CheckCircle,
-  Info
+  Info,
+  Pencil,
+  X,
+  Check,
+  ToggleLeft,
+  ToggleRight
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -61,7 +66,7 @@ export function Settings({ vendorId, onNavigate, onVisibilityChange, initialIsLi
     vatNumber: 'ATU12345678',
     email: 'info@labellavista.at',
     phone: '+43 1 234 5678',
-    website: 'www.labellavista.at',
+    website: 'https://www.labellavista.at',
     address: 'Kärntner Straße 1, 1010 Wien, Austria',
     logo: '',
     coverPhoto: '',
@@ -77,6 +82,12 @@ export function Settings({ vendorId, onNavigate, onVisibilityChange, initialIsLi
       }));
     }
   }, [initialIsLiveAndDiscoverable]);
+
+  useEffect(() => {
+    if (activeTab === 'tables') {
+      loadTableList();
+    }
+  }, [activeTab]);
 
   // Legal Information Approval Workflow State
   const [originalLegalInfo, setOriginalLegalInfo] = useState({
@@ -111,8 +122,14 @@ export function Settings({ vendorId, onNavigate, onVisibilityChange, initialIsLi
     acceptCard: true,
     acceptCash: true,
     acceptCashTakeaway: true,  // New setting for takeaway cash payment
+    acceptBankTransfer: false,
+    acceptVisa: true,
+    acceptMastercard: true,
+    acceptAmex: false,
     currency: 'EUR',
     stripeEnabled: false,
+    stripeAccountId: '',
+    stripeOnboardingComplete: false,
     stripePublicKey: '',
     stripeSecretKey: ''
   });
@@ -128,6 +145,59 @@ export function Settings({ vendorId, onNavigate, onVisibilityChange, initialIsLi
     companyType: 'GmbH',
     firstInvoiceIssued: false // Locks invoice numbering after first invoice
   });
+
+  // Live table list state
+  const [tableList, setTableList] = useState<{ id: string; number: number; name: string; isActive: boolean }[]>([]);
+  const [tableListLoading, setTableListLoading] = useState(false);
+  const [editingTableId, setEditingTableId] = useState<string | null>(null);
+  const [editingTableName, setEditingTableName] = useState('');
+  const [syncingTables, setSyncingTables] = useState(false);
+
+  const loadTableList = () => {
+    if (!vendorId) return;
+    setTableListLoading(true);
+    api.getTables(vendorId)
+      .then((data: any) => setTableList(Array.isArray(data) ? data : []))
+      .catch(() => toast.error('Failed to load tables'))
+      .finally(() => setTableListLoading(false));
+  };
+
+  const handleSyncTables = async () => {
+    const count = tableSettings.numberOfTables;
+    if (!count || count < 1) return;
+    setSyncingTables(true);
+    try {
+      await api.syncTables(vendorId, count);
+      toast.success(`Tables synced to ${count}`);
+      loadTableList();
+    } catch {
+      toast.error('Failed to sync tables');
+    } finally {
+      setSyncingTables(false);
+    }
+  };
+
+  const handleRenameTable = async (tableId: string) => {
+    if (!editingTableName.trim()) return;
+    try {
+      await api.updateTable(vendorId, tableId, { name: editingTableName.trim() });
+      setTableList(prev => prev.map(t => t.id === tableId ? { ...t, name: editingTableName.trim() } : t));
+      setEditingTableId(null);
+      toast.success('Table renamed');
+    } catch {
+      toast.error('Failed to rename table');
+    }
+  };
+
+  const handleToggleTableActive = async (tableId: string, current: boolean) => {
+    try {
+      await api.updateTable(vendorId, tableId, { is_active: !current });
+      setTableList(prev => prev.map(t => t.id === tableId ? { ...t, isActive: !current } : t));
+      toast.success(current ? 'Table deactivated' : 'Table activated');
+    } catch {
+      toast.error('Failed to update table');
+    }
+  };
 
   // Table Management State
   const [tableSettings, setTableSettings] = useState({
@@ -237,7 +307,7 @@ export function Settings({ vendorId, onNavigate, onVisibilityChange, initialIsLi
         vatNumber: settings.vatNumber,
         email: settings.email,
         phone: settings.phone,
-        website: settings.website,
+        website: settings.website && !/^https?:\/\//i.test(settings.website) ? `https://${settings.website}` : (settings.website || ''),
         address: settings.address,
         logo: settings.logo || '',
         coverPhoto: settings.coverPhoto || '',
@@ -253,8 +323,14 @@ export function Settings({ vendorId, onNavigate, onVisibilityChange, initialIsLi
         acceptCard: settings.acceptCard,
         acceptCash: settings.acceptCash,
         acceptCashTakeaway: settings.acceptCashTakeaway !== undefined ? settings.acceptCashTakeaway : true,
+        acceptBankTransfer: settings.acceptBankTransfer || false,
+        acceptVisa: settings.acceptVisa !== false,
+        acceptMastercard: settings.acceptMastercard !== false,
+        acceptAmex: settings.acceptAmex || false,
         currency: settings.currency,
         stripeEnabled: settings.stripeEnabled,
+        stripeAccountId: settings.stripeAccountId || '',
+        stripeOnboardingComplete: settings.stripeOnboardingComplete || false,
         stripePublicKey: '',
         stripeSecretKey: ''
       });
@@ -376,9 +452,15 @@ export function Settings({ vendorId, onNavigate, onVisibilityChange, initialIsLi
     // Normal save for non-legal fields or when no legal changes detected
     setSaving(true);
     try {
+      // Normalize website URL before saving
+      const normalizedWebsite = businessInfo.website && !/^https?:\/\//i.test(businessInfo.website)
+        ? `https://${businessInfo.website}`
+        : businessInfo.website;
+
       // Combine all settings into one object
       const allSettings = {
         ...businessInfo,
+        website: normalizedWebsite,
         businessHours,
         ...paymentSettings,
         ...taxSettings,
@@ -411,21 +493,19 @@ export function Settings({ vendorId, onNavigate, onVisibilityChange, initialIsLi
     setSaving(true);
 
     try {
-      // Save pending values (backend should store these separately)
       const pendingData = {
         restaurantName: businessInfo.restaurantName,
-        businessRegNumber: businessInfo.businessRegNumber,
+        legalEntityName: businessInfo.businessRegNumber, // maps to legal_entity_name via backend
+        businessRegistrationNumber: businessInfo.businessRegNumber,
         vatNumber: businessInfo.vatNumber,
-        companyType: taxSettings.companyType,
-        address: businessInfo.address
+        address: businessInfo.address,
       };
+
+      await api.submitLegalInfoForApproval(vendorId, pendingData);
 
       setPendingLegalInfo(pendingData);
       setLegalApprovalStatus('pending');
 
-      // In real implementation, this would call API to submit for approval
-      // await api.submitLegalInfoForApproval(vendorId, pendingData);
-      
       toast.success('Legal information changes submitted for admin approval');
     } catch (error) {
       console.error('Failed to submit for approval:', error);
@@ -455,8 +535,21 @@ export function Settings({ vendorId, onNavigate, onVisibilityChange, initialIsLi
     }
   };
 
-  const handleExportData = () => {
-    toast.success('Data export started. You will receive an email when ready.');
+  const handleExportData = async () => {
+    try {
+      const data = await api.exportVendorData(vendorId);
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `vendor-${vendorId}-data.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success('Data exported successfully.');
+    } catch (error) {
+      console.error('Failed to export data:', error);
+      toast.error('Failed to export data.');
+    }
   };
 
   const handleGenerateQRCodes = () => {
@@ -789,14 +882,16 @@ export function Settings({ vendorId, onNavigate, onVisibilityChange, initialIsLi
                     <input
                       type="file"
                       accept="image/*"
-                      onChange={(e) => {
+                      onChange={async (e) => {
                         const file = e.target.files?.[0];
                         if (file) {
-                          const reader = new FileReader();
-                          reader.onloadend = () => {
-                            setBusinessInfo({...businessInfo, logo: reader.result as string});
-                          };
-                          reader.readAsDataURL(file);
+                          try {
+                            const result = await api.uploadLogo(vendorId, file);
+                            setBusinessInfo({...businessInfo, logo: result.logoUrl});
+                            toast.success('Logo uploaded successfully');
+                          } catch {
+                            toast.error('Failed to upload logo');
+                          }
                         }
                       }}
                       className="absolute inset-0 opacity-0 cursor-pointer"
@@ -826,14 +921,16 @@ export function Settings({ vendorId, onNavigate, onVisibilityChange, initialIsLi
                     <input
                       type="file"
                       accept="image/*"
-                      onChange={(e) => {
+                      onChange={async (e) => {
                         const file = e.target.files?.[0];
                         if (file) {
-                          const reader = new FileReader();
-                          reader.onloadend = () => {
-                            setBusinessInfo({...businessInfo, coverPhoto: reader.result as string});
-                          };
-                          reader.readAsDataURL(file);
+                          try {
+                            const result = await api.uploadCoverPhoto(vendorId, file);
+                            setBusinessInfo({...businessInfo, coverPhoto: result.coverPhotoUrl});
+                            toast.success('Cover photo uploaded successfully');
+                          } catch {
+                            toast.error('Failed to upload cover photo');
+                          }
                         }
                       }}
                       className="absolute inset-0 opacity-0 cursor-pointer"
@@ -1023,17 +1120,56 @@ export function Settings({ vendorId, onNavigate, onVisibilityChange, initialIsLi
 
             {/* Credit/Debit Card */}
             {paymentSettings.paymentCollectionModel === 'online' && (
+              <div className="border rounded-lg p-4">
+                <label className="flex items-center gap-3 cursor-pointer hover:bg-gray-50 mb-3">
+                  <input
+                    type="checkbox"
+                    checked={paymentSettings.acceptCard}
+                    onChange={(e) => setPaymentSettings({...paymentSettings, acceptCard: e.target.checked})}
+                    className="rounded"
+                  />
+                  <CreditCard className="w-5 h-5 text-gray-600" />
+                  <div className="flex-1">
+                    <span className="font-medium">Card Payments</span>
+                    <div className="text-sm text-gray-600">Credit / Debit Card</div>
+                  </div>
+                </label>
+                {paymentSettings.acceptCard && (
+                  <div className="space-y-2 pl-8 border-l-2 border-gray-200 ml-4">
+                    <p className="text-xs text-gray-500 mb-2">Accepted card types:</p>
+                    {[
+                      { key: 'acceptVisa', label: 'Visa' },
+                      { key: 'acceptMastercard', label: 'Mastercard' },
+                      { key: 'acceptAmex', label: 'American Express' },
+                    ].map(({ key, label }) => (
+                      <label key={key} className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={paymentSettings[key as keyof typeof paymentSettings] as boolean}
+                          onChange={(e) => setPaymentSettings({...paymentSettings, [key]: e.target.checked})}
+                          className="rounded"
+                        />
+                        <span className="text-sm">{label}</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Bank Transfer */}
+            {paymentSettings.paymentCollectionModel === 'online' && (
               <label className="flex items-center gap-3 p-4 border rounded-lg cursor-pointer hover:bg-gray-50">
                 <input
                   type="checkbox"
-                  checked={paymentSettings.acceptCard}
-                  onChange={(e) => setPaymentSettings({...paymentSettings, acceptCard: e.target.checked})}
+                  checked={paymentSettings.acceptBankTransfer}
+                  onChange={(e) => setPaymentSettings({...paymentSettings, acceptBankTransfer: e.target.checked})}
                   className="rounded"
                 />
-                <CreditCard className="w-5 h-5 text-gray-600" />
+                <span className="text-lg">🏦</span>
                 <div className="flex-1">
-                  <span className="font-medium">Card Payments</span>
-                  <div className="text-sm text-gray-600">Credit / Debit Card</div>
+                  <span className="font-medium">Bank Transfer (SEPA)</span>
+                  <div className="text-sm text-gray-600">SEPA / eps bank transfer</div>
                 </div>
               </label>
             )}
@@ -1109,6 +1245,68 @@ export function Settings({ vendorId, onNavigate, onVisibilityChange, initialIsLi
             Currency is defined by the restaurant's country and cannot be changed.
           </p>
         </div>
+
+        {/* Section 6: Stripe Connect */}
+        {paymentSettings.paymentCollectionModel === 'online' && (
+          <div className="border-2 border-indigo-200 rounded-lg p-6 bg-indigo-50">
+            <h3 className="text-lg font-semibold text-gray-900 mb-1">Stripe Connect</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Connect your Stripe account to accept online payments. Payouts are transferred directly to your bank.
+            </p>
+            {paymentSettings.stripeOnboardingComplete ? (
+              <div className="flex items-center gap-3">
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-green-100 text-green-800 text-sm font-medium">
+                  <CheckCircle className="w-4 h-4" /> Connected & Active
+                </span>
+                <span className="text-sm text-gray-500">Account: {paymentSettings.stripeAccountId}</span>
+              </div>
+            ) : paymentSettings.stripeAccountId ? (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 text-yellow-700 bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-2 text-sm">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  Stripe account created but onboarding not complete.
+                </div>
+                <button
+                  onClick={async () => {
+                    try {
+                      const result = await api.getStripeOnboardingLink(
+                        vendorId,
+                        `${window.location.origin}/vendor/settings?stripe=refresh`,
+                        `${window.location.origin}/vendor/settings?stripe=complete`
+                      ) as { onboardingUrl: string };
+                      window.location.href = result.onboardingUrl;
+                    } catch {
+                      toast.error('Failed to get Stripe onboarding link. Please try again.');
+                    }
+                  }}
+                  className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"
+                >
+                  Continue Onboarding
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={async () => {
+                  try {
+                    await api.connectStripe(vendorId);
+                    const result = await api.getStripeOnboardingLink(
+                      vendorId,
+                      `${window.location.origin}/vendor/settings?stripe=refresh`,
+                      `${window.location.origin}/vendor/settings?stripe=complete`
+                    ) as { onboardingUrl: string };
+                    window.location.href = result.onboardingUrl;
+                  } catch {
+                    toast.error('Failed to connect Stripe. Please try again.');
+                  }
+                }}
+                className="px-5 py-2.5 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 flex items-center gap-2"
+              >
+                <CreditCard className="w-4 h-4" />
+                Connect with Stripe
+              </button>
+            )}
+          </div>
+        )}
       </div>
     );
   };
@@ -1363,6 +1561,57 @@ export function Settings({ vendorId, onNavigate, onVisibilityChange, initialIsLi
             </div>
           )}
         </div>
+      </div>
+
+      {/* Section: Live Table List */}
+      <div>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold text-gray-900">Tables</h3>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={loadTableList} disabled={tableListLoading}>
+              {tableListLoading ? 'Loading…' : 'Refresh'}
+            </Button>
+            <Button size="sm" onClick={handleSyncTables} disabled={syncingTables} className="bg-gray-900 text-white hover:bg-gray-700">
+              {syncingTables ? 'Syncing…' : `Sync to ${tableSettings.numberOfTables} tables`}
+            </Button>
+          </div>
+        </div>
+        {tableList.length === 0 ? (
+          <div className="text-sm text-gray-500 py-4 text-center border rounded-lg">
+            No tables yet. Set a count above and click "Sync".
+          </div>
+        ) : (
+          <div className="border rounded-lg divide-y overflow-hidden">
+            {tableList.map(table => (
+              <div key={table.id} className={`flex items-center gap-3 px-4 py-3 ${table.isActive ? 'bg-white' : 'bg-gray-50 opacity-60'}`}>
+                <span className="w-8 text-sm font-medium text-gray-500">#{table.number}</span>
+                {editingTableId === table.id ? (
+                  <>
+                    <input
+                      autoFocus
+                      value={editingTableName}
+                      onChange={e => setEditingTableName(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') handleRenameTable(table.id); if (e.key === 'Escape') setEditingTableId(null); }}
+                      className="flex-1 px-2 py-1 border rounded text-sm focus:ring-2 focus:ring-gray-900"
+                    />
+                    <button onClick={() => handleRenameTable(table.id)} className="p-1 text-green-600 hover:text-green-700"><Check className="w-4 h-4" /></button>
+                    <button onClick={() => setEditingTableId(null)} className="p-1 text-gray-400 hover:text-gray-600"><X className="w-4 h-4" /></button>
+                  </>
+                ) : (
+                  <>
+                    <span className="flex-1 text-sm text-gray-800">{table.name}</span>
+                    <button onClick={() => { setEditingTableId(table.id); setEditingTableName(table.name); }} className="p-1 text-gray-400 hover:text-gray-700">
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                    <button onClick={() => handleToggleTableActive(table.id, table.isActive)} className={table.isActive ? 'text-green-600' : 'text-gray-400'}>
+                      {table.isActive ? <ToggleRight className="w-5 h-5" /> : <ToggleLeft className="w-5 h-5" />}
+                    </button>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Section: QR Code Management Link (NEW) */}

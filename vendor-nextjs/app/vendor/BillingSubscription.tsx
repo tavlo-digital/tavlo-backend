@@ -21,6 +21,7 @@ import {
   X
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { BillingLockedBanner } from '../vendor-onboarding/BillingLockedBanner';
 
@@ -48,15 +49,16 @@ export function BillingSubscription({ vendorId, vendorStatus }: BillingSubscript
   const [usageStats, setUsageStats] = useState<any>(null);
   const [showSuccessBanner, setShowSuccessBanner] = useState(false);
   const [showCancelModal, setShowCancelModal] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [cancelLoading, setCancelLoading] = useState(false);
 
   useEffect(() => {
     loadBillingData();
-    
-    // 4️⃣ Check for return from Stripe portal
+
+    // Check for return from Stripe portal
     const urlParams = new URLSearchParams(window.location.search);
     if (urlParams.get('payment_updated') === 'success') {
       setShowSuccessBanner(true);
-      // Clean URL
       window.history.replaceState({}, '', window.location.pathname);
     }
   }, [vendorId]);
@@ -65,13 +67,35 @@ export function BillingSubscription({ vendorId, vendorStatus }: BillingSubscript
     try {
       setLoading(true);
 
-      // Load subscription data from Laravel API
-      const subData = await api.getVendorSubscription(vendorId) as any;
-      setSubscriptionData(subData);
+      const [billingData, invoicesData, usage] = await Promise.allSettled([
+        api.getBillingDetails(vendorId),
+        api.getBillingInvoices(vendorId),
+        api.getBillingUsage(vendorId),
+      ]);
 
-      // Invoices not yet available via backend API
-      setInvoices([]);
-      setUsageStats(null);
+      if (billingData.status === 'fulfilled') {
+        setSubscriptionData(billingData.value as any);
+      }
+
+      if (invoicesData.status === 'fulfilled') {
+        const inv = invoicesData.value as any;
+        const rows = Array.isArray(inv) ? inv : (inv?.data ?? []);
+        setInvoices(rows.map((i: any) => ({
+          id: String(i.id),
+          invoiceNumber: i.invoice_number,
+          date: i.billing_period_start
+            ? new Date(i.billing_period_start).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+            : '',
+          amount: parseFloat(i.amount ?? 0),
+          vat: parseFloat(i.vat ?? 0),
+          status: i.status,
+          downloadUrl: i.pdf_url ?? i.stripe_hosted_url,
+        })));
+      }
+
+      if (usage.status === 'fulfilled') {
+        setUsageStats(usage.value as any);
+      }
     } catch (error) {
       console.error('Error loading billing data:', error);
     } finally {
@@ -80,15 +104,78 @@ export function BillingSubscription({ vendorId, vendorStatus }: BillingSubscript
   };
 
   const handleUpdatePaymentMethod = async () => {
-    alert('Billing portal coming soon. Please contact support to update your payment method.');
+    try {
+      setActionLoading(true);
+      const res = await api.getBillingPortalUrl(vendorId);
+      if (res?.url) {
+        window.location.href = res.url;
+      } else {
+        toast.info(res?.message ?? 'Please contact support to update your payment method.');
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error('Unable to open billing portal. Please try again later.');
+    } finally {
+      setActionLoading(false);
+    }
   };
 
   const handleRetryPayment = async () => {
-    alert('Please contact support to retry your payment.');
+    // Stripe handles automated payment retries via webhooks. Guide vendor to update card.
+    await handleUpdatePaymentMethod();
   };
 
   const handleDownloadInvoice = async (invoiceId: string) => {
-    alert('Invoice download coming soon.');
+    try {
+      const res = await api.downloadInvoice(vendorId, invoiceId);
+      if (res?.url) {
+        window.open(res.url, '_blank', 'noopener,noreferrer');
+      } else {
+        toast.info('Invoice PDF is not yet available.');
+      }
+    } catch (err: any) {
+      toast.error(err?.message ?? 'Could not download invoice.');
+    }
+  };
+
+  const handleUpgradePlan = async (planId: number) => {
+    try {
+      setActionLoading(true);
+      await api.upgradePlan(vendorId, planId);
+      toast.success('Plan updated successfully.');
+      await loadBillingData();
+    } catch (err: any) {
+      toast.error(err?.message ?? 'Could not upgrade plan.');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleChangeCycle = async (cycle: 'monthly' | 'yearly') => {
+    try {
+      setActionLoading(true);
+      await api.changeBillingCycle(vendorId, cycle);
+      toast.success(`Billing cycle changed to ${cycle}.`);
+      await loadBillingData();
+    } catch (err: any) {
+      toast.error(err?.message ?? 'Could not change billing cycle.');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleCancelSubscription = async () => {
+    try {
+      setCancelLoading(true);
+      await api.cancelSubscription(vendorId);
+      toast.success('Subscription cancelled.');
+      setShowCancelModal(false);
+      await loadBillingData();
+    } catch (err: any) {
+      toast.error(err?.message ?? 'Could not cancel subscription.');
+    } finally {
+      setCancelLoading(false);
+    }
   };
 
   const getStatusConfig = (status: SubscriptionStatus) => {
@@ -264,19 +351,24 @@ export function BillingSubscription({ vendorId, vendorStatus }: BillingSubscript
               <div className="flex flex-wrap gap-3 pt-4 border-t border-gray-200">
                 <Button 
                   className="bg-orange-600 hover:bg-orange-700 text-white"
-                  onClick={() => alert('Upgrade flow coming soon')}
+                  disabled={actionLoading}
+                  onClick={() => alert('Upgrade flow — select a plan below to upgrade')}
                 >
                   <TrendingUp className="w-4 h-4 mr-2" />
                   Upgrade Plan
                 </Button>
                 <Button 
                   variant="outline"
-                  onClick={() => alert('Change cycle flow coming soon')}
+                  disabled={actionLoading}
+                  onClick={() => handleChangeCycle(
+                    subscriptionData?.billingCycle === 'yearly' ? 'monthly' : 'yearly'
+                  )}
                 >
-                  Change Billing Cycle
+                  {subscriptionData?.billingCycle === 'yearly' ? 'Switch to Monthly' : 'Switch to Yearly'}
                 </Button>
                 <Button 
                   variant="outline"
+                  disabled={actionLoading}
                   onClick={handleUpdatePaymentMethod}
                 >
                   <CreditCard className="w-4 h-4 mr-2" />
@@ -339,6 +431,7 @@ export function BillingSubscription({ vendorId, vendorStatus }: BillingSubscript
               <Button 
                 variant="outline" 
                 onClick={handleUpdatePaymentMethod}
+                disabled={actionLoading}
                 className="w-full sm:w-auto"
               >
                 <ExternalLink className="w-4 h-4 mr-2" />
@@ -354,6 +447,7 @@ export function BillingSubscription({ vendorId, vendorStatus }: BillingSubscript
                   variant="outline" 
                   size="sm"
                   onClick={handleUpdatePaymentMethod}
+                  disabled={actionLoading}
                 >
                   <ExternalLink className="w-4 h-4 mr-2" />
                   View All in Portal
@@ -527,7 +621,8 @@ export function BillingSubscription({ vendorId, vendorStatus }: BillingSubscript
 
               <Button 
                 className="w-full bg-orange-600 hover:bg-orange-700 text-white"
-                onClick={() => alert('Upgrade to yearly plan')}
+                disabled={actionLoading}
+                onClick={() => handleUpgradePlan(2)}
               >
                 Upgrade to Yearly
                 <ChevronRight className="w-4 h-4 ml-2" />
@@ -537,7 +632,7 @@ export function BillingSubscription({ vendorId, vendorStatus }: BillingSubscript
                 <Button 
                   variant="ghost" 
                   className="w-full text-sm"
-                  onClick={() => alert('Contact support')}
+                  onClick={() => window.open('mailto:support@tavlo.com', '_blank')}
                 >
                   Contact Support
                 </Button>
@@ -628,22 +723,16 @@ export function BillingSubscription({ vendorId, vendorStatus }: BillingSubscript
                 variant="outline"
                 onClick={() => setShowCancelModal(false)}
                 className="flex-1"
+                disabled={cancelLoading}
               >
                 Keep Subscription
               </Button>
               <Button 
                 className="flex-1 bg-red-600 hover:bg-red-700 text-white"
-                onClick={async () => {
-                  try {
-                    alert('Subscription cancellation coming soon. Please contact support.');
-                    setShowCancelModal(false);
-                  } catch (error) {
-                    console.error('Error canceling subscription:', error);
-                    alert('Failed to cancel subscription. Please contact support.');
-                  }
-                }}
+                disabled={cancelLoading}
+                onClick={handleCancelSubscription}
               >
-                Confirm Cancellation
+                {cancelLoading ? 'Cancelling...' : 'Confirm Cancellation'}
               </Button>
             </div>
           </div>

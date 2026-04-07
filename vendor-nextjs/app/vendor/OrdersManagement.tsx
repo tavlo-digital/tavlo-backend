@@ -25,8 +25,15 @@ export function OrdersManagement({ vendorId, vendorSettings }: OrdersManagementP
   const loadOrders = async () => {
     setLoading(true);
     try {
-      const data = await api.getVendorOrders(vendorId);
-      setOrders(data as any);
+      const data = await api.getVendorOrders(vendorId) as any;
+      // API returns { sessions: [...], takeaway: [...] } — flatten into one list
+      if (Array.isArray(data)) {
+        setOrders(data);
+      } else {
+        const sessionOrders = (data?.sessions ?? []).flatMap((s: any) => s.orders ?? []);
+        const takeawayOrders = data?.takeaway ?? [];
+        setOrders([...sessionOrders, ...takeawayOrders]);
+      }
     } catch (error) {
       console.error('Error loading orders:', error);
       toast.error('Failed to load orders');

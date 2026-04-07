@@ -57,6 +57,38 @@ async function apiFetch<T = unknown>(
   return res.json();
 }
 
+async function apiFetchForm<T = unknown>(
+  path: string,
+  token: string | null,
+  formData: FormData,
+  method = "POST"
+): Promise<T> {
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+  };
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+
+  const res = await fetch(`${API_BASE}/api${path}`, {
+    method,
+    headers,
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    const error: Error & { status?: number; data?: unknown } = new Error(
+      data.message || `API error ${res.status}`
+    );
+    error.status = res.status;
+    error.data = data;
+    throw error;
+  }
+
+  return res.json();
+}
+
 export function createVendorApi() {
   return {
     get: <T = unknown>(path: string) =>
@@ -153,6 +185,35 @@ export const api = {
     vendorApi.get(`/vendor/${vendorId}/subscription`),
   submitLegalInfoForApproval: (vendorId: string, data: unknown) =>
     vendorApi.post(`/vendor/${vendorId}/legal-info`, data as Record<string, unknown>),
+  getLegalChangeStatus: (vendorId: string) =>
+    vendorApi.get(`/vendor/${vendorId}/legal-info/status`),
+  uploadLogo: (vendorId: string, file: File) => {
+    const form = new FormData();
+    form.append("logo", file);
+    return apiFetchForm<{ logoUrl: string }>(
+      `/vendor/${vendorId}/settings/logo`,
+      vendorToken.get(),
+      form
+    );
+  },
+  uploadCoverPhoto: (vendorId: string, file: File) => {
+    const form = new FormData();
+    form.append("cover", file);
+    return apiFetchForm<{ coverPhotoUrl: string }>(
+      `/vendor/${vendorId}/settings/cover-photo`,
+      vendorToken.get(),
+      form
+    );
+  },
+  exportVendorData: (vendorId: string) =>
+    vendorApi.get(`/vendor/${vendorId}/settings/export`),
+  // Stripe Connect
+  connectStripe: (vendorId: string) =>
+    vendorApi.post(`/vendor/${vendorId}/stripe/connect`),
+  getStripeOnboardingLink: (vendorId: string, refreshUrl: string, returnUrl: string) =>
+    vendorApi.post(`/vendor/${vendorId}/stripe/onboarding-link`, { refreshUrl, returnUrl }),
+  getStripeStatus: (vendorId: string) =>
+    vendorApi.get(`/vendor/${vendorId}/stripe/status`),
 
   // Analytics / Customers
   getTopCustomers: (vendorId: string, period = '6m') =>
@@ -218,4 +279,24 @@ export const api = {
     vendorApi.patch(`/orders/${orderId}/served`),
   cancelOrder: (orderId: string, reason?: string) =>
     vendorApi.patch(`/orders/${orderId}/cancel`, reason ? { reason } : undefined),
+
+  // Billing & Subscription
+  getBillingDetails: (vendorId: string) =>
+    vendorApi.get(`/vendor/${vendorId}/billing`),
+  getBillingInvoices: (vendorId: string) =>
+    vendorApi.get(`/vendor/${vendorId}/billing/invoices`),
+  downloadInvoice: (vendorId: string, invoiceId: string) =>
+    vendorApi.get<{ url: string }>(`/vendor/${vendorId}/billing/invoices/${invoiceId}/download`),
+  getBillingUsage: (vendorId: string) =>
+    vendorApi.get(`/vendor/${vendorId}/billing/usage`),
+  upgradePlan: (vendorId: string, planId: number) =>
+    vendorApi.post(`/vendor/${vendorId}/billing/upgrade`, { planId }),
+  changeBillingCycle: (vendorId: string, cycle: 'monthly' | 'yearly') =>
+    vendorApi.patch(`/vendor/${vendorId}/billing/cycle`, { cycle }),
+  updatePaymentMethod: (vendorId: string, data: Record<string, unknown>) =>
+    vendorApi.post(`/vendor/${vendorId}/billing/payment-method`, data),
+  cancelSubscription: (vendorId: string) =>
+    vendorApi.post(`/vendor/${vendorId}/billing/cancel`),
+  getBillingPortalUrl: (vendorId: string) =>
+    vendorApi.post<{ url: string | null; message?: string }>(`/vendor/${vendorId}/billing/portal`),
 };
