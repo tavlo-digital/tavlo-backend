@@ -19,10 +19,12 @@ class VendorRequestChange extends Model
         'vendor_notes',
         'status',
         'checked_by',
+        'reviewed_at',
     ];
 
     protected $casts = [
-        'status' => 'boolean',
+        'status'      => 'string',
+        'reviewed_at' => 'datetime',
     ];
 
     public function vendor(): \Illuminate\Database\Eloquent\Relations\BelongsTo

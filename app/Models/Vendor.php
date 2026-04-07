@@ -125,4 +125,9 @@ class Vendor extends Authenticatable
     {
         return $this->hasMany(TableSession::class);
     }
+
+    public function paymentMethods(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(PaymentMethod::class);
+    }
 }

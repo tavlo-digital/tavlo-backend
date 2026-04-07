@@ -22,7 +22,9 @@ return new class extends Migration
             $table->string('city')->nullable();
             $table->string('address')->nullable();
             $table->text('admin_notes')->nullable();
-            $table->boolean('status')->default(false); // 0 = pending, 1 = approved
+            $table->text('vendor_notes')->nullable();
+            $table->string('status', 20)->default('pending'); // 'pending' | 'approved' | 'rejected'
+            $table->timestamp('reviewed_at')->nullable();
             $table->foreignId('checked_by')->nullable()->constrained('users')->nullOnDelete();
             $table->timestamps();
         });

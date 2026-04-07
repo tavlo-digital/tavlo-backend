@@ -11,6 +11,7 @@ use App\Http\Controllers\Api\Vendor\SpecialTagController;
 use App\Http\Controllers\Api\Vendor\InventoryController;
 use App\Http\Controllers\Api\Vendor\OrderController;
 use App\Http\Controllers\Api\Vendor\VendorSettingsController;
+use App\Http\Controllers\Api\Vendor\StripeConnectController;
 use App\Http\Controllers\Api\Vendor\ReviewController;
 use App\Http\Controllers\Api\Vendor\ReservationController;
 use App\Http\Controllers\Api\Vendor\DashboardController;
@@ -18,6 +19,7 @@ use App\Http\Controllers\Api\Vendor\TableController;
 use App\Http\Controllers\Api\Vendor\TeamController;
 use App\Http\Controllers\Api\Vendor\AnalyticsController;
 use App\Http\Controllers\Api\Vendor\SeedController;
+use App\Http\Controllers\Api\Vendor\BillingController;
 use Illuminate\Support\Facades\Route;
 
 // Customer auth
@@ -105,10 +107,19 @@ Route::middleware('auth:vendor')->group(function () {
     Route::post('vendor/{vendorId}/sessions/{sessionId}/close',          [OrderController::class, 'closeSession']);
 
     // Vendor Settings
-    Route::get('vendor/{vendorId}/settings',             [VendorSettingsController::class, 'show']);
-    Route::put('vendor/{vendorId}/settings',             [VendorSettingsController::class, 'update']);
-    Route::get('vendor/{vendorId}/subscription',         [VendorSettingsController::class, 'subscription']);
-    Route::post('vendor/{vendorId}/legal-info',          [VendorSettingsController::class, 'submitLegalInfo']);
+    Route::get('vendor/{vendorId}/settings',                  [VendorSettingsController::class, 'show']);
+    Route::put('vendor/{vendorId}/settings',                  [VendorSettingsController::class, 'update']);
+    Route::get('vendor/{vendorId}/subscription',              [VendorSettingsController::class, 'subscription']);
+    Route::post('vendor/{vendorId}/legal-info',               [VendorSettingsController::class, 'submitLegalInfo']);
+    Route::get('vendor/{vendorId}/legal-info/status',         [VendorSettingsController::class, 'getLegalChangeStatus']);
+    Route::post('vendor/{vendorId}/settings/logo',            [VendorSettingsController::class, 'uploadLogo']);
+    Route::post('vendor/{vendorId}/settings/cover-photo',     [VendorSettingsController::class, 'uploadCoverPhoto']);
+    Route::get('vendor/{vendorId}/settings/export',           [VendorSettingsController::class, 'exportData']);
+
+    // Stripe Connect
+    Route::post('vendor/{vendorId}/stripe/connect',           [StripeConnectController::class, 'createAccount']);
+    Route::post('vendor/{vendorId}/stripe/onboarding-link',   [StripeConnectController::class, 'createOnboardingLink']);
+    Route::get('vendor/{vendorId}/stripe/status',             [StripeConnectController::class, 'getStatus']);
 
     // Reviews
     Route::get('vendor/{vendorId}/complaints',           [ReviewController::class, 'complaints']);
@@ -141,6 +152,17 @@ Route::middleware('auth:vendor')->group(function () {
 
     // Analytics
     Route::get('vendor/{vendorId}/analytics',            [AnalyticsController::class, 'index']);
+
+    // Billing & Subscription
+    Route::get('vendor/{vendorId}/billing',                                   [BillingController::class, 'show']);
+    Route::get('vendor/{vendorId}/billing/invoices',                          [BillingController::class, 'invoices']);
+    Route::get('vendor/{vendorId}/billing/invoices/{invoiceId}/download',     [BillingController::class, 'downloadInvoice']);
+    Route::get('vendor/{vendorId}/billing/usage',                             [BillingController::class, 'usage']);
+    Route::post('vendor/{vendorId}/billing/upgrade',                          [BillingController::class, 'upgradePlan']);
+    Route::patch('vendor/{vendorId}/billing/cycle',                           [BillingController::class, 'changeCycle']);
+    Route::post('vendor/{vendorId}/billing/payment-method',                   [BillingController::class, 'updatePaymentMethod']);
+    Route::post('vendor/{vendorId}/billing/cancel',                           [BillingController::class, 'cancel']);
+    Route::post('vendor/{vendorId}/billing/portal',                           [BillingController::class, 'portalSession']);
 
     // Seed demo data
     Route::post('seed',                                  [SeedController::class, 'seed']);

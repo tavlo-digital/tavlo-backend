@@ -8,6 +8,10 @@ return new class extends Migration
 {
     public function up(): void
     {
+        if (Schema::hasColumn('vendor_request_changes', 'vendor_notes')) {
+            return; // Already added by the original migration on fresh installs.
+        }
+
         Schema::table('vendor_request_changes', function (Blueprint $table) {
             $table->text('vendor_notes')->nullable()->after('admin_notes');
         });

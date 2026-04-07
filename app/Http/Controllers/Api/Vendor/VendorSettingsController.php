@@ -4,12 +4,18 @@ namespace App\Http\Controllers\Api\Vendor;
 
 use App\Http\Controllers\Controller;
 use App\Models\Vendor;
+use App\Models\VendorRequestChange;
 use App\Models\VendorSetting;
+use App\Services\VendorMediaService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class VendorSettingsController extends Controller
 {
+    public function __construct(private readonly VendorMediaService $mediaService)
+    {
+    }
+
     /**
      * GET /api/vendor/{vendorId}/settings
      * Returns merged vendor + vendor_settings response.
@@ -86,6 +92,7 @@ class VendorSettingsController extends Controller
             'notifyEmailReview'           => ['sometimes', 'boolean'],
             'notifySmsNewOrder'           => ['sometimes', 'boolean'],
             'notifyPushNewOrder'          => ['sometimes', 'boolean'],
+            'notifyPushOrderReady'        => ['sometimes', 'boolean'],
             'notificationEmail'           => ['nullable', 'email', 'max:255'],
             // reviews
             'enableReviews'               => ['sometimes', 'boolean'],
@@ -99,12 +106,25 @@ class VendorSettingsController extends Controller
             'pointsPerEuro'               => ['sometimes', 'integer', 'min:0'],
             'minimumRedemptionPoints'     => ['sometimes', 'integer', 'min:0'],
             'pointValue'                  => ['sometimes', 'numeric', 'min:0'],
+            'redemptionRate'              => ['sometimes', 'numeric', 'min:0'],
             'pointsExpiryDays'            => ['nullable', 'integer', 'min:0'],
+            'showInTopCustomers'          => ['sometimes', 'boolean'],
             // appearance
             'menuTheme'                   => ['sometimes', 'string', 'max:50'],
             'primaryColor'                => ['nullable', 'string', 'max:20'],
             'accentColor'                 => ['nullable', 'string', 'max:20'],
             'menuLayout'                  => ['sometimes', 'string', 'max:50'],
+            'backgroundImageUrl'          => ['nullable', 'string', 'max:500'],
+            // payment card sub-types
+            'acceptVisa'                  => ['sometimes', 'boolean'],
+            'acceptMastercard'            => ['sometimes', 'boolean'],
+            'acceptAmex'                  => ['sometimes', 'boolean'],
+            'acceptBankTransfer'          => ['sometimes', 'boolean'],
+            // date / time formatting
+            'dateFormat'                  => ['sometimes', 'string', 'max:20'],
+            'timeFormat'                  => ['sometimes', 'string', 'max:5'],
+            // data retention
+            'dataRetentionDays'           => ['nullable', 'integer', 'min:0'],
         ]);
 
         // ---- Update core vendor fields ----
@@ -161,6 +181,7 @@ class VendorSettingsController extends Controller
             'notifyEmailReview'           => 'notify_email_review',
             'notifySmsNewOrder'           => 'notify_sms_new_order',
             'notifyPushNewOrder'          => 'notify_push_new_order',
+            'notifyPushOrderReady'        => 'notify_push_order_ready',
             'notificationEmail'           => 'notification_email',
             'enableReviews'               => 'enable_reviews',
             'enableMenuReviews'           => 'enable_menu_reviews',
@@ -171,11 +192,21 @@ class VendorSettingsController extends Controller
             'pointsPerEuro'               => 'points_per_euro',
             'minimumRedemptionPoints'     => 'minimum_redemption_points',
             'pointValue'                  => 'point_value',
+            'redemptionRate'              => 'redemption_rate',
             'pointsExpiryDays'            => 'points_expiry_days',
+            'showInTopCustomers'          => 'show_in_top_customers',
             'menuTheme'                   => 'menu_theme',
             'primaryColor'                => 'primary_color',
             'accentColor'                 => 'accent_color',
             'menuLayout'                  => 'menu_layout',
+            'backgroundImageUrl'          => 'background_image_url',
+            'acceptVisa'                  => 'accept_visa',
+            'acceptMastercard'            => 'accept_mastercard',
+            'acceptAmex'                  => 'accept_amex',
+            'acceptBankTransfer'          => 'accept_bank_transfer',
+            'dateFormat'                  => 'date_format',
+            'timeFormat'                  => 'time_format',
+            'dataRetentionDays'           => 'data_retention_days',
         ];
 
         $settingsData = [];
@@ -230,29 +261,129 @@ class VendorSettingsController extends Controller
         $vendor = $this->resolveVendor($vendorId);
         $this->authorizeVendor($request, $vendor);
 
+        // Block new submission if one is already pending
+        $hasPending = VendorRequestChange::where('vendor_id', $vendor->id)
+            ->where('status', 'pending')
+            ->exists();
+
+        if ($hasPending) {
+            return response()->json(['message' => 'A legal info change request is already pending review.'], 422);
+        }
+
         $data = $request->validate([
+            'restaurantName'             => ['sometimes', 'string', 'max:255'],
             'legalEntityName'            => ['required', 'string', 'max:255'],
             'businessRegistrationNumber' => ['required', 'string', 'max:100'],
             'vatNumber'                  => ['required', 'string', 'max:50'],
+            'country'                    => ['sometimes', 'string', 'max:100'],
+            'city'                       => ['sometimes', 'string', 'max:255'],
+            'address'                    => ['sometimes', 'string', 'max:500'],
+            'vendorNotes'                => ['nullable', 'string', 'max:1000'],
         ]);
 
-        $vendor->requestChanges()->create([
-            'field'     => 'legal_info',
-            'old_value' => json_encode([
-                'legal_entity_name'              => $vendor->legal_entity_name,
-                'business_registration_number'   => $vendor->business_registration_number,
-                'vat_number'                     => $vendor->vat_number,
-            ]),
-            'new_value' => json_encode([
-                'legal_entity_name'              => $data['legalEntityName'],
-                'business_registration_number'   => $data['businessRegistrationNumber'],
-                'vat_number'                     => $data['vatNumber'],
-            ]),
-            'status'    => 'pending',
+        VendorRequestChange::create([
+            'vendor_id'                      => $vendor->id,
+            'restaurant_name'                => $data['restaurantName'] ?? $vendor->restaurant_name,
+            'legal_entity_name'              => $data['legalEntityName'],
+            'business_registration_number'   => $data['businessRegistrationNumber'],
+            'vat_number'                     => $data['vatNumber'],
+            'country'                        => $data['country'] ?? $vendor->country,
+            'city'                           => $data['city'] ?? $vendor->city,
+            'address'                        => $data['address'] ?? $vendor->address,
+            'vendor_notes'                   => $data['vendorNotes'] ?? null,
+            'status'                         => 'pending',
         ]);
 
-        return response()->json(['message' => 'Legal info submitted for approval']);
+        return response()->json(['message' => 'Legal info submitted for approval.'], 201);
     }
+
+    /**
+     * GET /api/vendor/{vendorId}/legal-info/status
+     */
+    public function getLegalChangeStatus(string $vendorId): JsonResponse
+    {
+        $vendor = $this->resolveVendor($vendorId);
+
+        $latest = VendorRequestChange::where('vendor_id', $vendor->id)
+            ->orderByDesc('created_at')
+            ->first();
+
+        if (! $latest) {
+            return response()->json(null);
+        }
+
+        return response()->json([
+            'id'          => $latest->id,
+            'status'      => $latest->status,
+            'adminNotes'  => $latest->admin_notes,
+            'vendorNotes' => $latest->vendor_notes,
+            'reviewedAt'  => $latest->reviewed_at?->toISOString(),
+            'createdAt'   => $latest->created_at?->toISOString(),
+        ]);
+    }
+
+    /**
+     * POST /api/vendor/{vendorId}/settings/logo
+     */
+    public function uploadLogo(Request $request, string $vendorId): JsonResponse
+    {
+        $vendor = $this->resolveVendor($vendorId);
+        $this->authorizeVendor($request, $vendor);
+
+        $request->validate([
+            'logo' => ['required', 'file', 'mimes:jpg,jpeg,png,webp', 'max:2048'],
+        ]);
+
+        $url = $this->mediaService->uploadLogo($vendor, $request->file('logo'));
+
+        $vendor->vendorSetting()->updateOrCreate(
+            ['vendor_id' => $vendor->id],
+            ['logo_url' => $url]
+        );
+
+        return response()->json(['logoUrl' => $url]);
+    }
+
+    /**
+     * POST /api/vendor/{vendorId}/settings/cover-photo
+     */
+    public function uploadCoverPhoto(Request $request, string $vendorId): JsonResponse
+    {
+        $vendor = $this->resolveVendor($vendorId);
+        $this->authorizeVendor($request, $vendor);
+
+        $request->validate([
+            'cover' => ['required', 'file', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
+        ]);
+
+        $url = $this->mediaService->uploadCoverPhoto($vendor, $request->file('cover'));
+
+        $vendor->vendorSetting()->updateOrCreate(
+            ['vendor_id' => $vendor->id],
+            ['cover_photo_url' => $url]
+        );
+
+        return response()->json(['coverPhotoUrl' => $url]);
+    }
+
+    /**
+     * GET /api/vendor/{vendorId}/settings/export
+     * Returns a JSON blob of vendor data for download.
+     */
+    public function exportData(string $vendorId): JsonResponse
+    {
+        $vendor   = $this->resolveVendor($vendorId);
+        $settings = $vendor->vendorSetting;
+
+        $payload = [
+            'exportedAt' => now()->toISOString(),
+            'vendor'     => $this->buildResponse($vendor, $settings ?? new VendorSetting()),
+        ];
+
+        return response()->json($payload)
+            ->header('Content-Disposition', "attachment; filename=\"vendor-{$vendorId}-data.json\"");
+    }
+
 
     // ----------------------------------------------------------------
 
@@ -279,6 +410,7 @@ class VendorSettingsController extends Controller
             'description'                => $settings->description,
             'logo'                       => $settings->logo_url,
             'coverPhoto'                 => $settings->cover_photo_url,
+            'backgroundImageUrl'         => $settings->background_image_url,
             'isLiveAndDiscoverable'      => (bool) $settings->is_live_and_discoverable,
             'businessHours'              => $settings->business_hours ?? VendorSetting::defaultBusinessHours(),
             // payment
@@ -288,7 +420,13 @@ class VendorSettingsController extends Controller
             'acceptCard'                 => (bool) $settings->accept_card,
             'acceptApplePay'             => (bool) $settings->accept_apple_pay,
             'acceptGooglePay'            => (bool) $settings->accept_google_pay,
+            'acceptVisa'                 => $settings->accept_visa ?? true,
+            'acceptMastercard'           => $settings->accept_mastercard ?? true,
+            'acceptAmex'                 => (bool) $settings->accept_amex,
+            'acceptBankTransfer'         => (bool) $settings->accept_bank_transfer,
             'stripeEnabled'              => (bool) $settings->stripe_enabled,
+            'stripeAccountId'            => $settings->stripe_account_id,
+            'stripeOnboardingComplete'   => (bool) $settings->stripe_onboarding_complete,
             'currency'                   => $settings->currency ?? 'EUR',
             // tax & receipts
             'serviceFeeRate'             => (float) ($settings->service_fee_rate ?? 0),
@@ -323,6 +461,7 @@ class VendorSettingsController extends Controller
             'notifyEmailReview'          => (bool) $settings->notify_email_review,
             'notifySmsNewOrder'          => (bool) $settings->notify_sms_new_order,
             'notifyPushNewOrder'         => $settings->notify_push_new_order ?? true,
+            'notifyPushOrderReady'       => (bool) $settings->notify_push_order_ready,
             'notificationEmail'          => $settings->notification_email ?? $vendor->email,
             // reviews
             'enableReviews'              => $settings->enable_reviews ?? true,
@@ -336,12 +475,19 @@ class VendorSettingsController extends Controller
             'pointsPerEuro'              => (int) ($settings->points_per_euro ?? 10),
             'minimumRedemptionPoints'    => (int) ($settings->minimum_redemption_points ?? 100),
             'pointValue'                 => (float) ($settings->point_value ?? 0.01),
+            'redemptionRate'             => (float) ($settings->redemption_rate ?? 0.01),
             'pointsExpiryDays'           => $settings->points_expiry_days ? (int) $settings->points_expiry_days : null,
+            'showInTopCustomers'         => (bool) $settings->show_in_top_customers,
             // appearance
             'menuTheme'                  => $settings->menu_theme ?? 'default',
             'primaryColor'               => $settings->primary_color ?? '#000000',
             'accentColor'                => $settings->accent_color ?? '#F97316',
             'menuLayout'                 => $settings->menu_layout ?? 'grid',
+            // date / time formatting
+            'dateFormat'                 => $settings->date_format ?? 'DD.MM.YYYY',
+            'timeFormat'                 => $settings->time_format ?? '24h',
+            // data retention
+            'dataRetentionDays'          => $settings->data_retention_days ? (int) $settings->data_retention_days : null,
         ];
     }
 

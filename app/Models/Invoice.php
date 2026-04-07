@@ -10,18 +10,23 @@ class Invoice extends Model
         'subscription_id',
         'invoice_number',
         'amount',
+        'vat',
         'currency',
         'status',
         'billing_period_start',
         'billing_period_end',
         'due_date',
         'paid_at',
+        'pdf_url',
+        'stripe_invoice_id',
+        'stripe_hosted_url',
     ];
 
     protected function casts(): array
     {
         return [
             'amount' => 'decimal:2',
+            'vat' => 'decimal:2',
             'billing_period_start' => 'date',
             'billing_period_end' => 'date',
             'due_date' => 'date',

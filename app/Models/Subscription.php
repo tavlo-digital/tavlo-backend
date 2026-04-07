@@ -15,6 +15,9 @@ class Subscription extends Model
         'next_billing_date',
         'auto_renew',
         'stripe_subscription_id',
+        'stripe_customer_id',
+        'cancelled_at',
+        'paused_at',
     ];
 
     protected function casts(): array
@@ -23,6 +26,8 @@ class Subscription extends Model
             'start_date' => 'date',
             'next_billing_date' => 'date',
             'auto_renew' => 'boolean',
+            'cancelled_at' => 'datetime',
+            'paused_at' => 'datetime',
         ];
     }
 
