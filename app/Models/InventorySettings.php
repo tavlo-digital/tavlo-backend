@@ -15,6 +15,8 @@ class InventorySettings extends Model
         'track_nutrition',
         'link_menu_items',
         'settings',
+        'categories',
+        'units',
     ];
 
     protected function casts(): array
@@ -25,6 +27,8 @@ class InventorySettings extends Model
             'track_nutrition' => 'boolean',
             'link_menu_items' => 'boolean',
             'settings' => 'array',
+            'categories' => 'array',
+            'units' => 'array',
         ];
     }
 

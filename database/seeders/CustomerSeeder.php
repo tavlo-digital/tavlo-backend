@@ -13,7 +13,8 @@ class CustomerSeeder extends Seeder
         $customers = [
             [
                 'customer_public_id' => 'C-1024',
-                'name' => 'Anna Müller',
+                'first_name' => 'Anna',
+                'last_name' => 'Müller',
                 'phone' => '+43 1 111 2222',
                 'email' => 'anna.mueller@example.com',
                 'password' => Hash::make('password'),
@@ -29,7 +30,8 @@ class CustomerSeeder extends Seeder
             ],
             [
                 'customer_public_id' => 'C-2048',
-                'name' => 'Max Fischer',
+                'first_name' => 'Max',
+                'last_name' => 'Fischer',
                 'phone' => '+43 1 333 4444',
                 'email' => 'max.fischer@example.com',
                 'password' => Hash::make('password'),
@@ -45,7 +47,8 @@ class CustomerSeeder extends Seeder
             ],
             [
                 'customer_public_id' => 'C-3072',
-                'name' => 'Sophie Wagner',
+                'first_name' => 'Sophie',
+                'last_name' => 'Wagner',
                 'phone' => '+43 1 555 6666',
                 'email' => 'sophie.wagner@example.com',
                 'password' => Hash::make('password'),
@@ -61,7 +64,8 @@ class CustomerSeeder extends Seeder
             ],
             [
                 'customer_public_id' => 'C-4096',
-                'name' => 'Guest User',
+                'first_name' => 'Guest',
+                'last_name' => 'User',
                 'phone' => '+43 1 777 8888',
                 'email' => 'guest4096@example.com',
                 'password' => Hash::make('password'),
@@ -77,7 +81,8 @@ class CustomerSeeder extends Seeder
             ],
             [
                 'customer_public_id' => 'C-5120',
-                'name' => 'Thomas Bauer',
+                'first_name' => 'Thomas',
+                'last_name' => 'Bauer',
                 'phone' => '+43 1 999 0000',
                 'email' => 'thomas.bauer@example.com',
                 'password' => Hash::make('password'),

@@ -72,7 +72,7 @@ class DashboardController extends Controller
         // ---- Check critical inventory ---
         $criticalInventory = $vendor->inventoryItems()
             ->where('quantity', '<=', 0)
-            ->where('track_inventory', true)
+            ->where('track_stock', true)
             ->count();
         if ($criticalInventory > 0) {
             $alerts[] = [
@@ -86,8 +86,8 @@ class DashboardController extends Controller
         // ---- Low-stock inventory ---
         $lowInventory = $vendor->inventoryItems()
             ->where('quantity', '>', 0)
-            ->whereRaw('quantity <= low_stock_threshold')
-            ->where('track_inventory', true)
+            ->whereColumn('quantity', '<=', 'min_stock')
+            ->where('track_stock', true)
             ->count();
         if ($lowInventory > 0) {
             $alerts[] = [
@@ -113,7 +113,7 @@ class DashboardController extends Controller
 
         // ---- Recent orders ---
         $recentOrders = $vendor->orders()
-            ->with('customer:id,name,phone,customer_public_id')
+            ->with('customer:id,first_name,last_name,phone,customer_public_id')
             ->orderByDesc('created_at')
             ->limit(10)
             ->get()
@@ -128,7 +128,7 @@ class DashboardController extends Controller
                 'paymentPending' => (bool) $order->payment_pending,
                 'createdAt'    => $order->created_at->toISOString(),
                 'customer'     => $order->customer ? [
-                    'name'  => $order->customer->name,
+                    'name'  => trim($order->customer->first_name . ' ' . $order->customer->last_name),
                     'phone' => $order->customer->phone,
                 ] : null,
             ]);

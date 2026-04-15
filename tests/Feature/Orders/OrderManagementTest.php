@@ -232,14 +232,14 @@ class OrderManagementTest extends TestCase
     }
 
     // ----------------------------------------------------------------
-    // PATCH /api/orders/{orderId}/confirm
+    // PATCH /api/vendor/orders/{orderId}/confirm
     // ----------------------------------------------------------------
 
     public function test_confirm_sets_waiter_confirmed_and_status(): void
     {
         $order = $this->makeOrder(['status' => 'pending']);
 
-        $response = $this->patchJson("/api/orders/{$order->id}/confirm", [], $this->authHeaders());
+        $response = $this->patchJson("/api/vendor/orders/{$order->id}/confirm", [], $this->authHeaders());
 
         $response->assertOk()
             ->assertJsonPath('status', 'confirmed')
@@ -255,19 +255,19 @@ class OrderManagementTest extends TestCase
     public function test_confirm_requires_authentication(): void
     {
         $order = $this->makeOrder();
-        $this->patchJson("/api/orders/{$order->id}/confirm")
+        $this->patchJson("/api/vendor/orders/{$order->id}/confirm")
             ->assertUnauthorized();
     }
 
     // ----------------------------------------------------------------
-    // PATCH /api/orders/{orderId}/confirm-cash
+    // PATCH /api/vendor/orders/{orderId}/confirm-cash
     // ----------------------------------------------------------------
 
     public function test_confirm_cash_sets_payment_received(): void
     {
         $order = $this->makeOrder(['payment_pending' => true, 'payment_received' => false]);
 
-        $response = $this->patchJson("/api/orders/{$order->id}/confirm-cash", [], $this->authHeaders());
+        $response = $this->patchJson("/api/vendor/orders/{$order->id}/confirm-cash", [], $this->authHeaders());
 
         $response->assertOk()
             ->assertJsonPath('paymentReceived', true)
@@ -283,19 +283,19 @@ class OrderManagementTest extends TestCase
     public function test_confirm_cash_requires_authentication(): void
     {
         $order = $this->makeOrder();
-        $this->patchJson("/api/orders/{$order->id}/confirm-cash")
+        $this->patchJson("/api/vendor/orders/{$order->id}/confirm-cash")
             ->assertUnauthorized();
     }
 
     // ----------------------------------------------------------------
-    // PATCH /api/orders/{orderId}/ready
+    // PATCH /api/vendor/orders/{orderId}/ready
     // ----------------------------------------------------------------
 
     public function test_mark_ready_sets_status_and_ready_at(): void
     {
         $order = $this->makeOrder();
 
-        $response = $this->patchJson("/api/orders/{$order->id}/ready", [], $this->authHeaders());
+        $response = $this->patchJson("/api/vendor/orders/{$order->id}/ready", [], $this->authHeaders());
 
         $response->assertOk()
             ->assertJsonPath('status', 'ready');
@@ -307,19 +307,19 @@ class OrderManagementTest extends TestCase
     public function test_mark_ready_requires_authentication(): void
     {
         $order = $this->makeOrder();
-        $this->patchJson("/api/orders/{$order->id}/ready")
+        $this->patchJson("/api/vendor/orders/{$order->id}/ready")
             ->assertUnauthorized();
     }
 
     // ----------------------------------------------------------------
-    // PATCH /api/orders/{orderId}/picked-up
+    // PATCH /api/vendor/orders/{orderId}/picked-up
     // ----------------------------------------------------------------
 
     public function test_mark_picked_up_sets_status(): void
     {
         $order = $this->makeOrder();
 
-        $response = $this->patchJson("/api/orders/{$order->id}/picked-up", [], $this->authHeaders());
+        $response = $this->patchJson("/api/vendor/orders/{$order->id}/picked-up", [], $this->authHeaders());
 
         $response->assertOk()
             ->assertJsonPath('status', 'picked_up');
@@ -331,19 +331,19 @@ class OrderManagementTest extends TestCase
     public function test_mark_picked_up_requires_authentication(): void
     {
         $order = $this->makeOrder();
-        $this->patchJson("/api/orders/{$order->id}/picked-up")
+        $this->patchJson("/api/vendor/orders/{$order->id}/picked-up")
             ->assertUnauthorized();
     }
 
     // ----------------------------------------------------------------
-    // PATCH /api/orders/{orderId}/served
+    // PATCH /api/vendor/orders/{orderId}/served
     // ----------------------------------------------------------------
 
     public function test_mark_served_sets_status(): void
     {
         $order = $this->makeOrder();
 
-        $response = $this->patchJson("/api/orders/{$order->id}/served", [], $this->authHeaders());
+        $response = $this->patchJson("/api/vendor/orders/{$order->id}/served", [], $this->authHeaders());
 
         $response->assertOk()
             ->assertJsonPath('status', 'served');
@@ -355,19 +355,19 @@ class OrderManagementTest extends TestCase
     public function test_mark_served_requires_authentication(): void
     {
         $order = $this->makeOrder();
-        $this->patchJson("/api/orders/{$order->id}/served")
+        $this->patchJson("/api/vendor/orders/{$order->id}/served")
             ->assertUnauthorized();
     }
 
     // ----------------------------------------------------------------
-    // PATCH /api/orders/{orderId}/cancel
+    // PATCH /api/vendor/orders/{orderId}/cancel
     // ----------------------------------------------------------------
 
     public function test_cancel_sets_status_and_reason(): void
     {
         $order = $this->makeOrder();
 
-        $response = $this->patchJson("/api/orders/{$order->id}/cancel", [
+        $response = $this->patchJson("/api/vendor/orders/{$order->id}/cancel", [
             'reason' => 'Customer changed mind',
         ], $this->authHeaders());
 
@@ -387,7 +387,7 @@ class OrderManagementTest extends TestCase
     {
         $order = $this->makeOrder();
 
-        $this->patchJson("/api/orders/{$order->id}/cancel", [], $this->authHeaders())
+        $this->patchJson("/api/vendor/orders/{$order->id}/cancel", [], $this->authHeaders())
             ->assertOk()
             ->assertJsonPath('status', 'cancelled')
             ->assertJsonPath('cancelledReason', null);
@@ -396,19 +396,19 @@ class OrderManagementTest extends TestCase
     public function test_cancel_requires_authentication(): void
     {
         $order = $this->makeOrder();
-        $this->patchJson("/api/orders/{$order->id}/cancel")
+        $this->patchJson("/api/vendor/orders/{$order->id}/cancel")
             ->assertUnauthorized();
     }
 
     // ----------------------------------------------------------------
-    // PATCH /api/orders/{orderId} (generic update)
+    // PATCH /api/vendor/orders/{orderId} (generic update)
     // ----------------------------------------------------------------
 
     public function test_update_status_via_generic_endpoint(): void
     {
         $order = $this->makeOrder();
 
-        $response = $this->patchJson("/api/orders/{$order->id}", [
+        $response = $this->patchJson("/api/vendor/orders/{$order->id}", [
             'status' => 'preparing',
         ], $this->authHeaders());
 
@@ -420,7 +420,7 @@ class OrderManagementTest extends TestCase
     {
         $order = $this->makeOrder(['payment_pending' => true, 'payment_received' => false]);
 
-        $response = $this->patchJson("/api/orders/{$order->id}", [
+        $response = $this->patchJson("/api/vendor/orders/{$order->id}", [
             'paymentReceived' => true,
             'paymentNote'     => 'Paid at the counter',
         ], $this->authHeaders());
@@ -433,7 +433,7 @@ class OrderManagementTest extends TestCase
     public function test_update_requires_authentication(): void
     {
         $order = $this->makeOrder();
-        $this->patchJson("/api/orders/{$order->id}", ['status' => 'confirmed'])
+        $this->patchJson("/api/vendor/orders/{$order->id}", ['status' => 'confirmed'])
             ->assertUnauthorized();
     }
 

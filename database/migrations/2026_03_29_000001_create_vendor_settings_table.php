@@ -34,7 +34,7 @@ return new class extends Migration
 
             // Tax & receipts
             $table->decimal('service_fee_rate', 5, 2)->default(0);
-            $table->string('invoice_prefix', 20)->default('INV');
+            $table->string('invoice_prefix', 20)->nullable()->default('INV');
             $table->unsignedInteger('next_invoice_number')->default(1001);
             $table->boolean('auto_generate_receipts')->default(true);
             $table->string('company_type')->nullable();
@@ -42,7 +42,7 @@ return new class extends Migration
 
             // Table & QR settings
             $table->unsignedInteger('number_of_tables')->default(10);
-            $table->string('table_prefix', 10)->default('T');
+            $table->string('table_prefix', 10)->nullable()->default('T');
             $table->boolean('enable_shared_basket')->default(true);
             $table->unsignedInteger('max_guests_per_table')->default(10);
             $table->boolean('enable_reservations')->default(false);
@@ -56,7 +56,7 @@ return new class extends Migration
             $table->boolean('allow_guest_ordering')->default(true);
             $table->boolean('require_phone_number')->default(false);
             $table->decimal('min_order_amount', 10, 2)->default(0);
-            $table->decimal('max_order_amount', 10, 2)->default(1000);
+            $table->decimal('max_order_amount', 10, 2)->nullable()->default(null);
 
             // Inventory settings (general)
             $table->boolean('inventory_tracking_enabled')->default(false);
@@ -85,12 +85,12 @@ return new class extends Migration
             $table->unsignedInteger('points_per_euro')->default(10);
             $table->unsignedInteger('minimum_redemption_points')->default(100);
             $table->decimal('point_value', 8, 4)->default(0.01);
-            $table->unsignedInteger('points_expiry_days')->default(365);
+            $table->unsignedInteger('points_expiry_days')->nullable()->default(365);
 
             // Appearance settings
             $table->string('menu_theme')->default('classic');
-            $table->string('primary_color', 10)->default('#1a1a1a');
-            $table->string('accent_color', 10)->default('#f59e0b');
+            $table->string('primary_color', 10)->nullable()->default('#1a1a1a');
+            $table->string('accent_color', 10)->nullable()->default('#f59e0b');
             $table->string('menu_layout')->default('grid');
 
             $table->timestamps();

@@ -29,7 +29,7 @@ return new class extends Migration
             $table->string('background_image_url')->nullable()->after('menu_layout');
             // Privacy / data settings
             $table->boolean('show_in_top_customers')->default(true)->after('background_image_url');
-            $table->unsignedInteger('data_retention_days')->default(365)->after('show_in_top_customers');
+            $table->unsignedInteger('data_retention_days')->nullable()->default(365)->after('show_in_top_customers');
         });
     }
 

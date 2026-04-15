@@ -246,8 +246,12 @@ class TableController extends Controller
         $vendor = $this->resolveVendor($vendorId);
         $this->authorizeVendor($request, $vendor);
 
-        $desired = $request->validate(['count' => ['required', 'integer', 'min:0', 'max:500']]);
-        $count = $desired['count'];
+        $desired = $request->validate([
+            'count'  => ['required', 'integer', 'min:0', 'max:500'],
+            'prefix' => ['sometimes', 'nullable', 'string', 'max:10'],
+        ]);
+        $count  = $desired['count'];
+        $prefix = $desired['prefix'] ?? 'T';
 
         $existing = $vendor->restaurantTables()->orderBy('number')->get();
         $currentCount = $existing->count();
@@ -256,10 +260,10 @@ class TableController extends Controller
             // Add missing tables
             for ($n = $currentCount + 1; $n <= $count; $n++) {
                 $vendor->restaurantTables()->create([
-                    'number'       => $n,
-                    'name'         => "Table {$n}",
-                    'qr_token'     => RestaurantTable::generateQrToken(),
-                    'is_active'    => true,
+                    'number'        => $n,
+                    'name'          => "{$prefix}{$n}",
+                    'qr_token'      => RestaurantTable::generateQrToken(),
+                    'is_active'     => true,
                     'qr_created_at' => now(),
                 ]);
             }

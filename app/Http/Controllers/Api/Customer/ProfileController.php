@@ -1,0 +1,84 @@
+<?php
+
+namespace App\Http\Controllers\Api\Customer;
+
+use App\Http\Controllers\Controller;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Validation\ValidationException;
+
+class ProfileController extends Controller
+{
+    /**
+     * Get profile overview with recent activity.
+     */
+    public function show(Request $request): JsonResponse
+    {
+        $customer = $request->user();
+
+        $recentVendors = $customer->orders()
+            ->with('vendor:id,vendor_public_id,restaurant_name,slug')
+            ->select('vendor_id', 'created_at')
+            ->orderByDesc('created_at')
+            ->limit(10)
+            ->get()
+            ->unique('vendor_id')
+            ->take(5)
+            ->map(fn ($order) => $order->vendor)
+            ->values();
+
+        $loyaltyOverview = $customer->loyaltyPoints()
+            ->with('vendor:id,vendor_public_id,restaurant_name')
+            ->get();
+
+        return response()->json([
+            'profile'           => $customer,
+            'recent_restaurants' => $recentVendors,
+            'loyalty_overview'  => $loyaltyOverview,
+        ]);
+    }
+
+    /**
+     * Update editable profile fields.
+     */
+    public function update(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'gender'          => ['nullable', 'string', 'in:male,female,other,prefer_not_to_say'],
+            'date_of_birth'   => ['nullable', 'date', 'before:today'],
+            'address'         => ['nullable', 'string', 'max:500'],
+            'profile_picture' => ['nullable', 'string', 'max:500'],
+        ]);
+
+        $request->user()->update($validated);
+
+        return response()->json([
+            'message' => 'Profile updated.',
+            'user'    => $request->user()->fresh(),
+        ]);
+    }
+
+    /**
+     * Change password.
+     */
+    public function changePassword(Request $request): JsonResponse
+    {
+        $request->validate([
+            'current_password' => ['required', 'string'],
+            'password'         => ['required', 'string', 'min:8', 'confirmed'],
+        ]);
+
+        $customer = $request->user();
+
+        if (! Hash::check($request->current_password, $customer->password)) {
+            throw ValidationException::withMessages([
+                'current_password' => ['The current password is incorrect.'],
+            ]);
+        }
+
+        $customer->update(['password' => $request->password]);
+
+        return response()->json(['message' => 'Password changed successfully.']);
+    }
+}

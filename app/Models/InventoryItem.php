@@ -14,10 +14,12 @@ class InventoryItem extends Model
         'quantity',
         'unit',
         'min_stock',
+        'reorder_quantity',
         'cost_per_unit',
         'supplier',
         'is_critical',
         'auto_reorder',
+        'track_stock',
         'nutrition',
     ];
 
@@ -26,9 +28,11 @@ class InventoryItem extends Model
         return [
             'quantity' => 'decimal:2',
             'min_stock' => 'decimal:2',
+            'reorder_quantity' => 'decimal:2',
             'cost_per_unit' => 'decimal:4',
             'is_critical' => 'boolean',
             'auto_reorder' => 'boolean',
+            'track_stock' => 'boolean',
             'nutrition' => 'array',
         ];
     }
