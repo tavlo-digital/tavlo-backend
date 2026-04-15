@@ -41,6 +41,15 @@ jobs:
       - name: Build frontend assets
         run: npm run build
 
+      - name: Ensure deploy directory exists on server
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          password: ${{ secrets.SSH_PASSWORD }}
+          port: 22
+          script: mkdir -p ${{ secrets.STAGING_DEPLOY_PATH }}
+
       - name: Upload files via SCP
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -51,6 +60,7 @@ jobs:
           source: "."
           target: ${{ secrets.STAGING_DEPLOY_PATH }}
           rm: false
+          strip_components: 1
 
       - name: Run post-deploy commands via SSH
         uses: appleboy/ssh-action@v1.0.3
