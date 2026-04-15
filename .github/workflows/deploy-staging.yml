@@ -30,8 +30,10 @@ jobs:
       - name: Install Composer dependencies
         run: composer install --no-interaction --prefer-dist --optimize-autoloader --no-dev
 
-      - name: Create .env file
-        run: echo "${{ secrets.STAGING_ENV_FILE }}" > .env
+      # - name: Create .env file
+      #   env:
+      #     ENV_FILE: ${{ secrets.STAGING_ENV_FILE }}
+      #   run: printf '%s' "$ENV_FILE" > .env
 
       - name: Generate application key
         run: php artisan key:generate --force
@@ -59,6 +61,8 @@ jobs:
           port: 22
           script: |
             cd ${{ secrets.STAGING_DEPLOY_PATH }}
+
+            echo "${{ secrets.STAGING_ENV_FILE }}" > .env
 
             # Set permissions
             chmod -R 775 storage bootstrap/cache
