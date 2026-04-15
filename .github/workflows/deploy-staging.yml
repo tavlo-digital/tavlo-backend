@@ -16,8 +16,9 @@ jobs:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: 22
+          port: ${{ secrets.SSH_PORT }}
           script: echo "SSH connection successful"
+          debug: true
 
       - name: Checkout code
         uses: actions/checkout@v4
