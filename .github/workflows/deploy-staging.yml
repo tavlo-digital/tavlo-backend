@@ -49,11 +49,10 @@ jobs:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: 22
           source: "."
           target: ${{ secrets.STAGING_DEPLOY_PATH }}
-          rm: false
-          tar_exec: "tar --no-same-owner --no-same-permissions"
+          overwrite: true
+          strip_components: 0
 
       - name: Run post-deploy commands via SSH
         uses: appleboy/ssh-action@v1.0.3
