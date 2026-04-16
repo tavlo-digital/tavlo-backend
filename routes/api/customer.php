@@ -17,7 +17,9 @@ Route::post('login',           [AuthController::class, 'login'])->name('login');
 Route::post('social/register', [AuthController::class, 'socialRegister'])->name('social.register');
 Route::post('social/login',    [AuthController::class, 'socialLogin'])->name('social.login');
 
-// Public restaurant browsing (no auth required)
+// Public browsing (no auth required)
+Route::get('categories', [RestaurantController::class, 'allCategories'])->name('categories');
+
 Route::prefix('restaurants')->name('restaurants.')->group(function () {
     Route::get('/',                                  [RestaurantController::class, 'index'])->name('index');
     Route::get('{vendorPublicId}',                   [RestaurantController::class, 'show'])->name('show');

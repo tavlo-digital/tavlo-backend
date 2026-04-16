@@ -23,6 +23,8 @@ class Vendor extends Authenticatable
         'country',
         'city',
         'address',
+        'latitude',
+        'longitude',
         'phone',
         'email',
         'password',
@@ -48,6 +50,8 @@ class Vendor extends Authenticatable
         return [
             'payment_last_success' => 'datetime',
             'password' => 'hashed',
+            'latitude' => 'float',
+            'longitude' => 'float',
         ];
     }
 
