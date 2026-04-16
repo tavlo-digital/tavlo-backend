@@ -53,6 +53,7 @@ jobs:
           source: "."
           target: ${{ secrets.STAGING_DEPLOY_PATH }}
           rm: false
+          tar_exec: "tar --no-same-owner --no-same-permissions"
 
       - name: Run post-deploy commands via SSH
         uses: appleboy/ssh-action@v1.0.3
