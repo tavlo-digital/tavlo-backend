@@ -9,7 +9,28 @@ use App\Http\Controllers\Api\Customer\ProfileController;
 use App\Http\Controllers\Api\Customer\ReservationController;
 use App\Http\Controllers\Api\Customer\RestaurantController;
 use App\Http\Controllers\Api\Customer\ReviewController;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
+
+// Health & diagnostics (public)
+Route::get('ping', fn () => response()->json(['message' => 'pong']))->name('ping');
+
+Route::get('health', function () {
+    try {
+        DB::connection()->getPdo();
+        $db = true;
+    } catch (\Throwable) {
+        $db = false;
+    }
+
+    $status = $db ? 'healthy' : 'degraded';
+
+    return response()->json([
+        'status' => $status,
+        'database' => $db,
+        'timestamp' => now()->toIso8601String(),
+    ], $db ? 200 : 503);
+})->name('health');
 
 // Auth (public)
 Route::post('register',        [AuthController::class, 'register'])->name('register');
