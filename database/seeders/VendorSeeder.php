@@ -10,6 +10,7 @@ use App\Models\SubscriptionPlan;
 use App\Models\Vendor;
 use App\Models\VendorActivity;
 use App\Models\VendorRequestChange;
+use App\Models\VendorSetting;
 use Carbon\Carbon;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\Hash;
@@ -93,8 +94,8 @@ class VendorSeeder extends Seeder
                 'address' => 'Mariahilfer Straße 45',
                 'phone' => '+43 1 987 6543',
                 'email' => 'hello@sakurasushi.at',
-                'status' => 'pending',
-                'live_status' => 'not_live',
+                'status' => 'active',
+                'live_status' => 'live',
                 'risk_level' => 'yellow',
                 'orders_count' => 12,
                 'revenue_total' => 890.00,
@@ -172,9 +173,36 @@ class VendorSeeder extends Seeder
 
             unset($data['plan'], $data['sub_status'], $data['billing_cycle']);
 
-            $vendor = Vendor::create(array_merge($data, [
-                'password' => Hash::make('password'),
-            ]));
+            $vendor = Vendor::updateOrCreate(
+                ['vendor_public_id' => $data['vendor_public_id']],
+                array_merge($data, ['password' => Hash::make('password')])
+            );
+
+            // Ensure vendor_settings exists with is_live_and_discoverable = true
+            VendorSetting::updateOrCreate(
+                ['vendor_id' => $vendor->id],
+                [
+                    'is_live_and_discoverable' => true,
+                    'currency' => 'EUR',
+                    'accept_cash' => true,
+                    'accept_card' => true,
+                    'enable_reservations' => true,
+                    'loyalty_enabled' => true,
+                    'points_per_euro' => 20,
+                    'minimum_redemption_points' => 100,
+                    'point_value' => 0.10,
+                    'enable_reviews' => true,
+                    'business_hours' => json_encode([
+                        'monday'    => ['open' => '10:00', 'close' => '22:00', 'closed' => false],
+                        'tuesday'   => ['open' => '10:00', 'close' => '22:00', 'closed' => false],
+                        'wednesday' => ['open' => '10:00', 'close' => '22:00', 'closed' => false],
+                        'thursday'  => ['open' => '10:00', 'close' => '22:00', 'closed' => false],
+                        'friday'    => ['open' => '10:00', 'close' => '23:00', 'closed' => false],
+                        'saturday'  => ['open' => '11:00', 'close' => '23:00', 'closed' => false],
+                        'sunday'    => ['open' => '11:00', 'close' => '21:00', 'closed' => false],
+                    ]),
+                ]
+            );
 
             if ($plan) {
                 $subscription = Subscription::create([
