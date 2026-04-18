@@ -99,7 +99,16 @@ class CustomerSeeder extends Seeder
         ];
 
         foreach ($customers as $data) {
-            Customer::create($data);
+            $customer = Customer::where('customer_public_id', $data['customer_public_id'])
+                ->orWhere('email', $data['email'])
+                ->orWhere('phone', $data['phone'])
+                ->first();
+
+            if ($customer) {
+                $customer->update($data);
+            } else {
+                Customer::create($data);
+            }
         }
     }
 }
