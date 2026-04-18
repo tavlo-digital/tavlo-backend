@@ -30,6 +30,18 @@ class CustomerDataSeeder extends Seeder
             return;
         }
 
+        // Clean up existing seeded data for these customers to allow re-seeding
+        $customerIds = collect([$anna, $max, $sophie, $guest, $thomas])
+            ->filter()
+            ->pluck('id')
+            ->toArray();
+
+        CustomerActivity::whereIn('customer_id', $customerIds)->delete();
+        GdprRequest::whereIn('customer_id', $customerIds)->delete();
+        Review::whereIn('customer_id', $customerIds)->delete();
+        Refund::whereIn('customer_id', $customerIds)->delete();
+        Order::whereIn('customer_id', $customerIds)->delete();
+
         // ─── Orders for Anna (C-1024) ───
         $o1 = Order::create([
             'order_public_id' => 'ORD-8472',
