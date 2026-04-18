@@ -274,7 +274,7 @@ class VendorSeeder extends Seeder
                 Payment::create([
                     'invoice_id' => $invoice->id,
                     'payment_provider' => 'stripe',
-                    'provider_transaction_id' => 'pi_' . fake()->bothify('??##??##??##??##'),
+                    'provider_transaction_id' => 'pi_' . \Illuminate\Support\Str::random(16),
                     'amount' => $price ?? 49.99,
                     'currency' => 'EUR',
                     'status' => 'completed',
@@ -352,4 +352,5 @@ class VendorSeeder extends Seeder
             ]));
         }
     }
+    
 }
