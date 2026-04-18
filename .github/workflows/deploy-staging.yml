@@ -33,11 +33,13 @@ jobs:
       - name: Build frontend assets
         run: npm run build
 
+      - name: Write .env file
+        run: echo "${{ secrets.STAGING_ENV_FILE }}" > .env
+
       - name: Deploy files via rsync
         uses: burnett01/rsync-deployments@7.0.1
         with:
           switches: -avz 
-                    --exclude='.env' 
                     --exclude='.git/' 
                     --exclude='node_modules/'
                     --exclude='vendor/'
@@ -59,9 +61,6 @@ jobs:
           port: 22
           script: |
             cd ${{ secrets.STAGING_DEPLOY_PATH }}
-
-            # Write .env
-            printf '%s\n' '${{ secrets.STAGING_ENV_FILE }}' > .env
 
             php artisan key:generate --force
 
