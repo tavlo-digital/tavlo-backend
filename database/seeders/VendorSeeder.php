@@ -173,10 +173,16 @@ class VendorSeeder extends Seeder
 
             unset($data['plan'], $data['sub_status'], $data['billing_cycle']);
 
-            $vendor = Vendor::updateOrCreate(
-                ['vendor_public_id' => $data['vendor_public_id']],
-                array_merge($data, ['password' => Hash::make('password')])
-            );
+            $vendor = Vendor::where('vendor_public_id', $data['vendor_public_id'])
+                ->orWhere('email', $data['email'])
+                ->orWhere('phone', $data['phone'])
+                ->first();
+
+            if ($vendor) {
+                $vendor->update(array_merge($data, ['password' => Hash::make('password')]));
+            } else {
+                $vendor = Vendor::create(array_merge($data, ['password' => Hash::make('password')]));
+            }
 
             // Ensure vendor_settings exists with is_live_and_discoverable = true
             VendorSetting::updateOrCreate(
