@@ -61,7 +61,7 @@ jobs:
             cd ${{ secrets.STAGING_DEPLOY_PATH }}
 
             # Write .env
-            echo "${{ secrets.STAGING_ENV_FILE }}" > .env
+            printf '%s\n' '${{ secrets.STAGING_ENV_FILE }}' > .env
 
             php artisan key:generate --force
 
