@@ -34,7 +34,9 @@ jobs:
         run: npm run build
 
       - name: Write .env file
-        run: echo "${{ secrets.STAGING_ENV_FILE }}" > .env
+        env:
+          ENV_FILE_CONTENT: ${{ secrets.STAGING_ENV_FILE }}
+        run: printenv ENV_FILE_CONTENT > .env
 
       - name: Deploy files via rsync
         uses: burnett01/rsync-deployments@7.0.1
