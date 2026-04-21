@@ -83,6 +83,14 @@ class VendorSetting extends Model
         'background_image_url',
         'show_in_top_customers',
         'data_retention_days',
+        // about page
+        'years_of_experience',
+        'signature_recipes_count',
+        'happy_customers_count',
+        'restaurant_features',
+        'show_phone_public',
+        'show_email_public',
+        'show_website_public',
     ];
 
     protected function casts(): array
@@ -128,6 +136,10 @@ class VendorSetting extends Model
             'redemption_rate'                 => 'float',
             'min_order_amount'                => 'float',
             'max_order_amount'                => 'float',
+            'restaurant_features'             => 'array',
+            'show_phone_public'               => 'boolean',
+            'show_email_public'               => 'boolean',
+            'show_website_public'             => 'boolean',
         ];
     }
 

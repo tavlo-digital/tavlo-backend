@@ -48,6 +48,8 @@ Route::prefix('restaurants')->name('restaurants.')->group(function () {
     Route::get('{vendorPublicId}/menu',              [RestaurantController::class, 'menu'])->name('menu');
     Route::get('{vendorPublicId}/menu/{itemId}',     [RestaurantController::class, 'menuItem'])->name('menu.item');
     Route::get('{vendorPublicId}/tables',            [RestaurantController::class, 'tables'])->name('tables');
+    Route::get('{vendorPublicId}/reviews',           [RestaurantController::class, 'reviews'])->name('reviews');
+    Route::get('{vendorPublicId}/about',             [RestaurantController::class, 'about'])->name('about');
 });
 
 // Authenticated customer routes

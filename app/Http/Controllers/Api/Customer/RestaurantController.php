@@ -36,9 +36,11 @@ class RestaurantController extends Controller
     {
         $query = Vendor::whereHas('vendorSetting', fn ($q) => $q->where('is_live_and_discoverable', true))
             ->with([
-                'vendorSetting:id,vendor_id,logo_url,cover_photo_url,currency,enable_reservations,loyalty_enabled,points_per_euro,accept_card,accept_cash',
+                'vendorSetting:id,vendor_id,logo_url,cover_photo_url,business_hours,currency,enable_reservations,loyalty_enabled,points_per_euro,accept_card,accept_cash',
                 'menuCategories' => fn ($q) => $q->where('is_active', true)->select('id', 'vendor_id', 'name', 'slug'),
+                'takeawayQr:id,vendor_id',
             ])
+            ->withCount('restaurantTables')
             ->withAvg('reviews', 'rating')
             ->withCount('reviews')
             ->select([
@@ -46,13 +48,21 @@ class RestaurantController extends Controller
                 'country', 'city', 'address', 'latitude', 'longitude',
             ]);
 
-        // Text search
+        // Text search — restaurant name, city, address, slug, or cuisine (menu category name)
         if ($request->filled('search')) {
-            $search = $request->search;
-            $query->where(function ($q) use ($search) {
-                $q->where('restaurant_name', 'like', "%{$search}%")
-                  ->orWhere('city', 'like', "%{$search}%");
-            });
+            $search = trim((string) $request->search);
+            if ($search !== '') {
+                $like = '%' . $search . '%';
+                $query->where(function ($q) use ($like) {
+                    $q->where('restaurant_name', 'like', $like)
+                      ->orWhere('city', 'like', $like)
+                      ->orWhere('address', 'like', $like)
+                      ->orWhere('slug', 'like', $like)
+                      ->orWhereHas('menuCategories', function ($mc) use ($like) {
+                          $mc->where('is_active', true)->where('name', 'like', $like);
+                      });
+                });
+            }
         }
 
         if ($request->filled('city')) {
@@ -84,16 +94,18 @@ class RestaurantController extends Controller
             });
         }
 
-        // Service type filter (dine_in, takeaway, reservation)
+        // Service type filter
+        // - dine_in:     restaurant has at least one active table (RestaurantTable)
+        // - takeaway:    restaurant has a takeaway QR configured (VendorTakeawayQr)
+        // - reservation: vendor_settings.enable_reservations = true
         if ($request->filled('service_type')) {
             $type = $request->service_type;
-            $query->whereHas('vendorSetting', function ($q) use ($type) {
-                match ($type) {
-                    'reservation' => $q->where('enable_reservations', true),
-                    'takeaway' => $q->whereHas('vendor', fn ($v) => $v->whereHas('takeawayQr')),
-                    default => null,
-                };
-            });
+            match ($type) {
+                'reservation' => $query->whereHas('vendorSetting', fn ($q) => $q->where('enable_reservations', true)),
+                'takeaway'    => $query->whereHas('takeawayQr'),
+                'dine_in'     => $query->whereHas('restaurantTables'),
+                default       => null,
+            };
         }
 
         // Rating filter — minimum average rating
@@ -141,12 +153,32 @@ class RestaurantController extends Controller
 
             $setting = $vendor->vendorSetting;
 
+            // Open/closed + today hours from business_hours
+            $isOpen = false;
+            $todayHours = null;
+            $businessHours = $setting?->business_hours ?? [];
+            if (is_string($businessHours)) {
+                $businessHours = json_decode($businessHours, true) ?: [];
+            }
+            $dayKey = strtolower(now()->format('l'));
+            if (isset($businessHours[$dayKey]) && !($businessHours[$dayKey]['closed'] ?? false)) {
+                $open  = $businessHours[$dayKey]['open']  ?? null;
+                $close = $businessHours[$dayKey]['close'] ?? null;
+                if ($open && $close) {
+                    $todayHours = $open . ' – ' . $close;
+                    $now = now()->format('H:i');
+                    $isOpen = $now >= $open && $now <= $close;
+                }
+            }
+
             return [
                 'vendor_public_id'    => $vendor->vendor_public_id,
                 'slug'                => $vendor->slug,
                 'restaurant_name'     => $vendor->restaurant_name,
                 'city'                => $vendor->city,
                 'address'             => $vendor->address,
+                'latitude'            => $vendor->latitude !== null ? (float) $vendor->latitude : null,
+                'longitude'           => $vendor->longitude !== null ? (float) $vendor->longitude : null,
                 'logo_url'            => $setting?->logo_url,
                 'cover_photo_url'     => $setting?->cover_photo_url,
                 'currency'            => $setting?->currency,
@@ -154,6 +186,9 @@ class RestaurantController extends Controller
                 'price_label'         => $priceLabel,
                 'avg_rating'          => round($vendor->reviews_avg_rating ?? 0, 1),
                 'review_count'        => $vendor->reviews_count ?? 0,
+                'is_open'             => $isOpen,
+                'today_hours'         => $todayHours,
+                'business_hours'      => $businessHours ?: null,
                 'payment_methods'     => [
                     'card' => (bool) $setting?->accept_card,
                     'cash' => (bool) $setting?->accept_cash,
@@ -162,7 +197,11 @@ class RestaurantController extends Controller
                     'enabled'        => true,
                     'points_per_euro' => $setting->points_per_euro,
                 ] : ['enabled' => false],
-                'enable_reservations' => (bool) $setting?->enable_reservations,
+                'service_types'       => array_values(array_filter([
+                    ($vendor->restaurant_tables_count ?? 0) > 0 ? 'dine_in' : null,
+                    $vendor->takeawayQr ? 'takeaway' : null,
+                    $setting?->enable_reservations ? 'reservation' : null,
+                ])),
                 'distance_km'         => isset($vendor->distance_km) ? round($vendor->distance_km, 1) : null,
             ];
         });
@@ -180,7 +219,9 @@ class RestaurantController extends Controller
             ->with([
                 'vendorSetting:id,vendor_id,logo_url,cover_photo_url,business_hours,currency,accept_card,accept_cash,enable_reservations,loyalty_enabled,points_per_euro',
                 'menuCategories' => fn ($q) => $q->where('is_active', true)->select('id', 'vendor_id', 'name'),
+                'takeawayQr:id,vendor_id',
             ])
+            ->withCount('restaurantTables')
             ->withAvg('reviews', 'rating')
             ->withCount('reviews')
             ->select([
@@ -195,6 +236,9 @@ class RestaurantController extends Controller
         $isOpen = false;
         $todayHours = null;
         $businessHours = $setting->business_hours ?? [];
+        if (is_string($businessHours)) {
+            $businessHours = json_decode($businessHours, true) ?: [];
+        }
         $dayKey = strtolower(now()->format('l')); // e.g. "thursday"
         if (isset($businessHours[$dayKey]) && !($businessHours[$dayKey]['closed'] ?? false)) {
             $todayHours = $businessHours[$dayKey]['open'] . ' – ' . $businessHours[$dayKey]['close'];
@@ -223,6 +267,8 @@ class RestaurantController extends Controller
             'restaurant_name'  => $vendor->restaurant_name,
             'city'             => $vendor->city,
             'address'          => $vendor->address,
+            'latitude'         => $vendor->latitude !== null ? (float) $vendor->latitude : null,
+            'longitude'        => $vendor->longitude !== null ? (float) $vendor->longitude : null,
             'logo_url'         => $setting->logo_url,
             'cover_photo_url'  => $setting->cover_photo_url,
             'currency'         => $setting->currency,
@@ -231,6 +277,7 @@ class RestaurantController extends Controller
             'review_count'     => (int) $vendor->reviews_count,
             'is_open'          => $isOpen,
             'today_hours'      => $todayHours,
+            'business_hours'   => $businessHours ?: null,
             'distance_km'      => $distanceKm,
             'payment_methods'  => [
                 'card' => (bool) $setting->accept_card,
@@ -240,7 +287,11 @@ class RestaurantController extends Controller
                 'enabled'        => (bool) $setting->loyalty_enabled,
                 'points_per_euro' => $setting->points_per_euro,
             ],
-            'enable_reservations' => (bool) $setting->enable_reservations,
+            'service_types' => array_values(array_filter([
+                ($vendor->restaurant_tables_count ?? 0) > 0 ? 'dine_in' : null,
+                $vendor->takeawayQr ? 'takeaway' : null,
+                $setting->enable_reservations ? 'reservation' : null,
+            ])),
         ]);
     }
 
@@ -402,5 +453,162 @@ class RestaurantController extends Controller
             ->get(['id', 'number', 'name']);
 
         return response()->json($tables);
+    }
+
+    /**
+     * Get reviews for a restaurant (public).
+     */
+    public function reviews(Request $request, string $vendorPublicId): JsonResponse
+    {
+        $vendor = Vendor::where('vendor_public_id', $vendorPublicId)->firstOrFail();
+
+        $query = \App\Models\Review::where('vendor_id', $vendor->id)
+            ->where('flagged', false)
+            ->with([
+                'customer:id,first_name,last_name,profile_picture',
+                'order:id,items',
+            ]);
+
+        if ($request->filled('rating')) {
+            $query->where('rating', (int) $request->rating);
+        }
+
+        if ($request->boolean('with_images')) {
+            $query->whereNotNull('images');
+        }
+
+        $sort = $request->get('sort_by', 'recent');
+        match ($sort) {
+            'highest' => $query->orderByDesc('rating')->orderByDesc('created_at'),
+            'lowest'  => $query->orderBy('rating')->orderByDesc('created_at'),
+            default   => $query->orderByDesc('created_at'),
+        };
+
+        $reviews = $query->paginate($request->integer('per_page', 20));
+
+        // Collect all distinct item names across the paginated reviews' orders,
+        // then look them up once in the vendor's menu for id/slug/image parity.
+        $itemNames = collect();
+        foreach ($reviews->getCollection() as $review) {
+            foreach ((array) ($review->order?->items ?? []) as $line) {
+                if (is_array($line) && !empty($line['name'])) {
+                    $itemNames->push($line['name']);
+                }
+            }
+        }
+        $itemNames = $itemNames->unique()->values();
+
+        $menuLookup = $itemNames->isEmpty()
+            ? collect()
+            : MenuItem::where('vendor_id', $vendor->id)
+                ->whereIn('name', $itemNames)
+                ->get(['id', 'name', 'image_url'])
+                ->keyBy('name');
+
+        $reviews->getCollection()->transform(function ($review) use ($menuLookup) {
+            $customer = $review->customer;
+            $reviewerName = $customer
+                ? trim(($customer->first_name ?? '') . ' ' . ($customer->last_name ?? ''))
+                : 'Anonymous';
+
+            $menuItems = [];
+            foreach ((array) ($review->order?->items ?? []) as $line) {
+                if (!is_array($line) || empty($line['name'])) {
+                    continue;
+                }
+                $match = $menuLookup->get($line['name']);
+                $menuItems[] = [
+                    'id'        => $match?->id,
+                    'name'      => $line['name'],
+                    'slug'      => \Illuminate\Support\Str::slug($line['name']),
+                    'image_url' => $match?->image_url,
+                    'quantity'  => (int) ($line['quantity'] ?? $line['qty'] ?? 1),
+                ];
+            }
+
+            return [
+                'review_public_id' => $review->review_public_id,
+                'rating'           => $review->rating,
+                'text'             => $review->text,
+                'images'           => $review->images ?: [],
+                'created_at'       => $review->created_at?->toIso8601String(),
+                'reviewer' => [
+                    'name'            => $reviewerName !== '' ? $reviewerName : 'Anonymous',
+                    'profile_picture' => $customer?->profile_picture,
+                ],
+                'menu_items'        => $menuItems,
+                'vendor_reply'      => $review->vendor_reply,
+                'vendor_replied_at' => $review->vendor_replied_at?->toIso8601String(),
+            ];
+        });
+
+        return response()->json($reviews);
+    }
+
+    /**
+     * Get the public "About" profile for a restaurant.
+     */
+    public function about(string $vendorPublicId): JsonResponse
+    {
+        $vendor = Vendor::where('vendor_public_id', $vendorPublicId)
+            ->with([
+                'vendorSetting',
+                'takeawayQr:id,vendor_id',
+            ])
+            ->withCount('restaurantTables')
+            ->firstOrFail();
+
+        $setting = $vendor->vendorSetting;
+
+        $businessHours = $setting?->business_hours ?? [];
+        if (is_string($businessHours)) {
+            $businessHours = json_decode($businessHours, true) ?: [];
+        }
+
+        $paymentMethods = [
+            'cash'          => (bool) ($setting?->accept_cash),
+            'card'          => (bool) ($setting?->accept_card),
+            'visa'          => (bool) ($setting?->accept_visa),
+            'mastercard'    => (bool) ($setting?->accept_mastercard),
+            'amex'          => (bool) ($setting?->accept_amex),
+            'apple_pay'     => (bool) ($setting?->accept_apple_pay),
+            'google_pay'    => (bool) ($setting?->accept_google_pay),
+            'bank_transfer' => (bool) ($setting?->accept_bank_transfer),
+        ];
+
+        $contact = [];
+        if ($setting?->show_phone_public ?? true) {
+            $contact['phone'] = $vendor->phone;
+        }
+        if ($setting?->show_email_public ?? false) {
+            $contact['email'] = $vendor->email;
+        }
+        if ($setting?->show_website_public ?? true) {
+            $contact['website'] = $vendor->website;
+        }
+
+        return response()->json([
+            'vendor_public_id'        => $vendor->vendor_public_id,
+            'restaurant_name'         => $vendor->restaurant_name,
+            'description'             => $setting?->description,
+            'years_of_experience'     => $setting?->years_of_experience !== null ? (int) $setting->years_of_experience : null,
+            'signature_recipes_count' => $setting?->signature_recipes_count !== null ? (int) $setting->signature_recipes_count : null,
+            'happy_customers_count'   => $setting?->happy_customers_count !== null ? (int) $setting->happy_customers_count : null,
+            'restaurant_features'     => $setting?->restaurant_features ?? [],
+            'payment_methods'         => $paymentMethods,
+            'vat_number'              => $vendor->vat_number,
+            'address'                 => $vendor->address,
+            'city'                    => $vendor->city,
+            'country'                 => $vendor->country,
+            'latitude'                => $vendor->latitude !== null ? (float) $vendor->latitude : null,
+            'longitude'               => $vendor->longitude !== null ? (float) $vendor->longitude : null,
+            'business_hours'          => $businessHours ?: null,
+            'service_types'           => array_values(array_filter([
+                ($vendor->restaurant_tables_count ?? 0) > 0 ? 'dine_in' : null,
+                $vendor->takeawayQr ? 'takeaway' : null,
+                $setting?->enable_reservations ? 'reservation' : null,
+            ])),
+            'contact'                 => $contact,
+        ]);
     }
 }

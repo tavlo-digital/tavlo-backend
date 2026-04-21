@@ -33,6 +33,8 @@ class ReviewController extends Controller
             'order_public_id' => ['required', 'string', 'exists:orders,order_public_id'],
             'rating'          => ['required', 'integer', 'min:1', 'max:5'],
             'text'            => ['nullable', 'string', 'max:2000'],
+            'images'          => ['nullable', 'array', 'max:5'],
+            'images.*'        => ['string', 'max:500'],
         ]);
 
         $order = Order::where('order_public_id', $validated['order_public_id'])
@@ -55,6 +57,7 @@ class ReviewController extends Controller
             'order_id'         => $order->id,
             'rating'           => $validated['rating'],
             'text'             => $validated['text'] ?? null,
+            'images'           => $validated['images'] ?? null,
         ]);
 
         return response()->json([

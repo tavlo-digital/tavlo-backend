@@ -13,12 +13,28 @@ use App\Models\VendorRequestChange;
 use App\Models\VendorSetting;
 use Carbon\Carbon;
 use Illuminate\Database\Seeder;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 
 class VendorSeeder extends Seeder
 {
+    /**
+     * The vendor_public_ids owned by this seeder.
+     * Only these vendors (and their related rows) are wiped before re-seeding.
+     * Vendors created via the app are left untouched.
+     */
+    private const SEEDED_VENDOR_PUBLIC_IDS = [
+        'VID-8492', // Bella Italia
+        'VID-2847', // Pizza Express
+        'VID-9471', // Sakura Sushi
+        'VID-1234', // Green Bowl Cafe
+        'VID-5678', // Burger Palace
+    ];
+
     public function run(): void
     {
+        $this->purgeSeededVendors();
+
         $basic = SubscriptionPlan::where('name', 'Basic')->first();
         $standard = SubscriptionPlan::where('name', 'Standard')->first();
         $premium = SubscriptionPlan::where('name', 'Premium')->first();
@@ -198,7 +214,7 @@ class VendorSeeder extends Seeder
                     'minimum_redemption_points' => 100,
                     'point_value' => 0.10,
                     'enable_reviews' => true,
-                    'business_hours' => json_encode([
+                    'business_hours' => [
                         'monday'    => ['open' => '10:00', 'close' => '22:00', 'closed' => false],
                         'tuesday'   => ['open' => '10:00', 'close' => '22:00', 'closed' => false],
                         'wednesday' => ['open' => '10:00', 'close' => '22:00', 'closed' => false],
@@ -206,7 +222,7 @@ class VendorSeeder extends Seeder
                         'friday'    => ['open' => '10:00', 'close' => '23:00', 'closed' => false],
                         'saturday'  => ['open' => '11:00', 'close' => '23:00', 'closed' => false],
                         'sunday'    => ['open' => '11:00', 'close' => '21:00', 'closed' => false],
-                    ]),
+                    ],
                 ]
             );
 
@@ -352,5 +368,44 @@ class VendorSeeder extends Seeder
             ]));
         }
     }
-    
+
+    /**
+     * Delete only the vendors this seeder owns and their dependent rows.
+     * Uses raw query builder (no Eloquent hydration / events) to keep memory flat.
+     * Vendors created through the app are NOT touched.
+     */
+    private function purgeSeededVendors(): void
+    {
+        $vendorIds = DB::table('vendors')
+            ->whereIn('vendor_public_id', self::SEEDED_VENDOR_PUBLIC_IDS)
+            ->pluck('id');
+
+        if ($vendorIds->isEmpty()) {
+            return;
+        }
+
+        $subscriptionIds = DB::table('subscriptions')
+            ->whereIn('vendor_id', $vendorIds)
+            ->pluck('id');
+
+        if ($subscriptionIds->isNotEmpty()) {
+            $invoiceIds = DB::table('invoices')
+                ->whereIn('subscription_id', $subscriptionIds)
+                ->pluck('id');
+
+            if ($invoiceIds->isNotEmpty()) {
+                DB::table('payments')->whereIn('invoice_id', $invoiceIds)->delete();
+                DB::table('invoices')->whereIn('id', $invoiceIds)->delete();
+            }
+
+            DB::table('subscription_events')->whereIn('subscription_id', $subscriptionIds)->delete();
+            DB::table('subscriptions')->whereIn('id', $subscriptionIds)->delete();
+        }
+
+        DB::table('vendor_activities')->whereIn('vendor_id', $vendorIds)->delete();
+        DB::table('vendor_request_changes')->whereIn('vendor_id', $vendorIds)->delete();
+        DB::table('vendor_settings')->whereIn('vendor_id', $vendorIds)->delete();
+        DB::table('vendors')->whereIn('id', $vendorIds)->delete();
+    }
+
 }
