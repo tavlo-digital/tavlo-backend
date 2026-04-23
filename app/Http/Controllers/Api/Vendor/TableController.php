@@ -154,34 +154,6 @@ class TableController extends Controller
     }
 
     /**
-     * POST /api/vendor/{vendorId}/tables/{tableId}/scan  (public — no auth)
-     * Validates QR token and records scan timestamp.
-     */
-    public function recordScan(Request $request, string $vendorId, string $tableId): JsonResponse
-    {
-        $vendor = Vendor::where('vendor_public_id', $vendorId)
-            ->orWhere('id', $vendorId)
-            ->firstOrFail();
-
-        $table = $vendor->restaurantTables()->findOrFail($tableId);
-
-        $token = $request->query('token');
-        if ($token && $table->qr_token !== $token) {
-            return response()->json(['message' => 'This QR code is no longer valid'], 410);
-        }
-
-        $table->update(['last_scanned_at' => now()]);
-
-        return response()->json([
-            'message'     => 'Scan recorded',
-            'vendorId'    => $vendor->vendor_public_id,
-            'tableId'     => (string) $table->id,
-            'tableName'   => $table->name,
-            'tableNumber' => $table->number,
-        ]);
-    }
-
-    /**
      * GET /api/vendor/{vendorId}/tables/takeaway-qr
      */
     public function takeawayQR(Request $request, string $vendorId): JsonResponse
@@ -209,32 +181,6 @@ class TableController extends Controller
         ]);
 
         return response()->json($this->formatTakeawayQr($qr->fresh()));
-    }
-
-    /**
-     * POST /api/vendor/{vendorId}/takeaway/scan  (public — no auth)
-     * Validates takeaway QR token and records scan.
-     */
-    public function recordTakeawayScan(Request $request, string $vendorId): JsonResponse
-    {
-        $vendor = Vendor::where('vendor_public_id', $vendorId)
-            ->orWhere('id', $vendorId)
-            ->firstOrFail();
-
-        $qr    = VendorTakeawayQr::where('vendor_id', $vendor->id)->first();
-        $token = $request->query('token');
-
-        if (! $qr || ($token && $qr->qr_token !== $token)) {
-            return response()->json(['message' => 'This QR code is no longer valid'], 410);
-        }
-
-        $qr->update(['last_scanned_at' => now()]);
-
-        return response()->json([
-            'message'  => 'Scan recorded',
-            'vendorId' => $vendor->vendor_public_id,
-            'type'     => 'takeaway',
-        ]);
     }
 
     /**

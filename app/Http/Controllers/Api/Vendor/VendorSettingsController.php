@@ -6,14 +6,17 @@ use App\Http\Controllers\Controller;
 use App\Models\Vendor;
 use App\Models\VendorRequestChange;
 use App\Models\VendorSetting;
+use App\Services\MediaService;
 use App\Services\VendorMediaService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class VendorSettingsController extends Controller
 {
-    public function __construct(private readonly VendorMediaService $mediaService)
-    {
+    public function __construct(
+        private readonly VendorMediaService $mediaService,
+        private readonly MediaService $media,
+    ) {
     }
 
     /**
@@ -365,14 +368,14 @@ class VendorSettingsController extends Controller
             'logo' => ['required', 'file', 'mimes:jpg,jpeg,png,webp', 'max:2048'],
         ]);
 
-        $url = $this->mediaService->uploadLogo($vendor, $request->file('logo'));
+        $path = $this->mediaService->uploadLogo($vendor, $request->file('logo'));
 
         $vendor->vendorSetting()->updateOrCreate(
             ['vendor_id' => $vendor->id],
-            ['logo_url' => $url]
+            ['logo_url' => $path]
         );
 
-        return response()->json(['logoUrl' => $url]);
+        return response()->json(['logoUrl' => $this->media->url($path)]);
     }
 
     /**
@@ -387,14 +390,14 @@ class VendorSettingsController extends Controller
             'cover' => ['required', 'file', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
         ]);
 
-        $url = $this->mediaService->uploadCoverPhoto($vendor, $request->file('cover'));
+        $path = $this->mediaService->uploadCoverPhoto($vendor, $request->file('cover'));
 
         $vendor->vendorSetting()->updateOrCreate(
             ['vendor_id' => $vendor->id],
-            ['cover_photo_url' => $url]
+            ['cover_photo_url' => $path]
         );
 
-        return response()->json(['coverPhotoUrl' => $url]);
+        return response()->json(['coverPhotoUrl' => $this->media->url($path)]);
     }
 
     /**
@@ -439,8 +442,8 @@ class VendorSettingsController extends Controller
             'liveStatus'                 => $vendor->live_status,
             // ---- vendor_settings ----
             'description'                => $settings->description,
-            'logo'                       => $settings->logo_url,
-            'coverPhoto'                 => $settings->cover_photo_url,
+            'logo'                       => $this->media->url($settings->getRawOriginal('logo_url')),
+            'coverPhoto'                 => $this->media->url($settings->getRawOriginal('cover_photo_url')),
             'backgroundImageUrl'         => $settings->background_image_url,
             'isLiveAndDiscoverable'      => (bool) $settings->is_live_and_discoverable,
             'businessHours'              => $settings->business_hours ?? VendorSetting::defaultBusinessHours(),

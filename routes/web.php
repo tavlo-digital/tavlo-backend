@@ -5,12 +5,17 @@ use App\Http\Controllers\Admin\RoleController;
 use App\Http\Controllers\Admin\SubscriptionPlanController;
 use App\Http\Controllers\Admin\UserController;
 use App\Http\Controllers\Admin\VendorController;
+use App\Http\Controllers\PublicMediaController;
 use Illuminate\Support\Facades\Route;
 use Laravel\Fortify\Features;
 
 Route::inertia('/', 'welcome', [
     'canRegister' => Features::enabled(Features::registration()),
 ])->name('home');
+
+Route::get('media/{path}', [PublicMediaController::class, 'show'])
+    ->where('path', '.*')
+    ->name('media.public.show');
 
 Route::middleware(['auth', 'verified'])->group(function () {
     Route::inertia('dashboard', 'dashboard')->name('dashboard');

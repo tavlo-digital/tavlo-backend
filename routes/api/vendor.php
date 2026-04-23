@@ -25,10 +25,6 @@ use Illuminate\Support\Facades\Route;
 Route::post('register', [AuthController::class, 'register'])->name('register');
 Route::post('login',    [AuthController::class, 'login'])->name('login');
 
-// Public QR scan endpoints (no auth — called from customer QR landing)
-Route::post('{vendorId}/tables/{tableId}/scan', [TableController::class, 'recordScan'])->name('tables.scan');
-Route::post('{vendorId}/takeaway/scan',         [TableController::class, 'recordTakeawayScan'])->name('takeaway.scan');
-
 // Authenticated vendor routes
 Route::middleware('auth:vendor')->group(function () {
     Route::get('me',      [AuthController::class, 'me'])->name('me');

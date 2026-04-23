@@ -1,0 +1,121 @@
+{
+  "info": {
+    "name": "Tavlo — Customer Scan",
+    "_postman_id": "tavlo-customer-scan",
+    "description": "Customer QR scan endpoint. Requires customer Sanctum bearer token.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://127.0.0.1:8000",
+      "type": "string"
+    },
+    {
+      "key": "customerToken",
+      "value": "",
+      "type": "string",
+      "description": "Plain-text Sanctum token for the authenticated customer."
+    },
+    {
+      "key": "qrToken",
+      "value": "d5938525-f2a5-4849-803e-d579582af11f",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Customer Login",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Accept", "value": "application/json" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"customer@example.com\",\n  \"password\": \"password\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/customer/login",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "customer", "login"]
+        },
+        "description": "Optional helper. Copy the returned token into the `customerToken` collection variable."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const json = pm.response.json();",
+              "if (json.token) { pm.collectionVariables.set('customerToken', json.token); }"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Scan Table QR",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Accept", "value": "application/json" },
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"token\": \"{{qrToken}}\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/customer/scan",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "customer", "scan"]
+        },
+        "description": "Customer scans a printed table QR. Body carries only the qr_token. Returns a 4-digit PIN, the active session, table info and vendor info."
+      },
+      "response": [
+        {
+          "name": "201 Created",
+          "originalRequest": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"d5938525-f2a5-4849-803e-d579582af11f\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/customer/scan",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "customer", "scan"]
+            }
+          },
+          "status": "Created",
+          "code": 201,
+          "header": [{ "key": "Content-Type", "value": "application/json" }],
+          "body": "{\n  \"pin\": \"0473\",\n  \"session\": {\n    \"id\": \"12\",\n    \"status\": \"active\",\n    \"scannedAt\": \"2026-04-23T10:15:00+00:00\"\n  },\n  \"table\": { \"id\": \"5\", \"number\": 3, \"name\": \"T3\" },\n  \"vendor\": { \"id\": \"vnd_abc123\", \"name\": \"La Bella Vista\" }\n}"
+        },
+        {
+          "name": "410 Invalid QR",
+          "status": "Gone",
+          "code": 410,
+          "header": [{ "key": "Content-Type", "value": "application/json" }],
+          "body": "{\n  \"message\": \"This QR code is no longer valid\"\n}"
+        },
+        {
+          "name": "401 Unauthorized",
+          "status": "Unauthorized",
+          "code": 401,
+          "header": [{ "key": "Content-Type", "value": "application/json" }],
+          "body": "{\n  \"message\": \"Unauthenticated.\"\n}"
+        }
+      ]
+    }
+  ]
+}

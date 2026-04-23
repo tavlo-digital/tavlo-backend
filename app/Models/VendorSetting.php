@@ -148,6 +148,16 @@ class VendorSetting extends Model
         return $this->belongsTo(Vendor::class);
     }
 
+    public function getLogoUrlAttribute(?string $value): ?string
+    {
+        return app(\App\Services\MediaService::class)->url($value);
+    }
+
+    public function getCoverPhotoUrlAttribute(?string $value): ?string
+    {
+        return app(\App\Services\MediaService::class)->url($value);
+    }
+
     /**
      * Returns the default business hours array.
      */
@@ -159,5 +169,10 @@ class VendorSetting extends Model
             $hours[$day] = ['open' => '11:00', 'close' => '22:00', 'closed' => false];
         }
         return $hours;
+    }
+
+    private function normalizeMediaUrl(?string $value): ?string
+    {
+        return app(\App\Services\MediaService::class)->url($value);
     }
 }

@@ -4,44 +4,35 @@ namespace App\Services;
 
 use App\Models\Vendor;
 use Illuminate\Http\UploadedFile;
-use Illuminate\Support\Facades\Storage;
 
+/**
+ * Thin vendor-scoped wrapper around the generic MediaService.
+ *
+ * Returns RELATIVE paths (e.g. "vendors/1/logo/abc.png") so they can be
+ * persisted directly in `vendor_settings.logo_url` / `cover_photo_url`.
+ * Use MediaService::url() (or the model accessor) to render the full URL.
+ */
 class VendorMediaService
 {
-    /**
-     * Store a logo file and return its public URL.
-     * Max 2 MB, jpg/jpeg/png/webp validated in controller.
-     */
+    public function __construct(private readonly MediaService $media)
+    {
+    }
+
     public function uploadLogo(Vendor $vendor, UploadedFile $file): string
     {
-        $this->deleteOldFiles("vendors/{$vendor->id}/logo");
-
-        $path = $file->store("vendors/{$vendor->id}/logo", 'public');
-
-        return asset('storage/' . $path);
+        return $this->media->replaceInDirectory($file, "vendors/{$vendor->id}/logo");
     }
 
-    /**
-     * Store a cover photo and return its public URL.
-     * Max 5 MB, jpg/jpeg/png/webp validated in controller.
-     */
     public function uploadCoverPhoto(Vendor $vendor, UploadedFile $file): string
     {
-        $this->deleteOldFiles("vendors/{$vendor->id}/cover");
-
-        $path = $file->store("vendors/{$vendor->id}/cover", 'public');
-
-        return asset('storage/' . $path);
+        return $this->media->replaceInDirectory($file, "vendors/{$vendor->id}/cover");
     }
 
     /**
-     * Delete all files inside a given directory on the public disk.
+     * @deprecated Use MediaService::url() directly. Kept for back-compat.
      */
-    public function deleteOldFiles(string $directory): void
+    public function normalizePublicMediaUrl(?string $value): ?string
     {
-        $files = Storage::disk('public')->files($directory);
-        foreach ($files as $file) {
-            Storage::disk('public')->delete($file);
-        }
+        return $this->media->url($value);
     }
 }

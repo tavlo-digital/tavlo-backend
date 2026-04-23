@@ -9,6 +9,7 @@ use App\Http\Controllers\Api\Customer\ProfileController;
 use App\Http\Controllers\Api\Customer\ReservationController;
 use App\Http\Controllers\Api\Customer\RestaurantController;
 use App\Http\Controllers\Api\Customer\ReviewController;
+use App\Http\Controllers\Api\Customer\TableScanController;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 
@@ -62,6 +63,10 @@ Route::middleware('auth:customer')->group(function () {
     Route::get('profile',              [ProfileController::class, 'show'])->name('profile.show');
     Route::patch('profile',            [ProfileController::class, 'update'])->name('profile.update');
     Route::post('profile/password',    [ProfileController::class, 'changePassword'])->name('profile.password');
+
+    // QR Scan (customer scans table QR)
+    // Body: { "token": "<qr_token>" }
+    Route::post('scan', [TableScanController::class, 'scan'])->name('scan');
 
     // Order History
     Route::get('orders/restaurants',                      [OrderHistoryController::class, 'restaurants'])->name('orders.restaurants');
