@@ -21,6 +21,11 @@
       "key": "qrToken",
       "value": "d5938525-f2a5-4849-803e-d579582af11f",
       "type": "string"
+    },
+    {
+      "key": "tablePin",
+      "value": "0473",
+      "type": "string"
     }
   ],
   "item": [
@@ -62,19 +67,24 @@
         "method": "POST",
         "header": [
           { "key": "Accept", "value": "application/json" },
-          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Content-Type", "value": "text/plain" },
           { "key": "Authorization", "value": "Bearer {{customerToken}}" }
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"token\": \"{{qrToken}}\"\n}"
+          "raw": "{{qrToken}}",
+          "options": {
+            "raw": {
+              "language": "text"
+            }
+          }
         },
         "url": {
-          "raw": "{{baseUrl}}/api/customer/scan",
+          "raw": "{{baseUrl}}/api/customer/table/scan",
           "host": ["{{baseUrl}}"],
-          "path": ["api", "customer", "scan"]
+          "path": ["api", "customer", "table", "scan"]
         },
-        "description": "Customer scans a printed table QR. Body carries only the qr_token. Returns a 4-digit PIN, the active session, table info and vendor info."
+        "description": "Customer scans a printed table QR. If the table is not active yet, this creates the owner session and returns a 4-digit PIN. If the table is already active, the response returns status=active and requiresPin=true so the UI can ask the customer for the shared PIN."
       },
       "response": [
         {
@@ -83,23 +93,30 @@
             "method": "POST",
             "header": [
               { "key": "Accept", "value": "application/json" },
-              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Content-Type", "value": "text/plain" },
               { "key": "Authorization", "value": "Bearer {{customerToken}}" }
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"token\": \"d5938525-f2a5-4849-803e-d579582af11f\"\n}"
+              "raw": "d5938525-f2a5-4849-803e-d579582af11f"
             },
             "url": {
-              "raw": "{{baseUrl}}/api/customer/scan",
+              "raw": "{{baseUrl}}/api/customer/table/scan",
               "host": ["{{baseUrl}}"],
-              "path": ["api", "customer", "scan"]
+              "path": ["api", "customer", "table", "scan"]
             }
           },
           "status": "Created",
           "code": 201,
           "header": [{ "key": "Content-Type", "value": "application/json" }],
           "body": "{\n  \"pin\": \"0473\",\n  \"session\": {\n    \"id\": \"12\",\n    \"status\": \"active\",\n    \"scannedAt\": \"2026-04-23T10:15:00+00:00\"\n  },\n  \"table\": { \"id\": \"5\", \"number\": 3, \"name\": \"T3\" },\n  \"vendor\": { \"id\": \"vnd_abc123\", \"name\": \"La Bella Vista\" }\n}"
+        },
+        {
+          "name": "409 Active Table",
+          "status": "Conflict",
+          "code": 409,
+          "header": [{ "key": "Content-Type", "value": "application/json" }],
+          "body": "{\n  \"message\": \"This table already has an active session\",\n  \"status\": \"active\",\n  \"requiresPin\": true,\n  \"table\": { \"id\": \"5\", \"number\": 3, \"name\": \"T3\" },\n  \"vendor\": { \"id\": \"VID-8492\", \"name\": \"Bella Italia\" }\n}"
         },
         {
           "name": "410 Invalid QR",
@@ -114,6 +131,55 @@
           "code": 401,
           "header": [{ "key": "Content-Type", "value": "application/json" }],
           "body": "{\n  \"message\": \"Unauthenticated.\"\n}"
+        }
+      ]
+    },
+    {
+      "name": "Join Active Table With PIN",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Accept", "value": "application/json" },
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"token\": \"{{qrToken}}\",\n  \"pin\": \"{{tablePin}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/customer/table/pin",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "customer", "table", "pin"]
+        },
+        "description": "Join an already-active table by entering the owner PIN. This creates a table_scan_sessions row for the joining customer without assigning a new PIN to them."
+      },
+      "response": [
+        {
+          "name": "201 Joined",
+          "status": "Created",
+          "code": 201,
+          "header": [{ "key": "Content-Type", "value": "application/json" }],
+          "body": "{\n  \"pin\": null,\n  \"session\": {\n    \"id\": \"13\",\n    \"status\": \"active\",\n    \"scannedAt\": \"2026-04-23T10:17:00+00:00\"\n  },\n  \"table\": { \"id\": \"5\", \"number\": 3, \"name\": \"T3\" },\n  \"vendor\": { \"id\": \"VID-8492\", \"name\": \"Bella Italia\" }\n}"
+        },
+        {
+          "name": "200 Already Joined",
+          "status": "OK",
+          "code": 200,
+          "header": [{ "key": "Content-Type", "value": "application/json" }],
+          "body": "{\n  \"pin\": null,\n  \"session\": {\n    \"id\": \"13\",\n    \"status\": \"active\",\n    \"scannedAt\": \"2026-04-23T10:17:00+00:00\"\n  },\n  \"table\": { \"id\": \"5\", \"number\": 3, \"name\": \"T3\" },\n  \"vendor\": { \"id\": \"VID-8492\", \"name\": \"Bella Italia\" }\n}"
+        },
+        {
+          "name": "422 Invalid PIN",
+          "status": "Unprocessable Entity",
+          "code": 422,
+          "header": [{ "key": "Content-Type", "value": "application/json" }],
+          "body": "{\n  \"message\": \"The provided PIN is invalid for this table\"\n}"
         }
       ]
     }

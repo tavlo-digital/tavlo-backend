@@ -64,9 +64,9 @@ Route::middleware('auth:customer')->group(function () {
     Route::patch('profile',            [ProfileController::class, 'update'])->name('profile.update');
     Route::post('profile/password',    [ProfileController::class, 'changePassword'])->name('profile.password');
 
-    // QR Scan (customer scans table QR)
-    // Body: { "token": "<qr_token>" }
-    Route::post('scan', [TableScanController::class, 'scan'])->name('scan');
+    // Table session flow
+    Route::post('table/scan', [TableScanController::class, 'scan'])->name('table.scan');
+    Route::post('table/pin', [TableScanController::class, 'pin'])->name('table.pin');
 
     // Order History
     Route::get('orders/restaurants',                      [OrderHistoryController::class, 'restaurants'])->name('orders.restaurants');

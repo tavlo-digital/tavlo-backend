@@ -54,11 +54,20 @@ class TableScanTest extends TestCase
         // Ensure we send raw body to match production usage.
         $server['CONTENT_TYPE'] = 'text/plain';
 
-        return $this->call('POST', '/api/customer/scan', [], [], [], $server, (string) ($token ?? ''));
+        return $this->call('POST', '/api/customer/table/scan', [], [], [], $server, (string) ($token ?? ''));
+    }
+
+    private function postPin(string $token, string $pin, ?array $headers = null)
+    {
+        return $this->withHeaders($headers ?? $this->headers)
+            ->postJson('/api/customer/table/pin', [
+                'token' => $token,
+                'pin'   => $pin,
+            ]);
     }
 
     // ----------------------------------------------------------------
-    // POST /api/customer/scan
+    // POST /api/customer/table/scan
     // ----------------------------------------------------------------
 
     public function test_unauthenticated_request_is_rejected(): void
@@ -118,6 +127,14 @@ class TableScanTest extends TestCase
             'status'              => 'active',
             'pin'                 => $pin,
         ]);
+    }
+
+    public function test_scan_route_also_accepts_json_token_body_for_backward_compatibility(): void
+    {
+        $table = $this->makeTable();
+
+        $this->postJson('/api/customer/table/scan', ['token' => $table->qr_token], $this->headers)
+            ->assertCreated();
     }
 
     public function test_scan_updates_table_last_scanned_at(): void
@@ -188,9 +205,109 @@ class TableScanTest extends TestCase
             ->assertJson([
                 'message' => 'This table already has an active session',
                 'status'  => 'active',
+                'requiresPin' => true,
             ]);
 
         $this->assertSame(1, TableScanSession::where('restaurant_table_id', $table->id)->where('status', 'active')->count());
         $this->assertSame('active', $first['session']['status']);
+    }
+
+    // ----------------------------------------------------------------
+    // POST /api/customer/table/pin
+    // ----------------------------------------------------------------
+
+    public function test_pin_route_requires_authentication(): void
+    {
+        $table = $this->makeTable();
+
+        $this->postJson('/api/customer/table/pin', [
+            'token' => $table->qr_token,
+            'pin'   => '1234',
+        ])->assertUnauthorized();
+    }
+
+    public function test_pin_route_requires_valid_token_and_pin(): void
+    {
+        $this->postJson('/api/customer/table/pin', [], $this->headers)
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['token', 'pin']);
+    }
+
+    public function test_pin_route_rejects_invalid_qr_token(): void
+    {
+        $this->postPin('does-not-exist', '1234')
+            ->assertStatus(410)
+            ->assertJson(['message' => 'This QR code is no longer valid']);
+    }
+
+    public function test_pin_route_rejects_invalid_pin_for_table(): void
+    {
+        $table = $this->makeTable();
+
+        $this->postScan($table->qr_token, $this->headers)->assertCreated();
+
+        $this->postPin($table->qr_token, '9999')
+            ->assertStatus(422)
+            ->assertJson(['message' => 'The provided PIN is invalid for this table']);
+    }
+
+    public function test_pin_route_joins_existing_active_table_without_creating_new_pin(): void
+    {
+        $table = $this->makeTable();
+        $ownerPin = $this->postScan($table->qr_token, $this->headers)
+            ->assertCreated()
+            ->json('pin');
+
+        /** @var Customer $secondCustomer */
+        $secondCustomer = Customer::factory()->create();
+
+        $response = $this->actingAs($secondCustomer, 'customer')
+            ->postJson('/api/customer/table/pin', [
+                'token' => $table->qr_token,
+                'pin'   => $ownerPin,
+            ], ['Accept' => 'application/json']);
+
+        $response->assertCreated()
+            ->assertJsonPath('pin', null)
+            ->assertJsonPath('session.status', 'active')
+            ->assertJsonPath('table.id', (string) $table->id);
+
+        $this->assertDatabaseHas('table_scan_sessions', [
+            'restaurant_table_id' => $table->id,
+            'customer_id'         => $secondCustomer->id,
+            'status'              => 'active',
+            'pin'                 => '',
+        ]);
+    }
+
+    public function test_pin_route_is_idempotent_for_customer_already_joined_to_active_table(): void
+    {
+        $table = $this->makeTable();
+        $ownerPin = $this->postScan($table->qr_token, $this->headers)
+            ->assertCreated()
+            ->json('pin');
+
+        /** @var Customer $secondCustomer */
+        $secondCustomer = Customer::factory()->create();
+
+        $this->actingAs($secondCustomer, 'customer')
+            ->postJson('/api/customer/table/pin', [
+                'token' => $table->qr_token,
+                'pin'   => $ownerPin,
+            ], ['Accept' => 'application/json'])
+            ->assertCreated();
+
+        $this->actingAs($secondCustomer, 'customer')
+            ->postJson('/api/customer/table/pin', [
+                'token' => $table->qr_token,
+                'pin'   => $ownerPin,
+            ], ['Accept' => 'application/json'])
+            ->assertOk()
+            ->assertJsonPath('pin', null);
+
+        $this->assertSame(1, TableScanSession::where('restaurant_table_id', $table->id)
+            ->where('customer_id', $secondCustomer->id)
+            ->where('status', 'active')
+            ->count());
     }
 }
