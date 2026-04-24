@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Api\Customer\CartController;
 use App\Http\Controllers\Api\Customer\AuthController;
 use App\Http\Controllers\Api\Customer\FavoriteController;
 use App\Http\Controllers\Api\Customer\LoyaltyController;
@@ -67,6 +68,14 @@ Route::middleware('auth:customer')->group(function () {
     // Table session flow
     Route::post('table/scan', [TableScanController::class, 'scan'])->name('table.scan');
     Route::post('table/pin', [TableScanController::class, 'pin'])->name('table.pin');
+
+    // Table cart
+    Route::prefix('cart')->name('cart.')->group(function () {
+        Route::get('/',             [CartController::class, 'index'])->name('index');
+        Route::post('items',        [CartController::class, 'addItem'])->name('items.add');
+        Route::patch('items/{id}',  [CartController::class, 'updateItem'])->name('items.update');
+        Route::delete('items/{id}', [CartController::class, 'removeItem'])->name('items.remove');
+    });
 
     // Order History
     Route::get('orders/restaurants',                      [OrderHistoryController::class, 'restaurants'])->name('orders.restaurants');
