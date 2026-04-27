@@ -419,6 +419,101 @@ class CartController extends Controller
         ], 201);
     }
 
+    /**
+     * GET /api/customer/table/history
+     *
+     * Returns a full history view of the customer's currently active table:
+     * - the current table + vendor + active session metadata
+     * - every active session at the same table (people), with `is_me`
+     * - for each person, every order they have placed during this table
+     *   session (full snapshot: items, shared_items, status, totals)
+     * - a table-wide summary (orders count + total amount across all people)
+     */
+    public function tableHistory(Request $request): JsonResponse
+    {
+        $mySession = $this->activeSession($request);
+        if (! $mySession) {
+            return response()->json(['message' => 'No active table session found.'], 422);
+        }
+
+        $sessions = TableScanSession::with([
+            'customer:id,first_name,last_name',
+            'restaurantTable:id,number,name',
+            'vendor:id,vendor_public_id,restaurant_name',
+        ])
+            ->where('id', $mySession->id)
+            ->get();
+
+        $orders = Order::where('table_scan_session_id', $mySession->id)
+            ->orderBy('created_at')
+            ->get()
+            ->groupBy('table_scan_session_id');
+
+        $tableTotal      = 0.0;
+        $tableOrderCount = 0;
+
+        $people = $sessions->map(function (TableScanSession $s) use ($mySession, $orders, &$tableTotal, &$tableOrderCount) {
+            $personOrders = $orders->get($s->id, collect());
+            $personTotal  = (float) $personOrders->sum(fn (Order $o) => (float) $o->amount);
+
+            $tableTotal      += $personTotal;
+            $tableOrderCount += $personOrders->count();
+
+            return [
+                'session_id'   => $s->id,
+                'customer_id'  => $s->customer_id,
+                'is_me'        => $s->id === $mySession->id,
+                'name'         => $s->customer
+                    ? trim($s->customer->first_name . ' ' . $s->customer->last_name)
+                    : 'Guest',
+                'scanned_at'   => $s->scanned_at?->toIso8601String(),
+                'status'       => $s->status,
+                'orders_count' => $personOrders->count(),
+                'total_amount' => round($personTotal, 2),
+                'orders'       => $personOrders->map(fn (Order $o) => [
+                    'id'                    => $o->id,
+                    'order_public_id'       => $o->order_public_id,
+                    'status'                => $o->status,
+                    'payment_pending'       => (bool) $o->payment_pending,
+                    'payment_received'      => (bool) $o->payment_received,
+                    'amount'                => (float) $o->amount,
+                    'currency'              => $o->currency,
+                    'items_count'           => $o->items_count,
+                    'items'                 => $o->items ?? [],
+                    'shared_items'          => $o->shared_items ?? [],
+                    'order_type'            => $o->order_type,
+                    'table_scan_session_id' => $o->table_scan_session_id,
+                    'created_at'            => $o->created_at?->toIso8601String(),
+                ])->values(),
+            ];
+        })->values();
+
+        $table  = $mySession->restaurantTable;
+        $vendor = $mySession->vendor;
+
+        return response()->json([
+            'table' => $table ? [
+                'id'     => $table->id,
+                'number' => $table->number ?? null,
+                'name'   => $table->name ?? null,
+            ] : null,
+            'vendor' => $vendor ? [
+                'vendor_public_id' => $vendor->vendor_public_id ?? null,
+                'restaurant_name'  => $vendor->restaurant_name ?? null,
+            ] : null,
+            'session' => [
+                'id'         => $mySession->id,
+                'status'     => $mySession->status,
+                'scanned_at' => $mySession->scanned_at?->toIso8601String(),
+            ],
+            'people'  => $people,
+            'summary' => [
+                'orders_count' => $tableOrderCount,
+                'total_amount' => round($tableTotal, 2),
+            ],
+        ]);
+    }
+
     private function itemPayload(CartItem $item): array
     {
         $menuItem = $item->relationLoaded('menuItem') ? $item->menuItem : null;

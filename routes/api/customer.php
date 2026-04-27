@@ -70,6 +70,7 @@ Route::middleware('auth:customer')->group(function () {
     Route::post('table/pin', [TableScanController::class, 'pin'])->name('table.pin');
     Route::get('table/order',  [CartController::class, 'tablePayment'])->name('table.order');
     Route::post('table/order', [CartController::class, 'payNow'])->name('table.order.pay');
+    Route::get('table/history', [CartController::class, 'tableHistory'])->name('table.history');
 
     // Table cart
     Route::prefix('cart')->name('cart.')->group(function () {
