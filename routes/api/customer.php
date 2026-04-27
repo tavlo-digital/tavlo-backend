@@ -68,6 +68,8 @@ Route::middleware('auth:customer')->group(function () {
     // Table session flow
     Route::post('table/scan', [TableScanController::class, 'scan'])->name('table.scan');
     Route::post('table/pin', [TableScanController::class, 'pin'])->name('table.pin');
+    Route::get('table/order',  [CartController::class, 'tablePayment'])->name('table.order');
+    Route::post('table/order', [CartController::class, 'payNow'])->name('table.order.pay');
 
     // Table cart
     Route::prefix('cart')->name('cart.')->group(function () {
@@ -93,9 +95,9 @@ Route::middleware('auth:customer')->group(function () {
     Route::get('loyalty/{vendorPublicId}',    [LoyaltyController::class, 'show'])->name('loyalty.show');
 
     // Favorites
-    Route::get('favorites',                          [FavoriteController::class, 'index'])->name('favorites.index');
-    Route::post('favorites',                         [FavoriteController::class, 'store'])->name('favorites.store');
-    Route::delete('favorites/{vendorPublicId}',      [FavoriteController::class, 'destroy'])->name('favorites.destroy');
+    Route::get('favorites',                                  [FavoriteController::class, 'index'])->name('favorites.index');
+    Route::post('favorites/{vendorPublicId}/add',            [FavoriteController::class, 'store'])->name('favorites.add');
+    Route::delete('favorites/{vendorPublicId}/delete',       [FavoriteController::class, 'destroy'])->name('favorites.delete');
 
     // Reviews
     Route::get('reviews',                       [ReviewController::class, 'index'])->name('reviews.index');

@@ -39,7 +39,7 @@ class OrderController extends Controller
 
         // Takeaway / non-session orders
         $takeawayQuery = $vendor->orders()
-            ->whereNull('table_session_id')
+            ->whereNull('table_scan_session_id')
             ->where('order_type', '!=', 'dine-in')
             ->with('customer:id,name,email,phone,customer_public_id')
             ->orderByDesc('created_at');
@@ -318,7 +318,7 @@ class OrderController extends Controller
             'orderNumber'        => $order->order_number ?? "#{$order->id}",
             'orderType'          => $order->order_type ?? 'dine-in',
             'tableNumber'        => $order->table_number,
-            'tableSessionId'     => $order->table_session_id ? (string) $order->table_session_id : null,
+            'tableScanSessionId' => $order->table_scan_session_id ? (string) $order->table_scan_session_id : null,
             'course'             => $order->course,
             'guestCount'         => $order->guest_count,
             'waiterConfirmed'    => (bool) $order->waiter_confirmed,

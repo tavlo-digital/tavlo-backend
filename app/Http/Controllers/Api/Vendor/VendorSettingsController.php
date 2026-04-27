@@ -60,6 +60,8 @@ class VendorSettingsController extends Controller
             'website'                => ['sometimes', 'nullable', 'url', 'max:255'],
             'city'                   => ['sometimes', 'nullable', 'string', 'max:255'],
             'address'                => ['sometimes', 'nullable', 'string', 'max:500'],
+            'latitude'               => ['sometimes', 'nullable', 'numeric', 'between:-90,90'],
+            'longitude'              => ['sometimes', 'nullable', 'numeric', 'between:-180,180'],
             'phone'                  => ['sometimes', 'nullable', 'string', 'max:30'],
             // vendor_settings fields
             'description'            => ['sometimes', 'nullable', 'string', 'max:1000'],
@@ -147,7 +149,8 @@ class VendorSettingsController extends Controller
             'signatureRecipesCount'       => ['sometimes', 'nullable', 'integer', 'min:0'],
             'happyCustomersCount'         => ['sometimes', 'nullable', 'integer', 'min:0'],
             'restaurantFeatures'          => ['sometimes', 'nullable', 'array'],
-            'restaurantFeatures.*'        => ['string', 'max:100'],
+            'restaurantFeatures.*.title'        => ['required', 'string', 'max:100'],
+            'restaurantFeatures.*.description'  => ['nullable', 'string', 'max:500'],
             'showPhonePublic'             => ['sometimes', 'nullable', 'boolean'],
             'showEmailPublic'             => ['sometimes', 'nullable', 'boolean'],
             'showWebsitePublic'           => ['sometimes', 'nullable', 'boolean'],
@@ -159,6 +162,8 @@ class VendorSettingsController extends Controller
         if (array_key_exists('website', $data)) $vendorFields['website'] = $data['website'];
         if (isset($data['city'])) $vendorFields['city'] = $data['city'];
         if (isset($data['address'])) $vendorFields['address'] = $data['address'];
+        if (array_key_exists('latitude', $data)) $vendorFields['latitude'] = $data['latitude'];
+        if (array_key_exists('longitude', $data)) $vendorFields['longitude'] = $data['longitude'];
         if (isset($data['phone'])) $vendorFields['phone'] = $data['phone'];
         if (! empty($vendorFields)) {
             $vendor->update($vendorFields);
@@ -247,6 +252,32 @@ class VendorSettingsController extends Controller
         foreach ($settingsMap as $requestKey => $dbKey) {
             if (array_key_exists($requestKey, $data)) {
                 $settingsData[$dbKey] = $data[$requestKey];
+            }
+        }
+
+        // Normalise restaurant_features to a list of { title, description } objects.
+        if (array_key_exists('restaurant_features', $settingsData)) {
+            $features = $settingsData['restaurant_features'];
+            if (! is_array($features)) {
+                $settingsData['restaurant_features'] = [];
+            } else {
+                $settingsData['restaurant_features'] = array_values(array_filter(array_map(function ($item) {
+                    if (is_string($item)) {
+                        $title = trim($item);
+                        return $title === '' ? null : ['title' => $title, 'description' => null];
+                    }
+                    if (is_array($item)) {
+                        $title = isset($item['title']) ? trim((string) $item['title']) : '';
+                        if ($title === '') {
+                            return null;
+                        }
+                        $description = isset($item['description']) && $item['description'] !== ''
+                            ? (string) $item['description']
+                            : null;
+                        return ['title' => $title, 'description' => $description];
+                    }
+                    return null;
+                }, $features)));
             }
         }
 
@@ -436,6 +467,8 @@ class VendorSettingsController extends Controller
             'country'                    => $vendor->country,
             'city'                       => $vendor->city,
             'address'                    => $vendor->address,
+            'latitude'                   => $vendor->latitude !== null ? (float) $vendor->latitude : null,
+            'longitude'                  => $vendor->longitude !== null ? (float) $vendor->longitude : null,
             'phone'                      => $vendor->phone,
             'email'                      => $vendor->email,
             'status'                     => $vendor->status,

@@ -12,11 +12,11 @@ class Order extends Model
 
     protected $fillable = [
         'order_public_id',
-        'customer_id',
         'vendor_id',
         'status',
         'items_count',
         'items',
+        'shared_items',
         'amount',
         'currency',
         'payment_method',
@@ -39,7 +39,7 @@ class Order extends Model
         'cancelled_at',
         'cancelled_reason',
         // session fields
-        'table_session_id',
+        'table_scan_session_id',
         'waiter_confirmed',
         'waiter_confirmed_at',
     ];
@@ -51,6 +51,7 @@ class Order extends Model
             'service_fee'          => 'decimal:2',
             'vat_amount'           => 'decimal:2',
             'items'                => 'array',
+            'shared_items'         => 'array',
             'payment_pending'      => 'boolean',
             'payment_received'     => 'boolean',
             'payment_confirmed_at' => 'datetime',
@@ -63,9 +64,16 @@ class Order extends Model
         ];
     }
 
-    public function customer(): BelongsTo
+    public function customer(): \Illuminate\Database\Eloquent\Relations\HasOneThrough
     {
-        return $this->belongsTo(Customer::class);
+        return $this->hasOneThrough(
+            Customer::class,
+            TableScanSession::class,
+            'id',                    // FK on table_scan_sessions referenced by orders.table_scan_session_id
+            'id',                    // FK on customers referenced by table_scan_sessions.customer_id
+            'table_scan_session_id', // local key on orders
+            'customer_id'            // local key on table_scan_sessions
+        );
     }
 
     public function vendor(): BelongsTo
@@ -73,8 +81,8 @@ class Order extends Model
         return $this->belongsTo(Vendor::class);
     }
 
-    public function tableSession(): BelongsTo
+    public function tableScanSession(): BelongsTo
     {
-        return $this->belongsTo(TableSession::class);
+        return $this->belongsTo(TableScanSession::class);
     }
 }

@@ -16,25 +16,58 @@ class FavoriteController extends Controller
     {
         $favorites = $request->user()
             ->favorites()
-            ->with('vendorSetting:id,vendor_id,logo_url,cover_photo_url,description')
+            ->with('vendorSetting:id,vendor_id,logo_url,cover_photo_url,description,business_hours')
+            ->withAvg('reviews', 'rating')
+            ->withCount('reviews')
             ->get([
                 'vendors.id', 'vendor_public_id', 'restaurant_name', 'slug',
                 'city', 'address',
             ]);
 
-        return response()->json($favorites);
+        $dayKey = strtolower(now()->format('l'));
+        $now = now()->format('H:i');
+
+        $payload = $favorites->map(function ($vendor) use ($dayKey, $now) {
+            $setting = $vendor->vendorSetting;
+
+            $isOpen = false;
+            $businessHours = $setting?->business_hours ?? [];
+            if (is_string($businessHours)) {
+                $businessHours = json_decode($businessHours, true) ?: [];
+            }
+            if (isset($businessHours[$dayKey]) && !($businessHours[$dayKey]['closed'] ?? false)) {
+                $open  = $businessHours[$dayKey]['open']  ?? null;
+                $close = $businessHours[$dayKey]['close'] ?? null;
+                if ($open && $close) {
+                    $isOpen = $now >= $open && $now <= $close;
+                }
+            }
+
+            return [
+                'id'               => $vendor->id,
+                'vendor_public_id' => $vendor->vendor_public_id,
+                'restaurant_name'  => $vendor->restaurant_name,
+                'slug'             => $vendor->slug,
+                'city'             => $vendor->city,
+                'address'          => $vendor->address,
+                'logo_url'         => $setting?->logo_url,
+                'cover_photo_url'  => $setting?->cover_photo_url,
+                'avg_rating'       => round($vendor->reviews_avg_rating ?? 0, 1),
+                'review_count'     => $vendor->reviews_count ?? 0,
+                'is_open'          => $isOpen,
+                'status'           => $isOpen ? 'Open' : 'Closed',
+            ];
+        });
+
+        return response()->json($payload);
     }
 
     /**
      * Add a restaurant to favorites.
      */
-    public function store(Request $request): JsonResponse
+    public function store(Request $request, string $vendorPublicId): JsonResponse
     {
-        $validated = $request->validate([
-            'vendor_public_id' => ['required', 'string', 'exists:vendors,vendor_public_id'],
-        ]);
-
-        $vendor = Vendor::where('vendor_public_id', $validated['vendor_public_id'])->firstOrFail();
+        $vendor = Vendor::where('vendor_public_id', $vendorPublicId)->firstOrFail();
 
         $request->user()->favorites()->syncWithoutDetaching([$vendor->id]);
 

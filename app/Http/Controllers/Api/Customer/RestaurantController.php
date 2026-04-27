@@ -139,8 +139,14 @@ class RestaurantController extends Controller
 
         $restaurants = $query->paginate($request->integer('per_page', 20));
 
+        // Pre-fetch favorite vendor IDs for the authenticated customer (if any).
+        $customer = $request->user('customer');
+        $favoriteVendorIds = $customer
+            ? $customer->favorites()->pluck('vendors.id')->all()
+            : [];
+
         // Append computed fields to each restaurant
-        $restaurants->getCollection()->transform(function ($vendor) {
+        $restaurants->getCollection()->transform(function ($vendor) use ($favoriteVendorIds) {
             $cuisines = $vendor->menuCategories->pluck('name')->unique()->values();
             $avgPrice = $vendor->menuItems()->where('is_active', true)->avg('price');
             $priceLabel = match (true) {
@@ -203,6 +209,7 @@ class RestaurantController extends Controller
                     $setting?->enable_reservations ? 'reservation' : null,
                 ])),
                 'distance_km'         => isset($vendor->distance_km) ? round($vendor->distance_km, 1) : null,
+                'is_favorite'         => in_array($vendor->id, $favoriteVendorIds, true),
             ];
         });
 
@@ -292,6 +299,7 @@ class RestaurantController extends Controller
                 $vendor->takeawayQr ? 'takeaway' : null,
                 $setting->enable_reservations ? 'reservation' : null,
             ])),
+            'is_favorite' => $this->isFavoriteFor($request, $vendor->id),
         ]);
     }
 
@@ -542,13 +550,45 @@ class RestaurantController extends Controller
             ];
         });
 
-        return response()->json($reviews);
+        // Aggregate summary across ALL non-flagged reviews for this vendor
+        // (independent of filters/pagination so the breakdown is stable).
+        $counts = \App\Models\Review::where('vendor_id', $vendor->id)
+            ->where('flagged', false)
+            ->selectRaw('rating, COUNT(*) as count')
+            ->groupBy('rating')
+            ->pluck('count', 'rating');
+
+        $totalReviews = (int) $counts->sum();
+        $weighted = 0;
+        foreach ($counts as $star => $count) {
+            $weighted += (int) $star * (int) $count;
+        }
+        $averageRating = $totalReviews > 0 ? round($weighted / $totalReviews, 1) : 0;
+
+        $breakdown = [];
+        for ($star = 5; $star >= 1; $star--) {
+            $count = (int) ($counts[$star] ?? 0);
+            $breakdown[] = [
+                'star'    => $star,
+                'count'   => $count,
+                'percent' => $totalReviews > 0 ? round(($count / $totalReviews) * 100, 1) : 0,
+            ];
+        }
+
+        $payload = $reviews->toArray();
+        $payload['review_summary'] = [
+            'average_rating'    => $averageRating,
+            'total_reviews'     => $totalReviews,
+            'rating_breakdown'  => $breakdown,
+        ];
+
+        return response()->json($payload);
     }
 
     /**
      * Get the public "About" profile for a restaurant.
      */
-    public function about(string $vendorPublicId): JsonResponse
+    public function about(Request $request, string $vendorPublicId): JsonResponse
     {
         $vendor = Vendor::where('vendor_public_id', $vendorPublicId)
             ->with([
@@ -587,6 +627,24 @@ class RestaurantController extends Controller
             $contact['website'] = $vendor->website;
         }
 
+        $features = array_values(array_filter(array_map(function ($item) {
+            if (is_string($item)) {
+                $title = trim($item);
+                return $title === '' ? null : ['title' => $title, 'description' => null];
+            }
+            if (is_array($item)) {
+                $title = isset($item['title']) ? trim((string) $item['title']) : '';
+                if ($title === '') {
+                    return null;
+                }
+                $description = isset($item['description']) && $item['description'] !== ''
+                    ? (string) $item['description']
+                    : null;
+                return ['title' => $title, 'description' => $description];
+            }
+            return null;
+        }, (array) ($setting?->restaurant_features ?? []))));
+
         return response()->json([
             'vendor_public_id'        => $vendor->vendor_public_id,
             'restaurant_name'         => $vendor->restaurant_name,
@@ -594,7 +652,7 @@ class RestaurantController extends Controller
             'years_of_experience'     => $setting?->years_of_experience !== null ? (int) $setting->years_of_experience : null,
             'signature_recipes_count' => $setting?->signature_recipes_count !== null ? (int) $setting->signature_recipes_count : null,
             'happy_customers_count'   => $setting?->happy_customers_count !== null ? (int) $setting->happy_customers_count : null,
-            'restaurant_features'     => $setting?->restaurant_features ?? [],
+            'restaurant_features'     => $features,
             'payment_methods'         => $paymentMethods,
             'vat_number'              => $vendor->vat_number,
             'address'                 => $vendor->address,
@@ -609,6 +667,19 @@ class RestaurantController extends Controller
                 $setting?->enable_reservations ? 'reservation' : null,
             ])),
             'contact'                 => $contact,
+            'is_favorite'             => $this->isFavoriteFor($request, $vendor->id),
         ]);
+    }
+
+    /**
+     * True if the request's authenticated customer (if any) has favorited the given vendor.
+     */
+    private function isFavoriteFor(Request $request, int $vendorId): bool
+    {
+        $customer = $request->user('customer');
+        if (! $customer) {
+            return false;
+        }
+        return $customer->favorites()->where('vendors.id', $vendorId)->exists();
     }
 }

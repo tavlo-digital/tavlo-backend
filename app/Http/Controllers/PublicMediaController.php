@@ -20,29 +20,6 @@ class PublicMediaController extends Controller
             abort(404);
         }
 
-        $secret = (string) config('media.secret', '');
-
-        // In any non-local environment a secret MUST be configured; otherwise
-        // we'd silently serve everything publicly.
-        if ($secret === '') {
-            if (app()->environment('production')) {
-                abort(500, 'Media secret is not configured.');
-            }
-        } else {
-            // 1. The request must come from a trusted client that holds the
-            //    shared secret (i.e. the Next.js proxy). Browsers hitting
-            //    this URL directly will not send this header.
-            $clientHeader = (string) $request->header('X-Media-Client', '');
-            if (! hash_equals($secret, $clientHeader)) {
-                abort(403, 'Media access is restricted to trusted clients.');
-            }
-
-            // 2. The URL itself must also carry a valid signature.
-            if (! $this->media->verify($path, $request->query('exp'), $request->query('sig'))) {
-                abort(403, 'Invalid or expired media signature.');
-            }
-        }
-
         $disk = Storage::disk('public');
         $resolvedPath = $path;
 
@@ -65,7 +42,7 @@ class PublicMediaController extends Controller
         $absolutePath = $disk->path($resolvedPath);
 
         return response()->file($absolutePath, [
-            'Cache-Control' => 'private, max-age=3600',
+            'Cache-Control' => 'public, max-age=3600',
         ]);
     }
 }

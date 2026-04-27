@@ -17,16 +17,15 @@ class OrderHistoryController extends Controller
     {
         $customer = $request->user();
 
-        $restaurants = Vendor::whereHas('orders', fn ($q) => $q->where('customer_id', $customer->id))
-            ->withCount(['orders' => fn ($q) => $q->where('customer_id', $customer->id)])
-            ->withSum(
-                ['orders' => fn ($q) => $q->where('customer_id', $customer->id)],
-                'amount'
-            )
-            ->withMax(
-                ['orders' => fn ($q) => $q->where('customer_id', $customer->id)],
-                'created_at'
-            )
+        $byCustomer = fn ($q) => $q->whereHas(
+            'tableScanSession',
+            fn ($s) => $s->where('customer_id', $customer->id)
+        );
+
+        $restaurants = Vendor::whereHas('orders', $byCustomer)
+            ->withCount(['orders' => $byCustomer])
+            ->withSum(['orders' => $byCustomer], 'amount')
+            ->withMax(['orders' => $byCustomer], 'created_at')
             ->get([
                 'id', 'vendor_public_id', 'restaurant_name', 'slug',
             ]);
@@ -42,8 +41,12 @@ class OrderHistoryController extends Controller
         $customer = $request->user();
         $vendor = Vendor::where('vendor_public_id', $vendorPublicId)->firstOrFail();
 
-        $orders = Order::where('customer_id', $customer->id)
-            ->where('vendor_id', $vendor->id)
+        $base = fn () => Order::whereHas(
+            'tableScanSession',
+            fn ($s) => $s->where('customer_id', $customer->id)
+        )->where('vendor_id', $vendor->id);
+
+        $orders = $base()
             ->orderByDesc('created_at')
             ->paginate($request->integer('per_page', 20), [
                 'id', 'order_public_id', 'order_type', 'table_number',
@@ -51,8 +54,8 @@ class OrderHistoryController extends Controller
             ]);
 
         $summary = [
-            'total_orders' => Order::where('customer_id', $customer->id)->where('vendor_id', $vendor->id)->count(),
-            'total_spent'  => Order::where('customer_id', $customer->id)->where('vendor_id', $vendor->id)->sum('amount'),
+            'total_orders' => $base()->count(),
+            'total_spent'  => $base()->sum('amount'),
         ];
 
         return response()->json([
@@ -70,8 +73,13 @@ class OrderHistoryController extends Controller
      */
     public function show(Request $request, string $orderPublicId): JsonResponse
     {
+        $customer = $request->user();
+
         $order = Order::where('order_public_id', $orderPublicId)
-            ->where('customer_id', $request->user()->id)
+            ->whereHas(
+                'tableScanSession',
+                fn ($s) => $s->where('customer_id', $customer->id)
+            )
             ->with([
                 'vendor:id,vendor_public_id,restaurant_name,slug',
             ])

@@ -22,7 +22,9 @@ class StripeConnectService
         $account = $this->stripe->accounts->create([
             'type'         => 'express',
             'email'        => $vendor->email,
-            'display_name' => $vendor->restaurant_name ?? $vendor->name,
+            'business_profile' => [
+                'name' => $vendor->restaurant_name ?? $vendor->name,
+            ],
             'capabilities' => [
                 'card_payments'  => ['requested' => true],
                 'transfers'      => ['requested' => true],
@@ -65,7 +67,11 @@ class StripeConnectService
             'charges_enabled'     => $account->charges_enabled,
             'payouts_enabled'     => $account->payouts_enabled,
             'details_submitted'   => $account->details_submitted,
-            'onboarding_complete' => $account->charges_enabled && $account->details_submitted,
+            // The merchant has finished filling the onboarding form. We use
+            // details_submitted alone (not charges_enabled) because card_payments /
+            // transfers capabilities can stay "pending" for a while after onboarding,
+            // especially in test mode — Stripe still considers the account onboarded.
+            'onboarding_complete' => (bool) $account->details_submitted,
         ];
     }
 }

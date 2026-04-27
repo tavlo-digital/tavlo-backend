@@ -77,11 +77,10 @@ class MediaService
     }
 
     /**
-     * Build a signed public URL for a stored media value.
+     * Build a public URL for a stored media value.
      *
-     * The URL is signed with config('media.secret') and expires after
-     * config('media.ttl') seconds. Without a valid &exp + &sig, the
-     * /media/{path} endpoint returns 403.
+     * Returns an absolute URL pointing at the application's /media/{path}
+     * endpoint. Media is served publicly — no signing or expiry is applied.
      */
     public function url(?string $value, ?int $ttlSeconds = null): ?string
     {
@@ -89,17 +88,15 @@ class MediaService
             return null;
         }
 
-        // Already a full URL — only rewrite legacy /storage/ paths and
-        // already-built /media/... URLs (so they re-point to the proxy).
+        // Already a full URL — only rewrite legacy /storage/ and /media/ paths
+        // so they point at the current app host.
         if (preg_match('#^https?://#i', $value)) {
             $path = parse_url($value, PHP_URL_PATH);
             if (is_string($path) && str_starts_with($path, '/storage/')) {
-                $relative = ltrim(substr($path, strlen('/storage/')), '/');
-                return $this->signedUrl($relative, $ttlSeconds);
+                return $this->publicUrl(ltrim(substr($path, strlen('/storage/')), '/'));
             }
             if (is_string($path) && str_starts_with($path, '/media/')) {
-                $relative = ltrim(substr($path, strlen('/media/')), '/');
-                return $this->signedUrl($relative, $ttlSeconds);
+                return $this->publicUrl(ltrim(substr($path, strlen('/media/')), '/'));
             }
             return $value;
         }
@@ -109,65 +106,12 @@ class MediaService
             return null;
         }
 
-        return $this->signedUrl($relative, $ttlSeconds);
+        return $this->publicUrl($relative);
     }
 
-    /**
-     * Verify an incoming /media/{path} request signature.
-     * Returns true when the signature is valid and not expired.
-     */
-    public function verify(string $path, ?string $exp, ?string $sig): bool
+    private function publicUrl(string $relative): string
     {
-        $secret = (string) config('media.secret', '');
-        if ($secret === '' || $exp === null || $sig === null) {
-            return false;
-        }
-
-        if (! ctype_digit((string) $exp)) {
-            return false;
-        }
-
-        $expInt = (int) $exp;
-        if ($expInt < time()) {
-            return false;
-        }
-
-        $expected = $this->computeSignature($path, $expInt, $secret);
-
-        return hash_equals($expected, $sig);
-    }
-
-    private function signedUrl(string $relative, ?int $ttlSeconds): string
-    {
-        $relative = ltrim($relative, '/');
-        $publicBase = (string) config('media.public_base_url', '');
-
-        // When a Next.js (or other) media proxy is configured, the browser
-        // talks only to that proxy. It will sign the upstream request on its
-        // own, so we don't need to include exp/sig here.
-        if ($publicBase !== '') {
-            return $publicBase . '/media/' . $relative;
-        }
-
-        // Direct-to-Laravel fallback (local dev without a proxy): include a
-        // signature so the URL still works when pasted directly.
-        $secret = (string) config('media.secret', '');
-        $base   = url('media/' . $relative);
-
-        if ($secret === '') {
-            return $base;
-        }
-
-        $ttl = $ttlSeconds ?? (int) config('media.ttl', 3600);
-        $exp = time() + max(60, $ttl);
-        $sig = $this->computeSignature($relative, $exp, $secret);
-
-        return $base . '?exp=' . $exp . '&sig=' . $sig;
-    }
-
-    private function computeSignature(string $path, int $exp, string $secret): string
-    {
-        return hash_hmac('sha256', trim($path, '/') . '|' . $exp, $secret);
+        return url('media/' . ltrim($relative, '/'));
     }
 
     /**
