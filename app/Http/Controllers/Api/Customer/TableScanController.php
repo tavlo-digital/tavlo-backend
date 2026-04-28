@@ -69,19 +69,24 @@ class TableScanController extends Controller
         });
 
         if (isset($result['existing'])) {
-            return response()->json([
-                'message' => 'This table already has an active session',
-                'status' => 'active',
+            /** @var \App\Models\TableScanSession $existing */
+            $existing = $result['existing'];
+
+            return response()->json($this->sessionResponsePayload($existing, $table, $vendor, [
+                'message'     => 'This table already has an active session',
+                'status'      => 'active',
                 'requiresPin' => true,
-                'table' => $this->tablePayload($table),
-                'vendor' => $this->vendorPayload($vendor),
-            ], 409);
+            ]), 409);
         }
 
         /** @var \App\Models\TableScanSession $session */
         $session = $result['created'];
 
-        return response()->json($this->sessionResponsePayload($session, $table, $vendor), 201);
+        return response()->json($this->sessionResponsePayload($session, $table, $vendor, [
+            'message'     => 'Table session started',
+            'status'      => 'active',
+            'requiresPin' => true,
+        ]), 201);
     }
 
     /**
@@ -153,13 +158,21 @@ class TableScanController extends Controller
             /** @var \App\Models\TableScanSession $session */
             $session = $result['existing_customer_session'];
 
-            return response()->json($this->sessionResponsePayload($session, $table, $vendor), 200);
+            return response()->json($this->sessionResponsePayload($session, $table, $vendor, [
+                'message'     => 'Already joined this table session',
+                'status'      => 'active',
+                'requiresPin' => false,
+            ]), 200);
         }
 
         /** @var \App\Models\TableScanSession $session */
         $session = $result['created'];
 
-        return response()->json($this->sessionResponsePayload($session, $table, $vendor), 201);
+        return response()->json($this->sessionResponsePayload($session, $table, $vendor, [
+            'message'     => 'Joined table session',
+            'status'      => 'active',
+            'requiresPin' => false,
+        ]), 201);
     }
 
     private function extractToken(Request $request): string
@@ -184,18 +197,29 @@ class TableScanController extends Controller
             ->first();
     }
 
-    private function sessionResponsePayload(TableScanSession $session, RestaurantTable $table, mixed $vendor): array
-    {
-        return [
-            'pin'     => $session->pin !== '' ? $session->pin : null,
-            'session' => [
-                'id'         => (string) $session->id,
-                'status'     => $session->status,
-                'scannedAt'  => $session->scanned_at?->toIso8601String(),
+    private function sessionResponsePayload(
+        TableScanSession $session,
+        RestaurantTable $table,
+        mixed $vendor,
+        array $extras = []
+    ): array {
+        $hasPin = $session->pin !== '';
+
+        $base = [
+            'message'     => $extras['message']     ?? 'Table session is active',
+            'status'      => $extras['status']      ?? 'active',
+            'requiresPin' => $extras['requiresPin'] ?? $hasPin,
+            'pin'         => $hasPin ? $session->pin : null,
+            'session'     => [
+                'id'        => (string) $session->id,
+                'status'    => $session->status,
+                'scannedAt' => $session->scanned_at?->toIso8601String(),
             ],
             'table'  => $this->tablePayload($table),
             'vendor' => $this->vendorPayload($vendor),
         ];
+
+        return $base;
     }
 
     private function tablePayload(RestaurantTable $table): array

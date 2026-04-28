@@ -312,15 +312,58 @@ class OrderController extends Controller
 
     private function formatOrder(Order $order): array
     {
+        $serviceFee = (float) ($order->service_fee ?? 0);
+        $vatAmount  = (float) ($order->vat_amount ?? 0);
+        $total      = (float) $order->amount;
+        $subtotal   = max(0, $total - $serviceFee - $vatAmount);
+
+        // Display status bucket used by the UI tabs
+        $rawStatus = $order->status;
+        $displayStatus = match ($rawStatus) {
+            'pending', 'confirmed', 'preparing' => 'received',
+            'delivered'                          => 'served',
+            'picked_up'                          => 'picked-up',
+            default                              => $rawStatus,
+        };
+
+        // Pickup status for takeaway orders
+        $pickupStatus = match (true) {
+            $order->picked_up_at !== null            => 'picked-up',
+            $rawStatus === 'ready'                   => 'ready',
+            default                                  => 'pending',
+        };
+
+        // Build a timeline of significant events
+        $timeline = [];
+        if ($order->created_at) {
+            $timeline[] = ['status' => 'received', 'timestamp' => $order->created_at->toISOString()];
+        }
+        if ($order->waiter_confirmed_at) {
+            $timeline[] = ['status' => 'confirmed', 'timestamp' => $order->waiter_confirmed_at->toISOString()];
+        }
+        if ($order->ready_at) {
+            $timeline[] = ['status' => 'ready', 'timestamp' => $order->ready_at->toISOString()];
+        }
+        if ($order->served_at) {
+            $timeline[] = ['status' => 'served', 'timestamp' => $order->served_at->toISOString()];
+        }
+        if ($order->picked_up_at) {
+            $timeline[] = ['status' => 'picked-up', 'timestamp' => $order->picked_up_at->toISOString()];
+        }
+        if ($order->cancelled_at) {
+            $timeline[] = ['status' => 'cancelled', 'timestamp' => $order->cancelled_at->toISOString()];
+        }
+
         return [
             'id'                 => (string) $order->id,
             'orderPublicId'      => $order->order_public_id,
-            'orderNumber'        => $order->order_number ?? "#{$order->id}",
+            'orderNumber'        => $order->order_number ?? $order->id,
             'orderType'          => $order->order_type ?? 'dine-in',
             'tableNumber'        => $order->table_number,
             'tableScanSessionId' => $order->table_scan_session_id ? (string) $order->table_scan_session_id : null,
             'course'             => $order->course,
             'guestCount'         => $order->guest_count,
+            'numPeople'          => $order->guest_count,
             'waiterConfirmed'    => (bool) $order->waiter_confirmed,
             'waiterConfirmedAt'  => $order->waiter_confirmed_at?->toISOString(),
             'customer' => $order->customer ? [
@@ -329,12 +372,20 @@ class OrderController extends Controller
                 'email' => $order->customer->email,
                 'phone' => $order->customer->phone,
             ] : null,
-            'status'             => $order->status,
+            'customerName'       => $order->customer?->name,
+            'customerPhone'      => $order->customer?->phone,
+            'customerEmail'      => $order->customer?->email,
+            'status'             => $rawStatus,
+            'displayStatus'      => $displayStatus,
+            'pickupStatus'       => $pickupStatus,
             'itemsCount'         => $order->items_count,
             'items'              => $order->items ?? [],
-            'amount'             => (float) $order->amount,
-            'serviceFee'         => (float) ($order->service_fee ?? 0),
-            'vatAmount'          => (float) ($order->vat_amount ?? 0),
+            'sharedItems'        => $order->shared_items ?? [],
+            'amount'             => $total,
+            'total'              => $total,
+            'subtotal'           => $subtotal,
+            'serviceFee'         => $serviceFee,
+            'vatAmount'          => $vatAmount,
             'currency'           => $order->currency,
             'paymentMethod'      => $order->payment_method,
             'paymentPending'     => (bool) $order->payment_pending,
@@ -346,6 +397,7 @@ class OrderController extends Controller
             'servedAt'           => $order->served_at?->toISOString(),
             'cancelledAt'        => $order->cancelled_at?->toISOString(),
             'cancelledReason'    => $order->cancelled_reason,
+            'timeline'           => $timeline,
             'createdAt'          => $order->created_at->toISOString(),
             'updatedAt'          => $order->updated_at->toISOString(),
         ];
