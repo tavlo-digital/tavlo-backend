@@ -36,6 +36,7 @@ Route::get('health', function () {
 
 // Auth (public)
 Route::post('register',        [AuthController::class, 'register'])->name('register');
+Route::post('guest',           [AuthController::class, 'loginAsGuest'])->name('guest');
 Route::post('login',           [AuthController::class, 'login'])->name('login');
 Route::post('social/register', [AuthController::class, 'socialRegister'])->name('social.register');
 Route::post('social/login',    [AuthController::class, 'socialLogin'])->name('social.login');

@@ -116,6 +116,42 @@ class AuthController extends Controller
     }
 
     /**
+     * Login as a guest customer.
+     *
+     * Creates a brand-new customer with system-generated email/phone/password
+     * and an `account_type = guest`. The caller may optionally provide a
+     * `first_name` (and `last_name`) — otherwise a default "Guest" name is used.
+     * Returns the same shape as register/login: `{ user, token }`.
+     */
+    public function loginAsGuest(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'first_name' => ['nullable', 'string', 'max:255'],
+            'last_name'  => ['nullable', 'string', 'max:255'],
+        ]);
+
+        $suffix = strtolower(Str::random(10));
+
+        $customer = Customer::create([
+            'customer_public_id'  => 'cust_' . Str::random(16),
+            'first_name'          => $validated['first_name'] ?? 'Guest',
+            'last_name'           => $validated['last_name'] ?? Str::upper(Str::random(random_int(5, 6))),
+            'phone'               => 'guest-' . $suffix,
+            'email'               => 'guest_' . $suffix . '@tavlo.guest',
+            'password'            => Hash::make(Str::random(32)),
+            'account_type'        => 'guest',
+            'registration_source' => 'guest',
+        ]);
+
+        $token = $customer->createToken('customer-token', ['role:customer'])->plainTextToken;
+
+        return response()->json([
+            'user'  => $customer,
+            'token' => $token,
+        ], 201);
+    }
+
+    /**
      * Login with email and password.
      */
     public function login(Request $request): JsonResponse

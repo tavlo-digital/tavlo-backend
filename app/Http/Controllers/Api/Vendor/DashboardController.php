@@ -113,7 +113,7 @@ class DashboardController extends Controller
 
         // ---- Recent orders ---
         $recentOrders = $vendor->orders()
-            ->with('customer:id,first_name,last_name,phone,customer_public_id')
+            ->with('customer:customers.id,first_name,last_name,phone,customer_public_id')
             ->orderByDesc('created_at')
             ->limit(10)
             ->get()
