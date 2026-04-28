@@ -57,6 +57,8 @@ class CartController extends Controller
         $sessions = TableScanSession::with([
             'customer:id,first_name,last_name',
             'cartItems.menuItem:id,name,price,image_url',
+            'restaurantTable:id,number,name',
+            'vendor:id,vendor_public_id,restaurant_name',
         ])
             ->whereIn('id', $sessionIds)
             ->get();
@@ -73,7 +75,19 @@ class CartController extends Controller
             ];
         });
 
+        $table  = $mySession->restaurantTable;
+        $vendor = $mySession->vendor;
+
         return response()->json([
+            'table' => $table ? [
+                'id'     => $table->id,
+                'number' => $table->number ?? null,
+                'name'   => $table->name ?? null,
+            ] : null,
+            'vendor' => $vendor ? [
+                'vendor_public_id' => $vendor->vendor_public_id ?? null,
+                'restaurant_name'  => $vendor->restaurant_name ?? null,
+            ] : null,
             'people' => $people->values(),
         ]);
     }

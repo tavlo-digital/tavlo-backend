@@ -144,21 +144,19 @@ class MenuItemTest extends TestCase
             ->assertJsonPath('data.0.name', 'Available Item');
     }
 
-    public function test_index_returns_relational_allergens_and_tags(): void
+    public function test_index_returns_allergies_and_special_tags(): void
     {
         $response = $this->postJson('/api/vendor/menu/items', array_merge($this->baseItemPayload(), [
-            'allergenIds' => [$this->allergenGluten->id],
-            'tagIds'      => [$this->tagPopular->id],
+            'allergies'   => ['gluten'],
+            'specialTags' => ['popular'],
         ]), $this->authHeaders());
 
         $response->assertCreated();
 
         $this->getJson('/api/vendor/menu/items', $this->authHeaders())
             ->assertOk()
-            ->assertJsonPath('data.0.allergens.0.name', 'Gluten')
-            ->assertJsonPath('data.0.allergens.0.icon', '🌾')
-            ->assertJsonPath('data.0.tags.0.slug', 'popular')
-            ->assertJsonPath('data.0.tags.0.label', 'Popular');
+            ->assertJsonPath('data.0.allergies.0', 'gluten')
+            ->assertJsonPath('data.0.specialTags.0', 'popular');
     }
 
     // ----------------------------------------------------------------
@@ -240,27 +238,27 @@ class MenuItemTest extends TestCase
             ->assertJsonPath('data.taxCategory', 'food');
     }
 
-    public function test_store_syncs_allergens(): void
+    public function test_store_persists_allergies(): void
     {
         $response = $this->postJson('/api/vendor/menu/items', array_merge($this->baseItemPayload(), [
-            'allergenIds' => [$this->allergenGluten->id, $this->allergenDairy->id],
+            'allergies' => ['gluten', 'dairy'],
         ]), $this->authHeaders());
 
         $response->assertCreated()
-            ->assertJsonCount(2, 'data.allergens')
-            ->assertJsonPath('data.allergens.0.name', 'Gluten')
-            ->assertJsonPath('data.allergens.1.name', 'Dairy');
+            ->assertJsonCount(2, 'data.allergies')
+            ->assertJsonPath('data.allergies.0', 'gluten')
+            ->assertJsonPath('data.allergies.1', 'dairy');
     }
 
-    public function test_store_syncs_tags(): void
+    public function test_store_persists_special_tags(): void
     {
         $response = $this->postJson('/api/vendor/menu/items', array_merge($this->baseItemPayload(), [
-            'tagIds' => [$this->tagPopular->id],
+            'specialTags' => ['popular'],
         ]), $this->authHeaders());
 
         $response->assertCreated()
-            ->assertJsonCount(1, 'data.tags')
-            ->assertJsonPath('data.tags.0.slug', 'popular');
+            ->assertJsonCount(1, 'data.specialTags')
+            ->assertJsonPath('data.specialTags.0', 'popular');
     }
 
     public function test_store_saves_translations(): void
@@ -336,20 +334,20 @@ class MenuItemTest extends TestCase
             ->assertJsonPath('data.price', 14.5);
     }
 
-    public function test_update_replaces_allergens(): void
+    public function test_update_replaces_allergies(): void
     {
         $response = $this->postJson('/api/vendor/menu/items', array_merge($this->baseItemPayload(), [
-            'allergenIds' => [$this->allergenGluten->id, $this->allergenDairy->id],
+            'allergies' => ['gluten', 'dairy'],
         ]), $this->authHeaders());
 
         $itemId = $response->json('data.id');
 
         $this->patchJson("/api/vendor/menu/items/{$itemId}", [
-            'allergenIds' => [$this->allergenDairy->id],
+            'allergies' => ['dairy'],
         ], $this->authHeaders())
             ->assertOk()
-            ->assertJsonCount(1, 'data.allergens')
-            ->assertJsonPath('data.allergens.0.name', 'Dairy');
+            ->assertJsonCount(1, 'data.allergies')
+            ->assertJsonPath('data.allergies.0', 'dairy');
     }
 
     public function test_update_adds_translation_without_affecting_others(): void
@@ -460,31 +458,10 @@ class MenuItemTest extends TestCase
     // Modifier groups on items
     // ----------------------------------------------------------------
 
-    public function test_store_links_modifier_groups(): void
-    {
-        $group = ModifierGroup::create([
-            'vendor_id'     => $this->vendor->id,
-            'name'          => 'Size',
-            'type'          => 'single',
-            'min_selection' => 1,
-            'max_selection' => 1,
-            'is_required'   => true,
-            'sort_order'    => 0,
-            'is_active'     => true,
-        ]);
-
-        ModifierOption::create(['modifier_group_id' => $group->id, 'name' => 'Small', 'price_adjustment' => 0, 'sort_order' => 0, 'is_active' => true]);
-        ModifierOption::create(['modifier_group_id' => $group->id, 'name' => 'Large', 'price_adjustment' => 3.0, 'sort_order' => 1, 'is_active' => true]);
-
-        $response = $this->postJson('/api/vendor/menu/items', array_merge($this->baseItemPayload(), [
-            'modifierGroupIds' => [$group->id],
-        ]), $this->authHeaders());
-
-        $response->assertCreated()
-            ->assertJsonCount(1, 'data.modifierGroups')
-            ->assertJsonPath('data.modifierGroups.0.name', 'Size')
-            ->assertJsonCount(2, 'data.modifierGroups.0.options');
-    }
+    // NOTE: Modifier groups are managed via the ModifierGroupController and
+    // are no longer attached directly to menu items in the simplified
+    // JSON-column based menu item shape. Use paidAddons / freeAddons /
+    // removableItems instead. See ModifierGroupTest for that surface.
 
     // ----------------------------------------------------------------
     // Authentication guard

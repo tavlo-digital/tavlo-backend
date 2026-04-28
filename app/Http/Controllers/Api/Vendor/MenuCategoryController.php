@@ -49,8 +49,9 @@ class MenuCategoryController extends Controller
         $vendor = $request->user();
 
         $data = $request->validate([
-            'name'           => ['required', 'string', 'max:255'],
-            'taxCategoryId'  => ['sometimes', 'nullable', 'integer', 'exists:tax_categories,id'],
+            'name'               => ['required', 'string', 'max:255'],
+            'taxCategoryId'      => ['sometimes', 'nullable', 'integer', 'exists:tax_categories,id'],
+            'defaultTaxCategory' => ['sometimes', 'nullable', 'string', 'max:64'],
         ]);
 
         $slug = Str::slug($data['name']);
@@ -60,7 +61,9 @@ class MenuCategoryController extends Controller
 
         $maxSort = $vendor->menuCategories()->max('sort_order') ?? -1;
 
-        $taxCategoryId = $data['taxCategoryId'] ?? $this->defaultTaxCategoryId($vendor);
+        $taxCategoryId = $data['taxCategoryId']
+            ?? $this->taxCategoryIdForSlug($vendor, $data['defaultTaxCategory'] ?? null)
+            ?? $this->defaultTaxCategoryId($vendor);
 
         $category = $vendor->menuCategories()->create([
             'name'              => $data['name'],
@@ -83,11 +86,19 @@ class MenuCategoryController extends Controller
         $category = $vendor->menuCategories()->findOrFail($categoryId);
 
         $data = $request->validate([
-            'name'          => ['sometimes', 'string', 'max:255'],
-            'taxCategoryId' => ['sometimes', 'nullable', 'integer', 'exists:tax_categories,id'],
-            'sortOrder'     => ['sometimes', 'integer', 'min:0'],
-            'isActive'      => ['sometimes', 'boolean'],
+            'name'               => ['sometimes', 'string', 'max:255'],
+            'taxCategoryId'      => ['sometimes', 'nullable', 'integer', 'exists:tax_categories,id'],
+            'defaultTaxCategory' => ['sometimes', 'nullable', 'string', 'max:64'],
+            'sortOrder'          => ['sometimes', 'integer', 'min:0'],
+            'isActive'           => ['sometimes', 'boolean'],
         ]);
+
+        if (!isset($data['taxCategoryId']) && array_key_exists('defaultTaxCategory', $data)) {
+            $resolved = $this->taxCategoryIdForSlug($vendor, $data['defaultTaxCategory']);
+            if ($resolved !== null) {
+                $data['taxCategoryId'] = $resolved;
+            }
+        }
 
         if (isset($data['name'])) {
             $slug = Str::slug($data['name']);
@@ -141,19 +152,30 @@ class MenuCategoryController extends Controller
         $tc = $cat->taxCategory;
 
         return [
-            'id'          => $cat->id,
-            'name'        => $cat->name,
-            'slug'        => $cat->slug,
-            'taxCategory' => $tc ? [
+            'id'                 => $cat->id,
+            'name'               => $cat->name,
+            'slug'               => $cat->slug,
+            'defaultTaxCategory' => $cat->default_tax_category ?? ($tc?->slug ?? 'food'),
+            'taxCategory'        => $tc ? [
                 'id'      => $tc->id,
                 'slug'    => $tc->slug,
                 'name'    => $tc->name,
                 'vatRate' => (float) $tc->vat_rate,
             ] : null,
-            'sortOrder'   => $cat->sort_order,
-            'isActive'    => $cat->is_active,
-            'itemCount'   => $cat->items_count ?? 0,
+            'sortOrder'          => $cat->sort_order,
+            'isActive'           => $cat->is_active,
+            'itemCount'          => $cat->items_count ?? 0,
         ];
+    }
+
+    private function taxCategoryIdForSlug($vendor, ?string $slug): ?int
+    {
+        if (!$slug) {
+            return null;
+        }
+        $country = $this->resolveCountryCode($vendor->country ?? 'AT');
+        $tc = TaxCategory::where('country', $country)->where('slug', $slug)->first();
+        return $tc?->id;
     }
 
     private function defaultTaxCategoryId($vendor): ?int

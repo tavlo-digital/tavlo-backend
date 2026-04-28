@@ -45,6 +45,7 @@ Route::middleware('auth:vendor')->group(function () {
     // Menu Items
     Route::get('menu/items',                         [MenuItemController::class, 'index'])->name('menu.items.index');
     Route::post('menu/items',                        [MenuItemController::class, 'store'])->name('menu.items.store');
+    Route::post('menu/items/upload-image',           [MenuItemController::class, 'uploadImage'])->name('menu.items.uploadImage');
     Route::get('menu/items/{itemId}',                [MenuItemController::class, 'show'])->name('menu.items.show');
     Route::patch('menu/items/{itemId}',              [MenuItemController::class, 'update'])->name('menu.items.update');
     Route::delete('menu/items/{itemId}',             [MenuItemController::class, 'destroy'])->name('menu.items.destroy');
