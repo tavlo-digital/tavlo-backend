@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\Customer;
 use App\Http\Controllers\Controller;
 use App\Models\RestaurantTable;
 use App\Models\TableScanSession;
+use App\Models\Vendor;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -140,7 +141,7 @@ class TableScanController extends Controller
                 'vendor_id'           => $vendor->id,
                 'restaurant_table_id' => $table->id,
                 'customer_id'         => $customer->id,
-                'pin'                 => '',
+                'pin'                 => $data['pin'],
                 'status'              => 'active',
                 'scanned_at'          => now(),
             ]);
@@ -162,6 +163,7 @@ class TableScanController extends Controller
                 'message'     => 'Already joined this table session',
                 'status'      => 'active',
                 'requiresPin' => false,
+                'pin'         => null,
             ]), 200);
         }
 
@@ -172,7 +174,69 @@ class TableScanController extends Controller
             'message'     => 'Joined table session',
             'status'      => 'active',
             'requiresPin' => false,
+            'pin'         => null,
         ]), 201);
+    }
+
+    /**
+     * POST /api/customer/table/close
+     * Authenticated customer endpoint. Closes the customer's active table scan session for the
+     * given restaurant + table.
+     */
+    public function close(Request $request): JsonResponse
+    {
+        $data = Validator::make($request->all(), [
+            'vendor_public_id' => ['required', 'string'],
+            'table_id'         => ['required', 'integer'],
+        ])->validate();
+
+        $customer = $request->user();
+
+        $vendor = Vendor::query()
+            ->where('vendor_public_id', $data['vendor_public_id'])
+            ->first();
+
+        if (! $vendor) {
+            return response()->json([
+                'message' => 'No active table session found.',
+            ], 422);
+        }
+
+        $session = TableScanSession::query()
+            ->with(['restaurantTable.vendor'])
+            ->where('customer_id', $customer->id)
+            ->where('vendor_id', $vendor->id)
+            ->where('restaurant_table_id', $data['table_id'])
+            ->where('status', 'active')
+            ->latest('id')
+            ->first();
+
+        if (! $session) {
+            return response()->json([
+                'message' => 'No active table session found.',
+            ], 422);
+        }
+
+        $session->update([
+            'status'    => 'closed',
+            'closed_at' => now(),
+        ]);
+
+        $table        = $session->restaurantTable;
+        $vendorLoaded = $table?->vendor ?? $vendor;
+
+        return response()->json([
+            'message' => 'Table session closed',
+            'status'  => 'closed',
+            'session' => [
+                'id'        => (string) $session->id,
+                'status'    => $session->status,
+                'scannedAt' => $session->scanned_at?->toIso8601String(),
+                'closedAt'  => $session->closed_at?->toIso8601String(),
+            ],
+            'table'  => $table        ? $this->tablePayload($table)         : null,
+            'vendor' => $vendorLoaded ? $this->vendorPayload($vendorLoaded) : null,
+        ], 200);
     }
 
     private function extractToken(Request $request): string
@@ -209,7 +273,7 @@ class TableScanController extends Controller
             'message'     => $extras['message']     ?? 'Table session is active',
             'status'      => $extras['status']      ?? 'active',
             'requiresPin' => $extras['requiresPin'] ?? $hasPin,
-            'pin'         => $hasPin ? $session->pin : null,
+            'pin'         => array_key_exists('pin', $extras) ? $extras['pin'] : ($hasPin ? $session->pin : null),
             'session'     => [
                 'id'        => (string) $session->id,
                 'status'    => $session->status,

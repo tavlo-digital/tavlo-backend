@@ -69,6 +69,7 @@ Route::middleware('auth:customer')->group(function () {
     // Table session flow
     Route::post('table/scan', [TableScanController::class, 'scan'])->name('table.scan');
     Route::post('table/pin', [TableScanController::class, 'pin'])->name('table.pin');
+    Route::post('table/close', [TableScanController::class, 'close'])->name('table.close');
     Route::get('table/order',  [CartController::class, 'tablePayment'])->name('table.order');
     Route::post('table/order', [CartController::class, 'payNow'])->name('table.order.pay');
     Route::get('table/history', [CartController::class, 'tableHistory'])->name('table.history');

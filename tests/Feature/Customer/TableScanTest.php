@@ -276,7 +276,7 @@ class TableScanTest extends TestCase
             'restaurant_table_id' => $table->id,
             'customer_id'         => $secondCustomer->id,
             'status'              => 'active',
-            'pin'                 => '',
+            'pin'                 => $ownerPin,
         ]);
     }
 
