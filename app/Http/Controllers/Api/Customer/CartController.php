@@ -300,9 +300,11 @@ class CartController extends Controller
         $sessionIds = $this->tableSessionIds($mySession);
 
         $data = Validator::make($request->all(), [
-            'shared_items'                  => ['sometimes', 'array'],
-            'shared_items.*.cart_item_id'   => ['required_with:shared_items', 'integer'],
-            'shared_items.*.shared_between' => ['required_with:shared_items', 'integer', 'min:2', 'max:99'],
+            'shared_items'                       => ['sometimes', 'array'],
+            'shared_items.*.cart_item_id'        => ['required_with:shared_items', 'integer'],
+            'shared_items.*.shared_between'      => ['required_with:shared_items', 'integer', 'min:2', 'max:99'],
+            'shared_items.*.shared_between_ids'  => ['sometimes', 'array'],
+            'shared_items.*.shared_between_ids.*' => ['integer'],
         ])->validate();
 
         $sharedInput = collect($data['shared_items'] ?? [])
@@ -321,6 +323,29 @@ class CartController extends Controller
                     'message' => 'One or more shared cart items do not belong to this table.',
                     'invalid_cart_item_ids' => array_values($invalid),
                 ], 422);
+            }
+
+            // Validate each shared_between_ids customer is at the same table.
+            $allCustomerIds = $sharedInput
+                ->flatMap(fn ($row) => $row['shared_between_ids'] ?? [])
+                ->map(fn ($id) => (int) $id)
+                ->unique()
+                ->values()
+                ->all();
+
+            if (! empty($allCustomerIds)) {
+                $tableCustomerIds = TableScanSession::whereIn('id', $sessionIds)
+                    ->pluck('customer_id')
+                    ->map(fn ($id) => (int) $id)
+                    ->all();
+
+                $invalidCustomers = array_values(array_diff($allCustomerIds, $tableCustomerIds));
+                if (! empty($invalidCustomers)) {
+                    return response()->json([
+                        'message' => 'One or more shared_between_ids customers are not at this table.',
+                        'invalid_customer_ids' => $invalidCustomers,
+                    ], 422);
+                }
             }
         }
 
@@ -341,8 +366,9 @@ class CartController extends Controller
             $shared    = $sharedInput->get($item->id);
 
             if ($shared) {
-                $splitBy = (int) $shared['shared_between'];
-                $myShare = round($lineTotal / $splitBy, 2);
+                $splitBy   = (int) $shared['shared_between'];
+                $sharedIds = array_values(array_map('intval', $shared['shared_between_ids'] ?? []));
+                $myShare   = round($lineTotal / $splitBy, 2);
 
                 $myTotal += $myShare;
                 if ($isMine) {
@@ -350,29 +376,31 @@ class CartController extends Controller
                 }
 
                 $myItems[] = [
-                    'cart_item_id'   => $item->id,
-                    'menu_item_id'   => $item->menu_item_id,
-                    'name'           => $item->menuItem?->name,
-                    'image_url'      => $item->menuItem?->image_url,
-                    'quantity'       => $item->quantity,
-                    'unit_price'     => $unitPrice,
-                    'line_total'     => $lineTotal,
-                    'is_mine'        => $isMine,
-                    'shared'         => true,
-                    'shared_between' => $splitBy,
-                    'my_share'       => $myShare,
-                    'amount_billed'  => $myShare,
+                    'cart_item_id'       => $item->id,
+                    'menu_item_id'       => $item->menu_item_id,
+                    'name'               => $item->menuItem?->name,
+                    'image_url'          => $item->menuItem?->image_url,
+                    'quantity'           => $item->quantity,
+                    'unit_price'         => $unitPrice,
+                    'line_total'         => $lineTotal,
+                    'is_mine'            => $isMine,
+                    'shared'             => true,
+                    'shared_between'     => $splitBy,
+                    'shared_between_ids' => $sharedIds,
+                    'my_share'           => $myShare,
+                    'amount_billed'      => $myShare,
                 ];
 
                 $sharedDetail[] = [
-                    'cart_item_id'   => $item->id,
-                    'menu_item_id'   => $item->menu_item_id,
-                    'name'           => $item->menuItem?->name,
-                    'quantity'       => $item->quantity,
-                    'line_total'     => $lineTotal,
-                    'shared_between' => $splitBy,
-                    'my_share'       => $myShare,
-                    'is_mine'        => $isMine,
+                    'cart_item_id'       => $item->id,
+                    'menu_item_id'       => $item->menu_item_id,
+                    'name'               => $item->menuItem?->name,
+                    'quantity'           => $item->quantity,
+                    'line_total'         => $lineTotal,
+                    'shared_between'     => $splitBy,
+                    'shared_between_ids' => $sharedIds,
+                    'my_share'           => $myShare,
+                    'is_mine'            => $isMine,
                 ];
 
                 continue;
@@ -484,21 +512,12 @@ class CartController extends Controller
                 'status'       => $s->status,
                 'orders_count' => $personOrders->count(),
                 'total_amount' => round($personTotal, 2),
-                'orders'       => $personOrders->map(fn (Order $o) => [
-                    'id'                    => $o->id,
-                    'order_public_id'       => $o->order_public_id,
-                    'status'                => $o->status,
-                    'payment_pending'       => (bool) $o->payment_pending,
-                    'payment_received'      => (bool) $o->payment_received,
-                    'amount'                => (float) $o->amount,
-                    'currency'              => $o->currency,
-                    'items_count'           => $o->items_count,
-                    'items'                 => $o->items ?? [],
-                    'shared_items'          => $o->shared_items ?? [],
-                    'order_type'            => $o->order_type,
-                    'table_scan_session_id' => $o->table_scan_session_id,
-                    'created_at'            => $o->created_at?->toIso8601String(),
-                ])->values(),
+                'orders'       => $personOrders->map(function (Order $o) {
+                    $row = $o->toArray();
+                    unset($row['id']);
+
+                    return $row;
+                })->values(),
             ];
         })->values();
 
