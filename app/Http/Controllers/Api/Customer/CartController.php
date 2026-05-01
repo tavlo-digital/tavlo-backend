@@ -542,10 +542,14 @@ class CartController extends Controller
             'restaurantTable:id,number,name',
             'vendor:id,vendor_public_id,restaurant_name',
         ])
-            ->where('id', $mySession->id)
+            ->where('restaurant_table_id', $mySession->restaurant_table_id)
+            ->where('vendor_id', $mySession->vendor_id)
+            ->where('status', 'active')
             ->get();
 
-        $orders = Order::where('table_scan_session_id', $mySession->id)
+        $sessionIds = $sessions->pluck('id');
+
+        $orders = Order::whereIn('table_scan_session_id', $sessionIds)
             ->orderBy('created_at')
             ->get()
             ->groupBy('table_scan_session_id');
