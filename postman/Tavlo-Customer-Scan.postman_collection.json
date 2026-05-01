@@ -184,7 +184,7 @@
       ]
     },
     {
-      "name": "Get Table Payment Summary",
+      "name": "Order Start",
       "request": {
         "method": "GET",
         "header": [
@@ -192,11 +192,11 @@
           { "key": "Authorization", "value": "Bearer {{customerToken}}" }
         ],
         "url": {
-          "raw": "{{baseUrl}}/api/customer/table/order",
+          "raw": "{{baseUrl}}/api/customer/table/order/start",
           "host": ["{{baseUrl}}"],
-          "path": ["api", "customer", "table", "order"]
+          "path": ["api", "customer", "table", "order", "start"]
         },
-        "description": "Returns a payment-ready snapshot of the authenticated customer's current table. Includes one node per active session at the same table (with name, items and total) plus a table-wide grand total. The current table is derived from the customer's active table_scan_sessions row — no table_id needs to be passed."
+        "description": "Returns a payment summary for the customer's current table: each active session (person) with their items, totals, and an is_mine flag, plus a table-wide grand total."
       },
       "response": [
         {
@@ -204,12 +204,12 @@
           "status": "OK",
           "code": 200,
           "header": [{ "key": "Content-Type", "value": "application/json" }],
-          "body": "{\n  \"table\": { \"id\": 5, \"number\": 3, \"name\": \"T3\" },\n  \"people\": [\n    {\n      \"session_id\": 12,\n      \"customer_id\": 7,\n      \"is_me\": true,\n      \"name\": \"Alex Doe\",\n      \"item_count\": 3,\n      \"total_price\": 12.50,\n      \"items\": [\n        {\n          \"cart_item_id\": 1,\n          \"menu_item_id\": 42,\n          \"name\": \"Fries\",\n          \"image_url\": null,\n          \"quantity\": 2,\n          \"unit_price\": 3.50,\n          \"total_price\": 7.00,\n          \"is_mine\": true\n        },\n        {\n          \"cart_item_id\": 2,\n          \"menu_item_id\": 51,\n          \"name\": \"Coke\",\n          \"image_url\": null,\n          \"quantity\": 1,\n          \"unit_price\": 5.50,\n          \"total_price\": 5.50,\n          \"is_mine\": true\n        }\n      ]\n    },\n    {\n      \"session_id\": 13,\n      \"customer_id\": 9,\n      \"is_me\": false,\n      \"name\": \"Sam Lee\",\n      \"item_count\": 1,\n      \"total_price\": 18.99,\n      \"items\": [\n        {\n          \"cart_item_id\": 3,\n          \"menu_item_id\": 42,\n          \"name\": \"4 Piece chicken Box\",\n          \"image_url\": \"http://localhost:8000/media/menu-items/42/photo/abc123.jpg\",\n          \"quantity\": 1,\n          \"unit_price\": 18.99,\n          \"total_price\": 18.99,\n          \"is_mine\": false\n        }\n      ]\n    }\n  ],\n  \"summary\": {\n    \"item_count\": 4,\n    \"total_price\": 31.49\n  }\n}"
+          "body": "{\n  \"table\": { \"id\": 5, \"number\": 3, \"name\": \"T3\" },\n  \"people\": [\n    {\n      \"session_id\": 12,\n      \"customer_id\": 7,\n      \"is_me\": true,\n      \"name\": \"Alex Doe\",\n      \"item_count\": 3,\n      \"total_price\": 12.50,\n      \"items\": [\n        {\n          \"cart_item_id\": 1,\n          \"menu_item_id\": 42,\n          \"name\": \"Fries\",\n          \"image_url\": null,\n          \"quantity\": 2,\n          \"unit_price\": 3.50,\n          \"total_price\": 7.00,\n          \"is_mine\": true\n        },\n        {\n          \"cart_item_id\": 2,\n          \"menu_item_id\": 51,\n          \"name\": \"Coke\",\n          \"image_url\": null,\n          \"quantity\": 1,\n          \"unit_price\": 5.50,\n          \"total_price\": 5.50,\n          \"is_mine\": true\n        }\n      ]\n    },\n    {\n      \"session_id\": 13,\n      \"customer_id\": 9,\n      \"is_me\": false,\n      \"name\": \"Sam Lee\",\n      \"item_count\": 1,\n      \"total_price\": 18.99,\n      \"items\": [\n        {\n          \"cart_item_id\": 3,\n          \"menu_item_id\": 42,\n          \"name\": \"4 Piece Chicken Box\",\n          \"image_url\": \"http://localhost:8000/media/menu-items/42/photo/abc123.jpg\",\n          \"quantity\": 1,\n          \"unit_price\": 18.99,\n          \"total_price\": 18.99,\n          \"is_mine\": false\n        }\n      ]\n    }\n  ],\n  \"summary\": {\n    \"item_count\": 4,\n    \"total_price\": 31.49\n  }\n}"
         },
         {
-          "name": "404 No Active Table",
-          "status": "Not Found",
-          "code": 404,
+          "name": "422 No Active Session",
+          "status": "Unprocessable Entity",
+          "code": 422,
           "header": [{ "key": "Content-Type", "value": "application/json" }],
           "body": "{\n  \"message\": \"No active table session found.\"\n}"
         },
@@ -223,27 +223,19 @@
       ]
     },
     {
-      "name": "Pay Now (Create Pending Order)",
+      "name": "Create Order Draft",
       "request": {
         "method": "POST",
         "header": [
           { "key": "Accept", "value": "application/json" },
-          { "key": "Content-Type", "value": "application/json" },
           { "key": "Authorization", "value": "Bearer {{customerToken}}" }
         ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"shared_items\": [\n    { \"cart_item_id\": 3, \"shared_between\": 3 },\n    { \"cart_item_id\": 7, \"shared_between\": 2 }\n  ]\n}",
-          "options": {
-            "raw": { "language": "json" }
-          }
-        },
         "url": {
-          "raw": "{{baseUrl}}/api/customer/table/order",
+          "raw": "{{baseUrl}}/api/customer/table/order/draft",
           "host": ["{{baseUrl}}"],
-          "path": ["api", "customer", "table", "order"]
+          "path": ["api", "customer", "table", "order", "draft"]
         },
-        "description": "Creates a pending order for the authenticated customer based on the current table cart, optionally splitting selected items across N people.\n\n- shared_items[].cart_item_id must belong to a session at the same table.\n- shared_items[].shared_between must be >= 2.\n- For each shared item: share = line_total / shared_between. If the item is the customer's own, they pay only `share` (instead of full); if it belongs to another person, `share` is added to the customer's bill.\n- Items not listed in shared_items are billed normally (full price for the customer's own items, ignored for others').\n- The created Order has payment_pending=true and status=pending."
+        "description": "Creates a draft order from the customer's own cart items. No request body required. Snapshots the customer's items at full price (no splitting). The order is linked to the authenticated customer via customer_id."
       },
       "response": [
         {
@@ -251,7 +243,61 @@
           "status": "Created",
           "code": 201,
           "header": [{ "key": "Content-Type", "value": "application/json" }],
-          "body": "{\n  \"order\": {\n    \"id\": 101,\n    \"order_public_id\": \"ord-aB3xK9pQrS12\",\n    \"status\": \"pending\",\n    \"payment_pending\": true,\n    \"amount\": 16.49,\n    \"currency\": \"EUR\",\n    \"items_count\": 3,\n    \"table_scan_session_id\": 12,\n    \"vendor_id\": 1,\n    \"created_at\": \"2026-04-27T10:30:00+00:00\"\n  }\n}"
+          "body": "{\n  \"order\": {\n    \"id\": 101,\n    \"order_public_id\": \"ord-aB3xK9pQrS12\",\n    \"customer_id\": 7,\n    \"status\": \"draft\",\n    \"payment_pending\": true,\n    \"amount\": 12.50,\n    \"currency\": \"EUR\",\n    \"items_count\": 3,\n    \"table_scan_session_id\": 12,\n    \"vendor_id\": 1,\n    \"created_at\": \"2026-05-01T10:30:00+00:00\"\n  }\n}"
+        },
+        {
+          "name": "422 No Active Session",
+          "status": "Unprocessable Entity",
+          "code": 422,
+          "header": [{ "key": "Content-Type", "value": "application/json" }],
+          "body": "{\n  \"message\": \"No active table session found.\"\n}"
+        },
+        {
+          "name": "401 Unauthorized",
+          "status": "Unauthorized",
+          "code": 401,
+          "header": [{ "key": "Content-Type", "value": "application/json" }],
+          "body": "{\n  \"message\": \"Unauthenticated.\"\n}"
+        }
+      ]
+    },
+    {
+      "name": "Update Order",
+      "request": {
+        "method": "PUT",
+        "header": [
+          { "key": "Accept", "value": "application/json" },
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"id\": 101,\n  \"items_count\": 3,\n  \"items\": [\n    {\n      \"cart_item_id\": 1,\n      \"menu_item_id\": 42,\n      \"name\": \"Fries\",\n      \"quantity\": 2,\n      \"unit_price\": 3.50,\n      \"line_total\": 7.00,\n      \"is_mine\": true\n    }\n  ],\n  \"shared_items\": [\n    {\n      \"cart_item_id\": 3,\n      \"shared_between\": 2,\n      \"shared_between_ids\": [7, 9],\n      \"line_total\": 18.99,\n      \"is_mine\": false\n    }\n  ]\n}",
+          "options": {
+            "raw": { "language": "json" }
+          }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/customer/table/order/update",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "customer", "table", "order", "update"]
+        },
+        "description": "Update an existing draft order owned by the authenticated customer. Matched by id + customer_id. Accepts items_count, items, and shared_items. shared_items are validated: cart_item_ids must belong to the same table, shared_between_ids customers must also be at the table."
+      },
+      "response": [
+        {
+          "name": "200 OK",
+          "status": "OK",
+          "code": 200,
+          "header": [{ "key": "Content-Type", "value": "application/json" }],
+          "body": "{\n  \"order\": {\n    \"id\": 101,\n    \"order_public_id\": \"ord-aB3xK9pQrS12\",\n    \"customer_id\": 7,\n    \"status\": \"draft\",\n    \"payment_pending\": true,\n    \"amount\": 12.50,\n    \"currency\": \"EUR\",\n    \"items_count\": 3,\n    \"items\": [\n      {\n        \"cart_item_id\": 1,\n        \"menu_item_id\": 42,\n        \"name\": \"Fries\",\n        \"quantity\": 2,\n        \"unit_price\": 3.50,\n        \"line_total\": 7.00,\n        \"is_mine\": true\n      }\n    ],\n    \"shared_items\": [\n      {\n        \"cart_item_id\": 3,\n        \"shared_between\": 2,\n        \"shared_between_ids\": [7, 9],\n        \"line_total\": 18.99,\n        \"is_mine\": false\n      }\n    ],\n    \"table_scan_session_id\": 12,\n    \"vendor_id\": 1,\n    \"updated_at\": \"2026-05-01T10:32:00+00:00\"\n  }\n}"
+        },
+        {
+          "name": "404 Order Not Found",
+          "status": "Not Found",
+          "code": 404,
+          "header": [{ "key": "Content-Type", "value": "application/json" }],
+          "body": "{\n  \"message\": \"Order not found.\"\n}"
         },
         {
           "name": "422 Invalid Shared Item",
@@ -261,11 +307,50 @@
           "body": "{\n  \"message\": \"One or more shared cart items do not belong to this table.\",\n  \"invalid_cart_item_ids\": [99]\n}"
         },
         {
-          "name": "422 No Active Session",
+          "name": "422 Invalid Shared Customer",
           "status": "Unprocessable Entity",
           "code": 422,
           "header": [{ "key": "Content-Type", "value": "application/json" }],
-          "body": "{\n  \"message\": \"No active table session found.\"\n}"
+          "body": "{\n  \"message\": \"One or more shared_between_ids customers are not at this table.\",\n  \"invalid_customer_ids\": [55]\n}"
+        },
+        {
+          "name": "401 Unauthorized",
+          "status": "Unauthorized",
+          "code": 401,
+          "header": [{ "key": "Content-Type", "value": "application/json" }],
+          "body": "{\n  \"message\": \"Unauthenticated.\"\n}"
+        }
+      ]
+    },
+    {
+      "name": "Create Order Confirmed",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Accept", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/customer/table/order/confirmed",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "customer", "table", "order", "confirmed"]
+        },
+        "description": "Confirms the customer's latest draft order. No request body required. Calculates the final amount from the order's saved items and shared_items using the bill-splitting formula: sum all item line_totals, then for each shared_item (shared_between = N): share = line_total / N. If is_mine=true, subtract (N-1) × share; if is_mine=false, add share."
+      },
+      "response": [
+        {
+          "name": "200 OK",
+          "status": "OK",
+          "code": 200,
+          "header": [{ "key": "Content-Type", "value": "application/json" }],
+          "body": "{\n  \"order\": {\n    \"id\": 101,\n    \"order_public_id\": \"ord-aB3xK9pQrS12\",\n    \"customer_id\": 7,\n    \"status\": \"confirmed\",\n    \"payment_pending\": true,\n    \"amount\": 22.00,\n    \"currency\": \"EUR\",\n    \"items_count\": 3,\n    \"table_scan_session_id\": 12,\n    \"vendor_id\": 1,\n    \"created_at\": \"2026-05-01T10:30:00+00:00\"\n  }\n}"
+        },
+        {
+          "name": "404 No Draft Order",
+          "status": "Not Found",
+          "code": 404,
+          "header": [{ "key": "Content-Type", "value": "application/json" }],
+          "body": "{\n  \"message\": \"No draft order found.\"\n}"
         },
         {
           "name": "401 Unauthorized",

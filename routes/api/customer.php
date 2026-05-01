@@ -70,9 +70,11 @@ Route::middleware('auth:customer')->group(function () {
     Route::post('table/scan', [TableScanController::class, 'scan'])->name('table.scan');
     Route::post('table/pin', [TableScanController::class, 'pin'])->name('table.pin');
     Route::post('table/close', [TableScanController::class, 'close'])->name('table.close');
-    Route::get('table/order',  [CartController::class, 'tablePayment'])->name('table.order');
-    Route::post('table/order', [CartController::class, 'payNow'])->name('table.order.pay');
-    Route::get('table/history', [CartController::class, 'tableHistory'])->name('table.history');
+    Route::get('table/order/start',      [CartController::class, 'orderStart'])->name('table.order.start');
+    Route::post('table/order/draft',     [CartController::class, 'createOrderDraft'])->name('table.order.draft');
+    Route::put('table/order/update',     [CartController::class, 'updateOrder'])->name('table.order.update');
+    Route::post('table/order/confirmed', [CartController::class, 'createOrderConfirmed'])->name('table.order.confirmed');
+    Route::get('table/history',          [CartController::class, 'tableHistory'])->name('table.history');
 
     // Table cart
     Route::prefix('cart')->name('cart.')->group(function () {
