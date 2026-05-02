@@ -579,6 +579,36 @@ class CartController extends Controller
                     $row = $o->toArray();
                     unset($row['id']);
 
+                    $sharedMap = collect(is_array($row['shared_items'] ?? null) ? $row['shared_items'] : [])
+                        ->keyBy(fn ($s) => (int) ($s['cart_item_id'] ?? 0));
+
+                    $row['items'] = collect(is_array($row['items'] ?? null) ? $row['items'] : [])
+                        ->map(function ($item) use ($sharedMap) {
+                            $shared = $sharedMap->get((int) ($item['cart_item_id'] ?? 0));
+                            if (! $shared) {
+                                $item['shared'] = false;
+                                return $item;
+                            }
+
+                            $lineTotal = (float) ($item['line_total'] ?? $shared['line_total'] ?? 0);
+                            $splitBy   = max(2, (int) ($shared['shared_between'] ?? 2));
+                            $myShare   = isset($shared['my_share'])
+                                ? (float) $shared['my_share']
+                                : round($lineTotal / $splitBy, 2);
+                            $isMine    = (bool) ($shared['is_mine'] ?? ($item['is_mine'] ?? false));
+
+                            $item['is_mine']            = $isMine;
+                            $item['shared']             = true;
+                            $item['shared_between']     = $splitBy;
+                            $item['shared_between_ids'] = array_values(array_map('intval', $shared['shared_between_ids'] ?? []));
+                            $item['my_share']           = $myShare;
+                            $item['amount_billed']      = $myShare;
+
+                            return $item;
+                        })
+                        ->values()
+                        ->all();
+
                     return $row;
                 })->values(),
             ];
