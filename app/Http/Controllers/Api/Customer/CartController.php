@@ -266,8 +266,8 @@ class CartController extends Controller
      * POST /api/customer/table/order/draft
      *
      * Create a draft order from the customer's own cart items. No body required.
-     * Snapshots the customer's items at full price (no splitting).
-     * The order is linked to the authenticated customer via `customer_id`.
+     * Amount is computed live from owned cart_items at draft time. The order's
+     * final amount is recalculated on confirm to include any shared-into items.
      */
     public function createOrderDraft(Request $request): JsonResponse
     {
@@ -276,46 +276,26 @@ class CartController extends Controller
             return response()->json(['message' => 'No active table session found.'], 422);
         }
 
-        $myCartItems = CartItem::with('menuItem:id,name,price,image_url')
+        $myCartItems = CartItem::with('menuItem:id,name,price')
             ->where('table_scan_session_id', $mySession->id)
             ->get();
 
-        $myTotal     = 0.0;
-        $myItemCount = 0;
-        $myItems     = [];
-
+        $myTotal = 0.0;
         foreach ($myCartItems as $item) {
-            $unitPrice = $item->menuItem ? (float) $item->menuItem->price : 0.0;
-            $lineTotal = round($unitPrice * $item->quantity, 2);
-
-            $myTotal     += $lineTotal;
-            $myItemCount += $item->quantity;
-
-            $myItems[] = [
-                'cart_item_id'  => $item->id,
-                'menu_item_id'  => $item->menu_item_id,
-                'name'          => $item->menuItem?->name,
-                'image_url'     => $item->menuItem?->image_url,
-                'quantity'      => $item->quantity,
-                'unit_price'    => $unitPrice,
-                'line_total'    => $lineTotal,
-                'is_mine'       => true,
-                'shared'        => false,
-                'amount_billed' => $lineTotal,
-            ];
+            $unitPrice  = $item->menuItem ? (float) $item->menuItem->price : 0.0;
+            $lineTotal  = $unitPrice * $item->quantity;
+            $shareCount = 1 + count($item->order_ids ?? []);
+            $myTotal   += $lineTotal / $shareCount;
         }
-
         $myTotal = round($myTotal, 2);
 
-        $order = DB::transaction(function () use ($request, $mySession, $myTotal, $myItemCount, $myItems) {
+        DB::transaction(function () use ($request, $mySession, $myTotal) {
             return Order::create([
                 'order_public_id'       => 'ord-' . Str::random(12),
                 'customer_id'           => $request->user()->id,
                 'vendor_id'             => $mySession->vendor_id,
                 'table_scan_session_id' => $mySession->id,
                 'status'                => 'draft',
-                'items_count'           => $myItemCount,
-                'items'                 => $myItems,
                 'amount'                => $myTotal,
                 'currency'              => 'EUR',
                 'payment_pending'       => true,
@@ -324,43 +304,21 @@ class CartController extends Controller
             ]);
         });
 
-        return response()->json([
-            'order' => [
-                'id'                    => $order->id,
-                'order_public_id'       => $order->order_public_id,
-                'customer_id'           => $order->customer_id,
-                'status'                => $order->status,
-                'payment_pending'       => (bool) $order->payment_pending,
-                'amount'                => (float) $order->amount,
-                'currency'              => $order->currency,
-                'items_count'           => $order->items_count,
-                'table_scan_session_id' => $order->table_scan_session_id,
-                'vendor_id'             => $order->vendor_id,
-                'created_at'            => $order->created_at?->toIso8601String(),
-            ],
-        ], 201);
+        return response()->json($this->buildTableHistoryResponse($mySession), 201);
     }
 
     /**
      * PUT /api/customer/table/order/update/{order_id}
      *
-     * Update an existing order owned by the authenticated customer (matched by
-     * `order_id` path param + `customer_id`). The frontend may pass
-     * `items_count`, `items`, and `shared_items` — all optional, persisted
-     * as-is. `shared_items` is validated (the cart_item_ids must belong to
-     * the same table; the shared_between_ids customers must also be at the
-     * same table).
+     * Add the caller's order to the share list of someone else's cart_item.
+     * Body: { "shared_item": <cart_item_id> } where cart_item belongs to
+     * another customer at the same table. The caller's order_id is appended
+     * to that cart_item's order_ids JSON (deduplicated).
      */
     public function updateOrder(Request $request, int $order_id): JsonResponse
     {
         $data = Validator::make($request->all(), [
-            'items_count'                         => ['sometimes', 'integer', 'min:0'],
-            'items'                               => ['sometimes', 'array'],
-            'shared_items'                        => ['sometimes', 'array'],
-            'shared_items.*.cart_item_id'         => ['required_with:shared_items', 'integer'],
-            'shared_items.*.shared_between'       => ['required_with:shared_items', 'integer', 'min:2', 'max:99'],
-            'shared_items.*.shared_between_ids'   => ['sometimes', 'array'],
-            'shared_items.*.shared_between_ids.*' => ['integer'],
+            'shared_item' => ['required', 'integer'],
         ])->validate();
 
         $customerId = $request->user()->id;
@@ -380,86 +338,35 @@ class CartController extends Controller
 
         $sessionIds = $this->tableSessionIds($mySession);
 
-        if (! empty($data['shared_items'])) {
-            $sharedInput = collect($data['shared_items'])
-                ->keyBy(fn ($row) => (int) $row['cart_item_id']);
+        $cartItem = CartItem::where('id', $data['shared_item'])
+            ->whereIn('table_scan_session_id', $sessionIds)
+            ->first();
 
-            $validIds = CartItem::whereIn('table_scan_session_id', $sessionIds)
-                ->whereIn('id', $sharedInput->keys()->all())
-                ->pluck('id')
-                ->all();
-
-            $invalid = array_diff($sharedInput->keys()->all(), $validIds);
-            if (! empty($invalid)) {
-                return response()->json([
-                    'message' => 'One or more shared cart items do not belong to this table.',
-                    'invalid_cart_item_ids' => array_values($invalid),
-                ], 422);
-            }
-
-            $allCustomerIds = $sharedInput
-                ->flatMap(fn ($row) => $row['shared_between_ids'] ?? [])
-                ->map(fn ($id) => (int) $id)
-                ->unique()
-                ->values()
-                ->all();
-
-            if (! empty($allCustomerIds)) {
-                $tableCustomerIds = TableScanSession::whereIn('id', $sessionIds)
-                    ->pluck('customer_id')
-                    ->map(fn ($id) => (int) $id)
-                    ->all();
-
-                $invalidCustomers = array_values(array_diff($allCustomerIds, $tableCustomerIds));
-                if (! empty($invalidCustomers)) {
-                    return response()->json([
-                        'message' => 'One or more shared_between_ids customers are not at this table.',
-                        'invalid_customer_ids' => $invalidCustomers,
-                    ], 422);
-                }
-            }
+        if (! $cartItem) {
+            return response()->json([
+                'message' => 'Shared cart item does not belong to this table.',
+            ], 422);
         }
 
-        $update = array_intersect_key($data, array_flip(['items_count', 'items', 'shared_items']));
+        if ((int) $cartItem->table_scan_session_id === (int) $mySession->id) {
+            return response()->json([
+                'message' => 'You cannot share your own cart item with yourself.',
+            ], 422);
+        }
 
-        $order->update($update);
-        $order->refresh();
+        $existing = is_array($cartItem->order_ids) ? $cartItem->order_ids : [];
+        $existing = array_values(array_unique(array_map('intval', array_merge($existing, [$order->id]))));
+        $cartItem->update(['order_ids' => $existing]);
 
-        return response()->json([
-            'order' => [
-                'id'                    => $order->id,
-                'order_public_id'       => $order->order_public_id,
-                'customer_id'           => $order->customer_id,
-                'status'                => $order->status,
-                'payment_pending'       => (bool) $order->payment_pending,
-                'amount'                => (float) $order->amount,
-                'currency'              => $order->currency,
-                'items_count'           => $order->items_count,
-                'items'                 => $order->items,
-                'shared_items'          => $order->shared_items,
-                'table_scan_session_id' => $order->table_scan_session_id,
-                'vendor_id'             => $order->vendor_id,
-                'updated_at'            => $order->updated_at?->toIso8601String(),
-            ],
-        ]);
+        return response()->json($this->buildTableHistoryResponse($mySession));
     }
 
     /**
      * POST /api/customer/table/order/confirmed
      *
-     * Confirm the customer's latest draft order. No body required.
-     *
-     * Calculates the final amount using the order's saved `items` and
-     * `shared_items`:
-     *   - Sum every line_total from `items` (full price).
-     *   - For each entry in `shared_items` with `shared_between = N`:
-     *       share = line_total / N
-     *       - if the shared item is in MY cart (`is_mine = true`):
-     *           subtract (N - 1) × share from my total
-     *           (I keep paying only 1 share instead of the full line_total)
-     *       - if the shared item is in someone else's cart (`is_mine = false`):
-     *           add 1 × share to my total
-     *           (I owe my share for an item I didn't add to the cart)
+     * Confirm the customer's latest draft order. Recomputes the final amount
+     * from cart_items: owned items split by (1 + count(order_ids)), plus a
+     * share of every cart_item whose order_ids contains this order's id.
      */
     public function createOrderConfirmed(Request $request): JsonResponse
     {
@@ -474,61 +381,25 @@ class CartController extends Controller
             return response()->json(['message' => 'No draft order found.'], 404);
         }
 
-        $items       = is_array($order->items) ? $order->items : [];
-        $sharedItems = is_array($order->shared_items) ? $order->shared_items : [];
-
-        $total = 0.0;
-        foreach ($items as $line) {
-            $total += (float) ($line['line_total'] ?? 0);
+        $mySession = $this->activeSession($request);
+        if (! $mySession) {
+            return response()->json(['message' => 'No active table session found.'], 422);
         }
 
-        foreach ($sharedItems as $shared) {
-            $lineTotal = (float) ($shared['line_total'] ?? 0);
-            $splitBy   = max(2, (int) ($shared['shared_between'] ?? 2));
-            $share     = round($lineTotal / $splitBy, 2);
-            $isMine    = (bool) ($shared['is_mine'] ?? false);
-
-            if ($isMine) {
-                $total -= round(($splitBy - 1) * $share, 2);
-            } else {
-                $total += $share;
-            }
-        }
-
-        $total = round($total, 2);
+        $total = $this->computeOrderAmount($order, $mySession->id);
 
         $order->update([
             'status' => 'confirmed',
             'amount' => $total,
         ]);
-        $order->refresh();
 
-        return response()->json([
-            'order' => [
-                'id'                    => $order->id,
-                'order_public_id'       => $order->order_public_id,
-                'customer_id'           => $order->customer_id,
-                'status'                => $order->status,
-                'payment_pending'       => (bool) $order->payment_pending,
-                'amount'                => (float) $order->amount,
-                'currency'              => $order->currency,
-                'items_count'           => $order->items_count,
-                'table_scan_session_id' => $order->table_scan_session_id,
-                'vendor_id'             => $order->vendor_id,
-                'created_at'            => $order->created_at?->toIso8601String(),
-            ],
-        ]);
+        return response()->json($this->buildTableHistoryResponse($mySession));
     }
 
     /**
      * GET /api/customer/table/history
      *
-     * Returns a full history view of the customer's currently active table:
-     * - the current table + vendor + active session metadata
-     * - every active session at the same table (people), with `is_me`
-     * - for each person, every order they have placed during this table
-     *   session (full snapshot: items, shared_items, status, totals)
-     * - a table-wide summary (orders count + total amount across all people)
+     * Returns the unified table view (same shape as /draft, /update, /confirmed).
      */
     public function tableHistory(Request $request): JsonResponse
     {
@@ -537,6 +408,50 @@ class CartController extends Controller
             return response()->json(['message' => 'No active table session found.'], 422);
         }
 
+        return response()->json($this->buildTableHistoryResponse($mySession));
+    }
+
+    /**
+     * Compute the bill-split amount an order owes:
+     *   - For each cart_item owned by the order's session: line_total / (1 + count(order_ids))
+     *   - For each cart_item where this order's id is in order_ids: same per-share amount
+     */
+    private function computeOrderAmount(Order $order, int $ownerSessionId): float
+    {
+        $owned = CartItem::with('menuItem:id,price')
+            ->where('table_scan_session_id', $ownerSessionId)
+            ->get();
+
+        $sharedInto = CartItem::with('menuItem:id,price')
+            ->whereJsonContains('order_ids', $order->id)
+            ->where('table_scan_session_id', '!=', $ownerSessionId)
+            ->get();
+
+        $total = 0.0;
+
+        foreach ($owned as $item) {
+            $unitPrice  = $item->menuItem ? (float) $item->menuItem->price : 0.0;
+            $lineTotal  = $unitPrice * $item->quantity;
+            $shareCount = 1 + count($item->order_ids ?? []);
+            $total     += $lineTotal / $shareCount;
+        }
+
+        foreach ($sharedInto as $item) {
+            $unitPrice  = $item->menuItem ? (float) $item->menuItem->price : 0.0;
+            $lineTotal  = $unitPrice * $item->quantity;
+            $shareCount = 1 + count($item->order_ids ?? []);
+            $total     += $lineTotal / $shareCount;
+        }
+
+        return round($total, 2);
+    }
+
+    /**
+     * Build the unified table-view response: per-session people, with each
+     * person's orders enriched with computed items (owned + shared-into).
+     */
+    private function buildTableHistoryResponse(TableScanSession $mySession): array
+    {
         $sessions = TableScanSession::with([
             'customer:id,first_name,last_name',
             'restaurantTable:id,number,name',
@@ -547,22 +462,36 @@ class CartController extends Controller
             ->where('status', 'active')
             ->get();
 
-        $sessionIds = $sessions->pluck('id');
+        $sessionIds = $sessions->pluck('id')->all();
 
         $orders = Order::whereIn('table_scan_session_id', $sessionIds)
             ->orderBy('created_at')
             ->get()
             ->groupBy('table_scan_session_id');
 
+        $allCartItems = CartItem::with('menuItem:id,name,price,image_url')
+            ->whereIn('table_scan_session_id', $sessionIds)
+            ->get();
+
+        $ordersById = $orders->flatten()->keyBy('id');
+
+        $sessionCustomerNames = $sessions->mapWithKeys(fn (TableScanSession $s) => [
+            $s->id => $s->customer
+                ? trim($s->customer->first_name . ' ' . $s->customer->last_name)
+                : 'Guest',
+        ]);
+
         $tableTotal      = 0.0;
         $tableOrderCount = 0;
 
-        $people = $sessions->map(function (TableScanSession $s) use ($mySession, $orders, &$tableTotal, &$tableOrderCount) {
+        $people = $sessions->map(function (TableScanSession $s) use ($mySession, $orders, $allCartItems, $ordersById, $sessionCustomerNames, &$tableTotal, &$tableOrderCount) {
             $personOrders = $orders->get($s->id, collect());
             $personTotal  = (float) $personOrders->sum(fn (Order $o) => (float) $o->amount);
 
             $tableTotal      += $personTotal;
             $tableOrderCount += $personOrders->count();
+
+            $ownedCartItems = $allCartItems->where('table_scan_session_id', $s->id);
 
             return [
                 'session_id'   => $s->id,
@@ -575,41 +504,21 @@ class CartController extends Controller
                 'status'       => $s->status,
                 'orders_count' => $personOrders->count(),
                 'total_amount' => round($personTotal, 2),
-                'orders'       => $personOrders->map(function (Order $o) {
-                    $row = $o->toArray();
-                    unset($row['id']);
+                'orders'       => $personOrders->map(function (Order $o) use ($mySession, $allCartItems, $ownedCartItems, $ordersById, $sessionCustomerNames) {
+                    $sharedIntoItems = $allCartItems->filter(function (CartItem $ci) use ($o, $ownedCartItems) {
+                        if ($ownedCartItems->contains('id', $ci->id)) {
+                            return false;
+                        }
+                        $ids = is_array($ci->order_ids) ? $ci->order_ids : [];
+                        return in_array($o->id, array_map('intval', $ids), true);
+                    });
 
-                    $sharedMap = collect(is_array($row['shared_items'] ?? null) ? $row['shared_items'] : [])
-                        ->keyBy(fn ($s) => (int) ($s['cart_item_id'] ?? 0));
-
-                    $row['items'] = collect(is_array($row['items'] ?? null) ? $row['items'] : [])
-                        ->map(function ($item) use ($sharedMap) {
-                            $shared = $sharedMap->get((int) ($item['cart_item_id'] ?? 0));
-                            if (! $shared) {
-                                $item['shared'] = false;
-                                return $item;
-                            }
-
-                            $lineTotal = (float) ($item['line_total'] ?? $shared['line_total'] ?? 0);
-                            $splitBy   = max(2, (int) ($shared['shared_between'] ?? 2));
-                            $myShare   = isset($shared['my_share'])
-                                ? (float) $shared['my_share']
-                                : round($lineTotal / $splitBy, 2);
-                            $isMine    = (bool) ($shared['is_mine'] ?? ($item['is_mine'] ?? false));
-
-                            $item['is_mine']            = $isMine;
-                            $item['shared']             = true;
-                            $item['shared_between']     = $splitBy;
-                            $item['shared_between_ids'] = array_values(array_map('intval', $shared['shared_between_ids'] ?? []));
-                            $item['my_share']           = $myShare;
-                            $item['amount_billed']      = $myShare;
-
-                            return $item;
-                        })
+                    $itemRows = $ownedCartItems->merge($sharedIntoItems)
+                        ->map(fn (CartItem $ci) => $this->cartItemPayload($ci, $o, $mySession, $ordersById, $sessionCustomerNames))
                         ->values()
                         ->all();
 
-                    return $row;
+                    return $this->orderPayload($o, $itemRows);
                 })->values(),
             ];
         })->values();
@@ -617,7 +526,7 @@ class CartController extends Controller
         $table  = $mySession->restaurantTable;
         $vendor = $mySession->vendor;
 
-        return response()->json([
+        return [
             'table' => $table ? [
                 'id'     => $table->id,
                 'number' => $table->number ?? null,
@@ -637,7 +546,87 @@ class CartController extends Controller
                 'orders_count' => $tableOrderCount,
                 'total_amount' => round($tableTotal, 2),
             ],
-        ]);
+        ];
+    }
+
+    /**
+     * Build the per-item row used inside an order's `items` array.
+     */
+    private function cartItemPayload(CartItem $ci, Order $order, TableScanSession $mySession, $ordersById = null, $sessionCustomerNames = null): array
+    {
+        $unitPrice = $ci->menuItem ? (float) $ci->menuItem->price : 0.0;
+        $lineTotal = round($unitPrice * $ci->quantity, 2);
+        $orderIds  = array_values(array_map('intval', is_array($ci->order_ids) ? $ci->order_ids : []));
+        $sharedBetween = 1 + count($orderIds);
+        $myShare   = round($lineTotal / $sharedBetween, 2);
+
+        $sharedWith = array_values(array_filter(array_map(function (int $oid) use ($ordersById, $sessionCustomerNames) {
+            if ($ordersById === null) {
+                return ['order_id' => $oid, 'customer_id' => null, 'customer_name' => null];
+            }
+            $o = $ordersById->get($oid);
+            if (! $o) {
+                return null;
+            }
+            return [
+                'order_id'      => $o->id,
+                'customer_id'   => $o->customer_id,
+                'customer_name' => $sessionCustomerNames?->get($o->table_scan_session_id, 'Guest') ?? 'Guest',
+            ];
+        }, $orderIds)));
+
+        return [
+            'cart_item_id'       => $ci->id,
+            'menu_item_id'       => $ci->menu_item_id,
+            'name'               => $ci->menuItem?->name,
+            'image_url'          => $ci->menuItem?->image_url,
+            'quantity'           => $ci->quantity,
+            'unit_price'         => $unitPrice,
+            'line_total'         => $lineTotal,
+            'is_mine'            => (int) $ci->table_scan_session_id === (int) $mySession->id,
+            'shared_between'     => $sharedBetween,
+            'shared_with'        => $sharedWith,
+            'my_share'           => $myShare,
+            'preparing_start_at' => $ci->preparing_start_at?->toIso8601String(),
+            'ready_at'           => $ci->ready_at?->toIso8601String(),
+        ];
+    }
+
+    /**
+     * Build the per-order dict (without its `items` array — that is computed by the caller).
+     */
+    private function orderPayload(Order $o, array $items): array
+    {
+        return [
+            'id'                    => $o->id,
+            'order_public_id'       => $o->order_public_id,
+            'customer_id'           => $o->customer_id,
+            'vendor_id'             => $o->vendor_id,
+            'table_scan_session_id' => $o->table_scan_session_id,
+            'status'                => $o->status,
+            'amount'                => (float) $o->amount,
+            'currency'              => $o->currency,
+            'order_number'          => $o->order_number,
+            'order_type'            => $o->order_type,
+            'table_number'          => $o->table_number,
+            'service_fee'           => (float) ($o->service_fee ?? 0),
+            'vat_amount'            => (float) ($o->vat_amount ?? 0),
+            'course'                => $o->course,
+            'payment_method'        => $o->payment_method,
+            'payment_pending'       => (bool) $o->payment_pending,
+            'payment_received'      => (bool) $o->payment_received,
+            'payment_confirmed_at'  => $o->payment_confirmed_at?->toIso8601String(),
+            'payment_note'          => $o->payment_note,
+            'transaction_id'        => $o->transaction_id,
+            'served_at'             => $o->served_at?->toIso8601String(),
+            'cancelled_at'          => $o->cancelled_at?->toIso8601String(),
+            'cancelled_reason'      => $o->cancelled_reason,
+            'waiter_confirmed'      => (bool) $o->waiter_confirmed,
+            'waiter_confirmed_at'   => $o->waiter_confirmed_at?->toIso8601String(),
+            'created_at'            => $o->created_at?->toIso8601String(),
+            'updated_at'            => $o->updated_at?->toIso8601String(),
+            'items'                 => $items,
+        ];
     }
 
     private function itemPayload(CartItem $item): array

@@ -66,10 +66,6 @@ class SeedController extends Controller
                 'vendor_id'       => $vendor->id,
                 'customer_id'     => $customer->id,
                 'status'          => $status,
-                'items_count'     => rand(1, 6),
-                'items'           => [
-                    ['name' => 'Demo Item', 'quantity' => rand(1, 3), 'price' => round($amount / rand(1, 3), 2)],
-                ],
                 'amount'          => round($amount, 2),
                 'currency'        => 'EUR',
                 'payment_method'  => ['cash', 'card', 'apple_pay'][rand(0, 2)],

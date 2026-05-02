@@ -132,104 +132,26 @@ class TableSessionFlowSeeder extends Seeder
         $guestCartPenne  = CartItem::create(['table_scan_session_id' => $sessionGuest->id, 'menu_item_id' => $penne->id,   'quantity' => 1]);
         $guestCartAperol = CartItem::create(['table_scan_session_id' => $sessionGuest->id, 'menu_item_id' => $aperol->id,  'quantity' => 1]);
 
-        // ── Step 5: Each customer creates a draft order from their cart ──────
+        // ── Step 5: Each customer creates a draft order ─────────────────────
 
-        $annaItems = [
-            $this->snapshot($annaCartCarbonara,  $carbonara),
-            $this->snapshot($annaCartBruschetta, $bruschetta),
-            $this->snapshot($annaCartProsecco,   $prosecco),
-        ];
+        $annaOrder  = $this->makeDraftOrder($anna->id,  $vendor->id, $sessionAnna->id);
+        $maxOrder   = $this->makeDraftOrder($max->id,   $vendor->id, $sessionMax->id);
+        $guestOrder = $this->makeDraftOrder($guest->id, $vendor->id, $sessionGuest->id);
 
-        $maxItems = [
-            $this->snapshot($maxCartPizza,    $pizza),
-            $this->snapshot($maxCartLemonade, $lemonade),
-            $this->snapshot($maxCartTiramisu, $tiramisu),
-        ];
-
-        $guestItems = [
-            $this->snapshot($guestCartPenne,  $penne),
-            $this->snapshot($guestCartAperol, $aperol),
-        ];
-
-        $annaOrder  = $this->makeDraftOrder($anna->id,  $vendor->id, $sessionAnna->id,  $annaItems);
-        $maxOrder   = $this->makeDraftOrder($max->id,   $vendor->id, $sessionMax->id,   $maxItems);
-        $guestOrder = $this->makeDraftOrder($guest->id, $vendor->id, $sessionGuest->id, $guestItems);
-
-        // ── Step 6: Add shared items via the order-update (edit) API ────────
+        // ── Step 6: Wire share relationships via cart_items.order_ids ───────
         //
         // Sharing scenario
         //  • Anna's Prosecco DOC  →  split between Anna + Max (2 people)
         //  • Max's Tiramisu       →  split between Anna + Max + Guest (3 people)
 
-        $proseccoLineTotal = round((float) $prosecco->price,   2); // 7.50
-        $tiramisuLineTotal = round((float) $tiramisu->price,   2); // 9.50
+        $annaCartProsecco->update(['order_ids' => [$maxOrder->id]]);
+        $maxCartTiramisu->update(['order_ids' => [$annaOrder->id, $guestOrder->id]]);
 
-        // Anna's order: Prosecco is hers (is_mine=true), Tiramisu is Max's (is_mine=false)
-        $annaShared = [
-            [
-                'cart_item_id'       => $annaCartProsecco->id,
-                'menu_item_id'       => $prosecco->id,
-                'name'               => $prosecco->name,
-                'line_total'         => $proseccoLineTotal,
-                'shared_between'     => 2,
-                'shared_between_ids' => [$anna->id, $max->id],
-                'is_mine'            => true,
-            ],
-            [
-                'cart_item_id'       => $maxCartTiramisu->id,
-                'menu_item_id'       => $tiramisu->id,
-                'name'               => $tiramisu->name,
-                'line_total'         => $tiramisuLineTotal,
-                'shared_between'     => 3,
-                'shared_between_ids' => [$anna->id, $max->id, $guest->id],
-                'is_mine'            => false,
-            ],
-        ];
+        // ── Step 7: Confirm each order ──────────────────────────────────────
 
-        // Max's order: Tiramisu is his (is_mine=true), Prosecco is Anna's (is_mine=false)
-        $maxShared = [
-            [
-                'cart_item_id'       => $maxCartTiramisu->id,
-                'menu_item_id'       => $tiramisu->id,
-                'name'               => $tiramisu->name,
-                'line_total'         => $tiramisuLineTotal,
-                'shared_between'     => 3,
-                'shared_between_ids' => [$anna->id, $max->id, $guest->id],
-                'is_mine'            => true,
-            ],
-            [
-                'cart_item_id'       => $annaCartProsecco->id,
-                'menu_item_id'       => $prosecco->id,
-                'name'               => $prosecco->name,
-                'line_total'         => $proseccoLineTotal,
-                'shared_between'     => 2,
-                'shared_between_ids' => [$anna->id, $max->id],
-                'is_mine'            => false,
-            ],
-        ];
-
-        // Guest's order: only chips in for Max's Tiramisu (is_mine=false)
-        $guestShared = [
-            [
-                'cart_item_id'       => $maxCartTiramisu->id,
-                'menu_item_id'       => $tiramisu->id,
-                'name'               => $tiramisu->name,
-                'line_total'         => $tiramisuLineTotal,
-                'shared_between'     => 3,
-                'shared_between_ids' => [$anna->id, $max->id, $guest->id],
-                'is_mine'            => false,
-            ],
-        ];
-
-        $annaOrder->update(['shared_items'  => $annaShared]);
-        $maxOrder->update(['shared_items'   => $maxShared]);
-        $guestOrder->update(['shared_items' => $guestShared]);
-
-        // ── Step 7: Confirm each order (mirrors createOrderConfirmed logic) ──
-
-        $annaFinal  = $this->calcConfirmed($annaItems,  $annaShared);
-        $maxFinal   = $this->calcConfirmed($maxItems,   $maxShared);
-        $guestFinal = $this->calcConfirmed($guestItems, $guestShared);
+        $annaFinal  = $this->calcOrderAmount($annaOrder->id,  $sessionAnna->id);
+        $maxFinal   = $this->calcOrderAmount($maxOrder->id,   $sessionMax->id);
+        $guestFinal = $this->calcOrderAmount($guestOrder->id, $sessionGuest->id);
 
         $annaOrder->update(['status'  => 'confirmed', 'amount' => $annaFinal]);
         $maxOrder->update(['status'   => 'confirmed', 'amount' => $maxFinal]);
@@ -247,65 +169,38 @@ class TableSessionFlowSeeder extends Seeder
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
-    /** Build the item snapshot array exactly as createOrderDraft does. */
-    private function snapshot(CartItem $cartItem, MenuItem $menuItem): array
+    /** Mirrors CartController::computeOrderAmount for seed-side parity. */
+    private function calcOrderAmount(int $orderId, int $ownerSessionId): float
     {
-        $unit      = (float) $menuItem->price;
-        $lineTotal = round($unit * $cartItem->quantity, 2);
+        $owned = CartItem::with('menuItem:id,price')
+            ->where('table_scan_session_id', $ownerSessionId)
+            ->get();
 
-        return [
-            'cart_item_id'  => $cartItem->id,
-            'menu_item_id'  => $menuItem->id,
-            'name'          => $menuItem->name,
-            'image_url'     => $menuItem->image_url,
-            'quantity'      => $cartItem->quantity,
-            'unit_price'    => $unit,
-            'line_total'    => $lineTotal,
-            'is_mine'       => true,
-            'shared'        => false,
-            'amount_billed' => $lineTotal,
-        ];
-    }
+        $sharedInto = CartItem::with('menuItem:id,price')
+            ->whereJsonContains('order_ids', $orderId)
+            ->where('table_scan_session_id', '!=', $ownerSessionId)
+            ->get();
 
-    /** Replicate the confirmed-amount calculation from createOrderConfirmed. */
-    private function calcConfirmed(array $items, array $sharedItems): float
-    {
         $total = 0.0;
-
-        foreach ($items as $line) {
-            $total += (float) ($line['line_total'] ?? 0);
-        }
-
-        foreach ($sharedItems as $shared) {
-            $lineTotal = (float) ($shared['line_total'] ?? 0);
-            $splitBy   = max(2, (int) ($shared['shared_between'] ?? 2));
-            $share     = round($lineTotal / $splitBy, 2);
-            $isMine    = (bool) ($shared['is_mine'] ?? false);
-
-            if ($isMine) {
-                $total -= round(($splitBy - 1) * $share, 2);
-            } else {
-                $total += $share;
-            }
+        foreach ($owned->merge($sharedInto) as $ci) {
+            $unit       = $ci->menuItem ? (float) $ci->menuItem->price : 0.0;
+            $lineTotal  = $unit * $ci->quantity;
+            $shareCount = 1 + count($ci->order_ids ?? []);
+            $total     += $lineTotal / $shareCount;
         }
 
         return round($total, 2);
     }
 
-    private function makeDraftOrder(int $customerId, int $vendorId, int $sessionId, array $items): Order
+    private function makeDraftOrder(int $customerId, int $vendorId, int $sessionId): Order
     {
-        $total = collect($items)->sum('line_total');
-        $count = collect($items)->sum('quantity');
-
         return Order::create([
             'order_public_id'       => 'ord-' . Str::random(12),
             'customer_id'           => $customerId,
             'vendor_id'             => $vendorId,
             'table_scan_session_id' => $sessionId,
             'status'                => 'draft',
-            'items_count'           => $count,
-            'items'                 => $items,
-            'amount'                => round((float) $total, 2),
+            'amount'                => 0,
             'currency'              => 'EUR',
             'payment_pending'       => true,
             'payment_received'      => false,

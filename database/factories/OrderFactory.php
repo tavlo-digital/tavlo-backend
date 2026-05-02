@@ -19,8 +19,6 @@ class OrderFactory extends Factory
             'customer_id'     => Customer::factory(),
             'vendor_id'       => Vendor::factory(),
             'status'          => 'completed',
-            'items_count'     => $this->faker->numberBetween(1, 5),
-            'items'           => [['name' => 'Test Item', 'qty' => 1, 'price' => 10.00]],
             'amount'          => $this->faker->randomFloat(2, 5, 100),
             'currency'        => 'EUR',
             'payment_method'  => 'card',

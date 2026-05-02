@@ -12,12 +12,18 @@ class CartItem extends Model
         'menu_item_id',
         'quantity',
         'notes',
+        'order_ids',
+        'preparing_start_at',
+        'ready_at',
     ];
 
     protected function casts(): array
     {
         return [
-            'quantity' => 'integer',
+            'quantity'           => 'integer',
+            'order_ids'          => 'array',
+            'preparing_start_at' => 'datetime',
+            'ready_at'           => 'datetime',
         ];
     }
 

@@ -35,8 +35,6 @@ class OrderManagementTest extends TestCase
             'order_public_id' => 'ord-' . uniqid(),
             'customer_id'     => $this->customer->id,
             'status'          => 'pending',
-            'items_count'     => 2,
-            'items'           => [['name' => 'Burger', 'qty' => 1, 'price' => 12.50]],
             'amount'          => 12.50,
             'currency'        => 'EUR',
             'payment_method'  => 'cash',
@@ -64,8 +62,6 @@ class OrderManagementTest extends TestCase
             'customer_id'     => $this->customer->id,
             'table_session_id'=> $session->id,
             'status'          => 'pending',
-            'items_count'     => 1,
-            'items'           => [['name' => 'Water', 'qty' => 1, 'price' => 3.00]],
             'amount'          => 3.00,
             'currency'        => 'EUR',
             'payment_method'  => 'cash',
@@ -175,8 +171,6 @@ class OrderManagementTest extends TestCase
             'order_public_id' => 'ord-other',
             'customer_id'     => $this->customer->id,
             'status'          => 'pending',
-            'items_count'     => 1,
-            'items'           => [],
             'amount'          => 10,
             'currency'        => 'EUR',
             'payment_method'  => 'cash',
@@ -291,7 +285,7 @@ class OrderManagementTest extends TestCase
     // PATCH /api/vendor/orders/{orderId}/ready
     // ----------------------------------------------------------------
 
-    public function test_mark_ready_sets_status_and_ready_at(): void
+    public function test_mark_ready_sets_status(): void
     {
         $order = $this->makeOrder();
 
@@ -301,7 +295,6 @@ class OrderManagementTest extends TestCase
             ->assertJsonPath('status', 'ready');
 
         $this->assertDatabaseHas('orders', ['id' => $order->id, 'status' => 'ready']);
-        $this->assertNotNull(Order::find($order->id)->ready_at);
     }
 
     public function test_mark_ready_requires_authentication(): void
@@ -325,7 +318,6 @@ class OrderManagementTest extends TestCase
             ->assertJsonPath('status', 'picked_up');
 
         $this->assertDatabaseHas('orders', ['id' => $order->id, 'status' => 'picked_up']);
-        $this->assertNotNull(Order::find($order->id)->picked_up_at);
     }
 
     public function test_mark_picked_up_requires_authentication(): void

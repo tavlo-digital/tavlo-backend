@@ -73,7 +73,6 @@ class CustomerController extends Controller
                     'vendor' => $o->vendor?->name ?? 'Unknown',
                     'date' => $o->created_at->format('Y-m-d H:i'),
                     'status' => ucfirst($o->status),
-                    'items' => $o->items_count,
                     'amount' => '€' . number_format($o->amount, 2),
                 ]);
         }

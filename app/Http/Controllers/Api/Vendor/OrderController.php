@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\Vendor;
 
 use App\Http\Controllers\Controller;
+use App\Models\CartItem;
 use App\Models\Order;
 use App\Models\TableSession;
 use App\Models\Vendor;
@@ -146,16 +147,26 @@ class OrderController extends Controller
 
     /**
      * PATCH /api/orders/{orderId}/ready
+     *
+     * Marks the order as ready and stamps every linked cart_item with ready_at = now().
+     * Linked = owned by the order's session OR order's id is in cart_item.order_ids.
      */
     public function markReady(Request $request, string $orderId): JsonResponse
     {
         $order = $this->resolveOrder($orderId);
         $this->authorizeVendor($request, $order->vendor);
 
-        $order->update([
-            'status'   => 'ready',
-            'ready_at' => now(),
-        ]);
+        $now = now();
+
+        if ($order->table_scan_session_id) {
+            CartItem::where('table_scan_session_id', $order->table_scan_session_id)
+                ->update(['ready_at' => $now]);
+        }
+
+        CartItem::whereJsonContains('order_ids', $order->id)
+            ->update(['ready_at' => $now]);
+
+        $order->update(['status' => 'ready']);
 
         return response()->json($this->formatOrder($order->fresh()->load('customer')));
     }
@@ -168,10 +179,7 @@ class OrderController extends Controller
         $order = $this->resolveOrder($orderId);
         $this->authorizeVendor($request, $order->vendor);
 
-        $order->update([
-            'status'       => 'picked_up',
-            'picked_up_at' => now(),
-        ]);
+        $order->update(['status' => 'picked_up']);
 
         return response()->json($this->formatOrder($order->fresh()->load('customer')));
     }
@@ -317,6 +325,12 @@ class OrderController extends Controller
         $total      = (float) $order->amount;
         $subtotal   = max(0, $total - $serviceFee - $vatAmount);
 
+        $linkedItems = $this->loadLinkedCartItems($order);
+        $itemsCount  = (int) $linkedItems->sum('quantity');
+        $readyAt     = $linkedItems->isNotEmpty() && $linkedItems->every(fn (CartItem $ci) => $ci->ready_at !== null)
+            ? $linkedItems->max(fn (CartItem $ci) => $ci->ready_at)
+            : null;
+
         // Display status bucket used by the UI tabs
         $rawStatus = $order->status;
         $displayStatus = match ($rawStatus) {
@@ -326,14 +340,12 @@ class OrderController extends Controller
             default                              => $rawStatus,
         };
 
-        // Pickup status for takeaway orders
-        $pickupStatus = match (true) {
-            $order->picked_up_at !== null            => 'picked-up',
-            $rawStatus === 'ready'                   => 'ready',
-            default                                  => 'pending',
+        $pickupStatus = match ($rawStatus) {
+            'picked_up' => 'picked-up',
+            'ready'     => 'ready',
+            default     => 'pending',
         };
 
-        // Build a timeline of significant events
         $timeline = [];
         if ($order->created_at) {
             $timeline[] = ['status' => 'received', 'timestamp' => $order->created_at->toISOString()];
@@ -341,18 +353,37 @@ class OrderController extends Controller
         if ($order->waiter_confirmed_at) {
             $timeline[] = ['status' => 'confirmed', 'timestamp' => $order->waiter_confirmed_at->toISOString()];
         }
-        if ($order->ready_at) {
-            $timeline[] = ['status' => 'ready', 'timestamp' => $order->ready_at->toISOString()];
+        if ($readyAt) {
+            $timeline[] = ['status' => 'ready', 'timestamp' => $readyAt->toISOString()];
         }
         if ($order->served_at) {
             $timeline[] = ['status' => 'served', 'timestamp' => $order->served_at->toISOString()];
         }
-        if ($order->picked_up_at) {
-            $timeline[] = ['status' => 'picked-up', 'timestamp' => $order->picked_up_at->toISOString()];
-        }
         if ($order->cancelled_at) {
             $timeline[] = ['status' => 'cancelled', 'timestamp' => $order->cancelled_at->toISOString()];
         }
+
+        $items = $linkedItems->map(function (CartItem $ci) use ($order) {
+            $unitPrice  = $ci->menuItem ? (float) $ci->menuItem->price : 0.0;
+            $lineTotal  = round($unitPrice * $ci->quantity, 2);
+            $orderIds   = array_values(array_map('intval', is_array($ci->order_ids) ? $ci->order_ids : []));
+            $sharedBetween = 1 + count($orderIds);
+
+            return [
+                'cartItemId'         => $ci->id,
+                'menuItemId'         => $ci->menu_item_id,
+                'name'               => $ci->menuItem?->name,
+                'imageUrl'           => $ci->menuItem?->image_url,
+                'quantity'           => $ci->quantity,
+                'notes'              => $ci->notes,
+                'unitPrice'          => $unitPrice,
+                'lineTotal'          => $lineTotal,
+                'sharedBetween'      => $sharedBetween,
+                'sharedWithOrderIds' => $orderIds,
+                'preparingStartAt'   => $ci->preparing_start_at?->toISOString(),
+                'readyAt'            => $ci->ready_at?->toISOString(),
+            ];
+        })->values()->all();
 
         return [
             'id'                 => (string) $order->id,
@@ -362,8 +393,6 @@ class OrderController extends Controller
             'tableNumber'        => $order->table_number,
             'tableScanSessionId' => $order->table_scan_session_id ? (string) $order->table_scan_session_id : null,
             'course'             => $order->course,
-            'guestCount'         => $order->guest_count,
-            'numPeople'          => $order->guest_count,
             'waiterConfirmed'    => (bool) $order->waiter_confirmed,
             'waiterConfirmedAt'  => $order->waiter_confirmed_at?->toISOString(),
             'customer' => $order->customer ? [
@@ -378,9 +407,8 @@ class OrderController extends Controller
             'status'             => $rawStatus,
             'displayStatus'      => $displayStatus,
             'pickupStatus'       => $pickupStatus,
-            'itemsCount'         => $order->items_count,
-            'items'              => $order->items ?? [],
-            'sharedItems'        => $order->shared_items ?? [],
+            'itemsCount'         => $itemsCount,
+            'items'              => $items,
             'amount'             => $total,
             'total'              => $total,
             'subtotal'           => $subtotal,
@@ -392,8 +420,7 @@ class OrderController extends Controller
             'paymentReceived'    => (bool) $order->payment_received,
             'paymentConfirmedAt' => $order->payment_confirmed_at?->toISOString(),
             'paymentNote'        => $order->payment_note,
-            'readyAt'            => $order->ready_at?->toISOString(),
-            'pickedUpAt'         => $order->picked_up_at?->toISOString(),
+            'readyAt'            => $readyAt?->toISOString(),
             'servedAt'           => $order->served_at?->toISOString(),
             'cancelledAt'        => $order->cancelled_at?->toISOString(),
             'cancelledReason'    => $order->cancelled_reason,
@@ -401,6 +428,22 @@ class OrderController extends Controller
             'createdAt'          => $order->created_at->toISOString(),
             'updatedAt'          => $order->updated_at->toISOString(),
         ];
+    }
+
+    /**
+     * Load every cart_item linked to an order: owned by the order's session
+     * (if any) plus any cart_item whose order_ids JSON contains the order id.
+     */
+    private function loadLinkedCartItems(Order $order)
+    {
+        return CartItem::with('menuItem:id,name,price,image_url')
+            ->where(function ($q) use ($order) {
+                if ($order->table_scan_session_id) {
+                    $q->where('table_scan_session_id', $order->table_scan_session_id);
+                }
+                $q->orWhereJsonContains('order_ids', $order->id);
+            })
+            ->get();
     }
 
     private function resolveVendor(string $vendorId): Vendor
