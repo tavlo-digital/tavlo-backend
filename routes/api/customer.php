@@ -72,7 +72,7 @@ Route::middleware('auth:customer')->group(function () {
     Route::post('table/close', [TableScanController::class, 'close'])->name('table.close');
     Route::get('table/order/start',      [CartController::class, 'orderStart'])->name('table.order.start');
     Route::post('table/order/draft',     [CartController::class, 'createOrderDraft'])->name('table.order.draft');
-    Route::put('table/order/update',     [CartController::class, 'updateOrder'])->name('table.order.update');
+    Route::put('table/order/update/{order_id}', [CartController::class, 'updateOrder'])->name('table.order.update');
     Route::post('table/order/confirmed', [CartController::class, 'createOrderConfirmed'])->name('table.order.confirmed');
     Route::get('table/history',          [CartController::class, 'tableHistory'])->name('table.history');
 

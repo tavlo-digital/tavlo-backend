@@ -19,6 +19,7 @@ class DatabaseSeeder extends Seeder
         $this->call(CustomerSeeder::class);
         $this->call(CustomerDataSeeder::class);
         $this->call(MenuSeeder::class);
+        $this->call(TableSessionFlowSeeder::class);
 
         $adminRole = Role::where('name', 'admin')->first();
 

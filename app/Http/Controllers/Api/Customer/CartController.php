@@ -342,18 +342,18 @@ class CartController extends Controller
     }
 
     /**
-     * PUT /api/customer/table/order/update
+     * PUT /api/customer/table/order/update/{order_id}
      *
      * Update an existing order owned by the authenticated customer (matched by
-     * `id` + `customer_id`). The frontend may pass `items_count`, `items`, and
-     * `shared_items` — these are persisted as-is. `shared_items` is validated
-     * (the cart_item_ids must belong to the same table; the shared_between_ids
-     * customers must also be at the same table).
+     * `order_id` path param + `customer_id`). The frontend may pass
+     * `items_count`, `items`, and `shared_items` — all optional, persisted
+     * as-is. `shared_items` is validated (the cart_item_ids must belong to
+     * the same table; the shared_between_ids customers must also be at the
+     * same table).
      */
-    public function updateOrder(Request $request): JsonResponse
+    public function updateOrder(Request $request, int $order_id): JsonResponse
     {
         $data = Validator::make($request->all(), [
-            'id'                                  => ['required', 'integer'],
             'items_count'                         => ['sometimes', 'integer', 'min:0'],
             'items'                               => ['sometimes', 'array'],
             'shared_items'                        => ['sometimes', 'array'],
@@ -365,7 +365,7 @@ class CartController extends Controller
 
         $customerId = $request->user()->id;
 
-        $order = Order::where('id', $data['id'])
+        $order = Order::where('id', $order_id)
             ->where('customer_id', $customerId)
             ->first();
 
