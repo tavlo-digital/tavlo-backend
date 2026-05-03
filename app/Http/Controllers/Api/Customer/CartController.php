@@ -493,6 +493,26 @@ class CartController extends Controller
 
             $ownedCartItems = $allCartItems->where('table_scan_session_id', $s->id);
 
+            $latestOrder = $personOrders->last();
+            $orderPayload = null;
+
+            if ($latestOrder) {
+                $sharedIntoItems = $allCartItems->filter(function (CartItem $ci) use ($latestOrder, $ownedCartItems) {
+                    if ($ownedCartItems->contains('id', $ci->id)) {
+                        return false;
+                    }
+                    $ids = is_array($ci->order_ids) ? $ci->order_ids : [];
+                    return in_array($latestOrder->id, array_map('intval', $ids), true);
+                });
+
+                $itemRows = $ownedCartItems->merge($sharedIntoItems)
+                    ->map(fn(CartItem $ci) => $this->cartItemPayload($ci, $latestOrder, $mySession, $ordersById, $sessionCustomerNames))
+                    ->values()
+                    ->all();
+
+                $orderPayload = $this->orderPayload($latestOrder, $itemRows);
+            }
+
             return [
                 'session_id'   => $s->id,
                 'customer_id'  => $s->customer_id,
@@ -504,22 +524,7 @@ class CartController extends Controller
                 'status'       => $s->status,
                 'orders_count' => $personOrders->count(),
                 'total_amount' => round($personTotal, 2),
-                'orders'       => $personOrders->map(function (Order $o) use ($mySession, $allCartItems, $ownedCartItems, $ordersById, $sessionCustomerNames) {
-                    $sharedIntoItems = $allCartItems->filter(function (CartItem $ci) use ($o, $ownedCartItems) {
-                        if ($ownedCartItems->contains('id', $ci->id)) {
-                            return false;
-                        }
-                        $ids = is_array($ci->order_ids) ? $ci->order_ids : [];
-                        return in_array($o->id, array_map('intval', $ids), true);
-                    });
-
-                    $itemRows = $ownedCartItems->merge($sharedIntoItems)
-                        ->map(fn(CartItem $ci) => $this->cartItemPayload($ci, $o, $mySession, $ordersById, $sessionCustomerNames))
-                        ->values()
-                        ->all();
-
-                    return $this->orderPayload($o, $itemRows);
-                })->values(),
+                'order'        => $orderPayload,
             ];
         })->values();
 
