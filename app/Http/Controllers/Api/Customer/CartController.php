@@ -71,7 +71,7 @@ class CartController extends Controller
                 'name'        => $s->customer
                     ? trim($s->customer->first_name . ' ' . $s->customer->last_name)
                     : 'Guest',
-                'personal_items' => $s->cartItems->map(fn (CartItem $item) => $this->itemPayload($item)),
+                'personal_items' => $s->cartItems->map(fn(CartItem $item) => $this->itemPayload($item)),
             ];
         });
 
@@ -147,7 +147,7 @@ class CartController extends Controller
             return response()->json(['message' => 'Item not found.'], 404);
         }
 
-        $item->update(array_filter($data, fn ($v) => $v !== null));
+        $item->update(array_filter($data, fn($v) => $v !== null));
         $item->load('menuItem:id,name,price,image_url');
 
         return response()->json($this->itemPayload($item));
@@ -475,7 +475,7 @@ class CartController extends Controller
 
         $ordersById = $orders->flatten()->keyBy('id');
 
-        $sessionCustomerNames = $sessions->mapWithKeys(fn (TableScanSession $s) => [
+        $sessionCustomerNames = $sessions->mapWithKeys(fn(TableScanSession $s) => [
             $s->id => $s->customer
                 ? trim($s->customer->first_name . ' ' . $s->customer->last_name)
                 : 'Guest',
@@ -486,7 +486,7 @@ class CartController extends Controller
 
         $people = $sessions->map(function (TableScanSession $s) use ($mySession, $orders, $allCartItems, $ordersById, $sessionCustomerNames, &$tableTotal, &$tableOrderCount) {
             $personOrders = $orders->get($s->id, collect());
-            $personTotal  = (float) $personOrders->sum(fn (Order $o) => (float) $o->amount);
+            $personTotal  = (float) $personOrders->sum(fn(Order $o) => (float) $o->amount);
 
             $tableTotal      += $personTotal;
             $tableOrderCount += $personOrders->count();
@@ -514,7 +514,7 @@ class CartController extends Controller
                     });
 
                     $itemRows = $ownedCartItems->merge($sharedIntoItems)
-                        ->map(fn (CartItem $ci) => $this->cartItemPayload($ci, $o, $mySession, $ordersById, $sessionCustomerNames))
+                        ->map(fn(CartItem $ci) => $this->cartItemPayload($ci, $o, $mySession, $ordersById, $sessionCustomerNames))
                         ->values()
                         ->all();
 
