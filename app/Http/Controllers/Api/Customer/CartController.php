@@ -71,7 +71,10 @@ class CartController extends Controller
                 'name'        => $s->customer
                     ? trim($s->customer->first_name . ' ' . $s->customer->last_name)
                     : 'Guest',
-                'personal_items' => $s->cartItems->map(fn(CartItem $item) => $this->itemPayload($item)),
+                'personal_items' => $s->cartItems
+                    ->filter(fn(CartItem $item) => empty($item->order_ids))
+                    ->values()
+                    ->map(fn(CartItem $item) => $this->itemPayload($item)),
             ];
         });
 
@@ -110,12 +113,23 @@ class CartController extends Controller
             return response()->json(['message' => 'No active table session found.'], 422);
         }
 
-        $item = CartItem::create([
-            'table_scan_session_id' => $mySession->id,
-            'menu_item_id'          => $data['menu_item_id'],
-            'quantity'              => $data['quantity'] ?? 1,
-            'notes'                 => $data['notes'] ?? null,
-        ]);
+        $existing = CartItem::where('table_scan_session_id', $mySession->id)
+            ->where('menu_item_id', $data['menu_item_id'])
+            ->first();
+
+        if ($existing) {
+            $existing->update([
+                'quantity' => $existing->quantity + ($data['quantity'] ?? 1),
+            ]);
+            $item = $existing;
+        } else {
+            $item = CartItem::create([
+                'table_scan_session_id' => $mySession->id,
+                'menu_item_id'          => $data['menu_item_id'],
+                'quantity'              => $data['quantity'] ?? 1,
+                'notes'                 => $data['notes'] ?? null,
+            ]);
+        }
 
         $item->load('menuItem:id,name,price,image_url');
 
