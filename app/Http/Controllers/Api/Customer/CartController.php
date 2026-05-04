@@ -310,16 +310,21 @@ class CartController extends Controller
     /**
      * PUT /api/customer/table/order/update/{order_id}
      *
-     * Add the caller's order to the share list of someone else's cart_item.
-     * Body: { "shared_item": <cart_item_id> } where cart_item belongs to
-     * another customer at the same table. The caller's order_id is appended
-     * to that cart_item's order_ids JSON (deduplicated).
+     * Share or unshare a cart_item for the caller's order.
+     * - shared_item:   append caller's order_id to that cart_item's order_ids
+     * - unshared_item: remove  caller's order_id from that cart_item's order_ids (no-op if not present)
+     * At least one field must be provided.
      */
     public function updateOrder(Request $request, int $order_id): JsonResponse
     {
         $data = Validator::make($request->all(), [
-            'shared_item' => ['required', 'integer'],
+            'shared_item'   => ['nullable', 'integer'],
+            'unshared_item' => ['nullable', 'integer'],
         ])->validate();
+
+        if (empty($data['shared_item']) && empty($data['unshared_item'])) {
+            return response()->json(['message' => 'Provide shared_item or unshared_item.'], 422);
+        }
 
         $customerId = $request->user()->id;
 
@@ -338,25 +343,46 @@ class CartController extends Controller
 
         $sessionIds = $this->tableSessionIds($mySession);
 
-        $cartItem = CartItem::where('id', $data['shared_item'])
-            ->whereIn('table_scan_session_id', $sessionIds)
-            ->first();
+        if (! empty($data['shared_item'])) {
+            $cartItem = CartItem::where('id', $data['shared_item'])
+                ->whereIn('table_scan_session_id', $sessionIds)
+                ->first();
 
-        if (! $cartItem) {
-            return response()->json([
-                'message' => 'Shared cart item does not belong to this table.',
-            ], 422);
+            if (! $cartItem) {
+                return response()->json([
+                    'message' => 'Shared cart item does not belong to this table.',
+                ], 422);
+            }
+
+            if ((int) $cartItem->table_scan_session_id === (int) $mySession->id) {
+                return response()->json([
+                    'message' => 'You cannot share your own cart item with yourself.',
+                ], 422);
+            }
+
+            $existing = is_array($cartItem->order_ids) ? $cartItem->order_ids : [];
+            $existing = array_values(array_unique(array_map('intval', array_merge($existing, [$order->id]))));
+            $cartItem->update(['order_ids' => $existing]);
         }
 
-        if ((int) $cartItem->table_scan_session_id === (int) $mySession->id) {
-            return response()->json([
-                'message' => 'You cannot share your own cart item with yourself.',
-            ], 422);
-        }
+        if (! empty($data['unshared_item'])) {
+            $cartItem = CartItem::where('id', $data['unshared_item'])
+                ->whereIn('table_scan_session_id', $sessionIds)
+                ->first();
 
-        $existing = is_array($cartItem->order_ids) ? $cartItem->order_ids : [];
-        $existing = array_values(array_unique(array_map('intval', array_merge($existing, [$order->id]))));
-        $cartItem->update(['order_ids' => $existing]);
+            if (! $cartItem) {
+                return response()->json([
+                    'message' => 'Unshared cart item does not belong to this table.',
+                ], 422);
+            }
+
+            $existing = is_array($cartItem->order_ids) ? $cartItem->order_ids : [];
+            $filtered = array_values(array_filter(
+                array_map('intval', $existing),
+                fn(int $id) => $id !== $order->id
+            ));
+            $cartItem->update(['order_ids' => $filtered]);
+        }
 
         return response()->json($this->buildTableHistoryResponse($mySession));
     }
