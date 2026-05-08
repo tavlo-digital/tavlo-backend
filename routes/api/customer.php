@@ -5,6 +5,7 @@ use App\Http\Controllers\Api\Customer\AuthController;
 use App\Http\Controllers\Api\Customer\FavoriteController;
 use App\Http\Controllers\Api\Customer\LoyaltyController;
 use App\Http\Controllers\Api\Customer\OrderHistoryController;
+use App\Http\Controllers\Api\Customer\PaymentController;
 use App\Http\Controllers\Api\Customer\PrivacyController;
 use App\Http\Controllers\Api\Customer\ProfileController;
 use App\Http\Controllers\Api\Customer\ReservationController;
@@ -43,6 +44,9 @@ Route::post('social/login',    [AuthController::class, 'socialLogin'])->name('so
 
 // Public browsing (no auth required)
 Route::get('categories', [RestaurantController::class, 'allCategories'])->name('categories');
+
+// Stripe webhooks are authenticated by Stripe signature, not customer bearer auth.
+Route::post('payments/webhook', [PaymentController::class, 'webhook'])->name('payments.webhook');
 
 Route::prefix('restaurants')->name('restaurants.')->group(function () {
     Route::get('/',                                  [RestaurantController::class, 'index'])->name('index');
@@ -89,6 +93,10 @@ Route::middleware('auth:customer')->group(function () {
     Route::get('orders/restaurants',                      [OrderHistoryController::class, 'restaurants'])->name('orders.restaurants');
     Route::get('orders/restaurants/{vendorPublicId}',     [OrderHistoryController::class, 'vendorOrders'])->name('orders.vendor');
     Route::get('orders/{orderPublicId}',                  [OrderHistoryController::class, 'show'])->name('orders.show');
+
+    // Stripe Elements Payments
+    Route::post('payments/create-intent', [PaymentController::class, 'createIntent'])->name('payments.create-intent');
+    Route::get('payments/verify', [PaymentController::class, 'verify'])->name('payments.verify');
 
     // Reservations
     Route::get('reservations',                              [ReservationController::class, 'index'])->name('reservations.index');
