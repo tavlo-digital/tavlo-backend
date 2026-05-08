@@ -632,9 +632,28 @@ class CartController extends Controller
             'shared_between'     => $sharedBetween,
             'shared_with'        => $sharedWith,
             'my_share'           => $myShare,
+            'status'             => $this->cartItemStatus($ci),
             'preparing_start_at' => $ci->preparing_start_at?->toIso8601String(),
             'ready_at'           => $ci->ready_at?->toIso8601String(),
+            'served_at'          => $ci->served_at?->toIso8601String(),
         ];
+    }
+
+    private function cartItemStatus(CartItem $item): ?string
+    {
+        if ($item->served_at) {
+            return 'Served';
+        }
+
+        if ($item->ready_at) {
+            return 'Ready';
+        }
+
+        if ($item->preparing_start_at) {
+            return 'Preparing';
+        }
+
+        return null;
     }
 
     /**

@@ -6,6 +6,7 @@ use App\Models\CartItem;
 use App\Models\Customer;
 use App\Models\MenuItem;
 use App\Models\MenuCategory;
+use App\Models\Order;
 use App\Models\RestaurantTable;
 use App\Models\TableScanSession;
 use App\Models\Vendor;
@@ -292,5 +293,59 @@ class TableCartTest extends TestCase
             ->assertJsonPath('people.0.name', 'Alice Smith');
 
         $this->assertCount(1, $response->json('people.0.personal_items'));
+    }
+
+    public function test_table_history_items_include_status_from_preparation_timestamps(): void
+    {
+        $new = CartItem::create([
+            'table_scan_session_id' => $this->session->id,
+            'menu_item_id'          => $this->menuItem->id,
+            'quantity'              => 1,
+        ]);
+        $preparing = CartItem::create([
+            'table_scan_session_id' => $this->session->id,
+            'menu_item_id'          => $this->menuItem->id,
+            'quantity'              => 1,
+            'preparing_start_at'    => now(),
+        ]);
+        $ready = CartItem::create([
+            'table_scan_session_id' => $this->session->id,
+            'menu_item_id'          => $this->menuItem->id,
+            'quantity'              => 1,
+            'preparing_start_at'    => now()->subMinutes(5),
+            'ready_at'              => now(),
+        ]);
+        $served = CartItem::create([
+            'table_scan_session_id' => $this->session->id,
+            'menu_item_id'          => $this->menuItem->id,
+            'quantity'              => 1,
+            'preparing_start_at'    => now()->subMinutes(10),
+            'ready_at'              => now()->subMinutes(5),
+            'served_at'             => now(),
+        ]);
+
+        Order::create([
+            'order_public_id'       => 'ord-status-test',
+            'customer_id'           => $this->customer->id,
+            'vendor_id'             => $this->vendor->id,
+            'table_scan_session_id' => $this->session->id,
+            'status'                => 'confirmed',
+            'amount'                => 10,
+            'currency'              => 'EUR',
+            'order_type'            => 'dine-in',
+        ]);
+
+        $response = $this->withHeaders($this->headers)
+            ->getJson('/api/customer/table/history');
+
+        $response->assertOk();
+
+        $items = collect($response->json('people.0.order.items'))->keyBy('cart_item_id');
+
+        $this->assertNull($items[$new->id]['status']);
+        $this->assertSame('Preparing', $items[$preparing->id]['status']);
+        $this->assertSame('Ready', $items[$ready->id]['status']);
+        $this->assertSame('Served', $items[$served->id]['status']);
+        $this->assertSame($served->fresh()->served_at->toIso8601String(), $items[$served->id]['served_at']);
     }
 }
