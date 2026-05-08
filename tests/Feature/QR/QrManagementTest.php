@@ -5,6 +5,7 @@ namespace Tests\Feature\QR;
 use App\Models\Customer;
 use App\Models\Order;
 use App\Models\RestaurantTable;
+use App\Models\TableScanSession;
 use App\Models\Vendor;
 use App\Models\VendorTakeawayQr;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -73,16 +74,25 @@ class QrManagementTest extends TestCase
     {
         $table    = $this->makeTable(3);
         $customer = Customer::factory()->create();
+        $session = TableScanSession::create([
+            'vendor_id'            => $this->vendor->id,
+            'restaurant_table_id'  => $table->id,
+            'customer_id'          => $customer->id,
+            'pin'                  => '1234',
+            'status'               => 'active',
+            'scanned_at'           => now(),
+        ]);
 
         Order::create([
-            'order_public_id' => 'ORD-001',
-            'vendor_id'       => $this->vendor->id,
-            'customer_id'     => $customer->id,
-            'status'          => 'pending',
-            'table_number'    => '3',
-            'order_type'      => 'dine-in',
-            'amount'          => 25.00,
-            'currency'        => 'EUR',
+            'order_public_id'      => 'ORD-001',
+            'vendor_id'            => $this->vendor->id,
+            'customer_id'          => $customer->id,
+            'table_scan_session_id' => $session->id,
+            'status'               => 'pending',
+            'table_number'         => '3',
+            'order_type'           => 'dine-in',
+            'amount'               => 25.00,
+            'currency'             => 'EUR',
         ]);
 
         $response = $this->getJson("/api/vendor/{$this->vendor->id}/tables", $this->authHeaders());
@@ -95,17 +105,26 @@ class QrManagementTest extends TestCase
     {
         $table    = $this->makeTable(4);
         $customer = Customer::factory()->create();
+        $session = TableScanSession::create([
+            'vendor_id'            => $this->vendor->id,
+            'restaurant_table_id'  => $table->id,
+            'customer_id'          => $customer->id,
+            'pin'                  => '5678',
+            'status'               => 'active',
+            'scanned_at'           => now(),
+        ]);
 
         Order::create([
-            'order_public_id' => 'ORD-002',
-            'vendor_id'       => $this->vendor->id,
-            'customer_id'     => $customer->id,
-            'status'          => 'served',
-            'table_number'    => '4',
-            'order_type'      => 'dine-in',
-            'amount'          => 30.00,
-            'currency'        => 'EUR',
-            'payment_pending' => true,
+            'order_public_id'      => 'ORD-002',
+            'vendor_id'            => $this->vendor->id,
+            'customer_id'          => $customer->id,
+            'table_scan_session_id' => $session->id,
+            'status'               => 'served',
+            'table_number'         => '4',
+            'order_type'           => 'dine-in',
+            'amount'               => 30.00,
+            'currency'             => 'EUR',
+            'payment_pending'      => true,
         ]);
 
         $response = $this->getJson("/api/vendor/{$this->vendor->id}/tables", $this->authHeaders());

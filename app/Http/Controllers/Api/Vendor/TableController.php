@@ -5,6 +5,8 @@ namespace App\Http\Controllers\Api\Vendor;
 use App\Http\Controllers\Controller;
 use App\Models\Order;
 use App\Models\RestaurantTable;
+use App\Models\TableScanSession;
+use App\Models\TeamMember;
 use App\Models\Vendor;
 use App\Models\VendorTakeawayQr;
 use Illuminate\Http\JsonResponse;
@@ -23,28 +25,27 @@ class TableController extends Controller
 
         $tables = $vendor->restaurantTables()->orderBy('number')->get();
 
-        // Preload active/unpaid table numbers in two queries (no N+1)
-        $activeNumbers = Order::where('vendor_id', $vendor->id)
-            ->whereIn('status', ['pending', 'confirmed', 'preparing', 'ready'])
-            ->whereNotNull('table_number')
-            ->pluck('table_number')
-            ->map(fn ($n) => (int) $n)
+        $activeTableIds = TableScanSession::where('vendor_id', $vendor->id)
+            ->where('status', 'active')
+            ->pluck('restaurant_table_id')
+            ->map(fn ($id) => (int) $id)
             ->unique()
             ->flip()
             ->all();
 
-        $unpaidNumbers = Order::where('vendor_id', $vendor->id)
-            ->where('status', 'served')
-            ->where('payment_pending', true)
-            ->whereNotNull('table_number')
-            ->pluck('table_number')
-            ->map(fn ($n) => (int) $n)
+        $unpaidTableIds = TableScanSession::where('table_scan_sessions.vendor_id', $vendor->id)
+            ->join('orders', 'orders.table_scan_session_id', '=', 'table_scan_sessions.id')
+            ->where('table_scan_sessions.status', 'active')
+            ->where('orders.payment_pending', true)
+            ->where('orders.payment_received', false)
+            ->pluck('table_scan_sessions.restaurant_table_id')
+            ->map(fn ($id) => (int) $id)
             ->unique()
             ->flip()
             ->all();
 
         $result = $tables->map(fn (RestaurantTable $t) =>
-            $this->formatTable($t, $this->deriveStatus($t->number, $activeNumbers, $unpaidNumbers))
+            $this->formatTable($t, $this->deriveStatus($t->id, $activeTableIds, $unpaidTableIds))
         );
 
         return response()->json($result);
@@ -154,6 +155,30 @@ class TableController extends Controller
     }
 
     /**
+     * POST /api/vendor/{vendorId}/tables/{tableId}/scan
+     */
+    public function recordScan(Request $request, string $vendorId, string $tableId): JsonResponse
+    {
+        $vendor = $this->resolveVendor($vendorId);
+        $table = $vendor->restaurantTables()->findOrFail($tableId);
+        $token = $request->query('token', $request->input('token'));
+
+        if (! $table->is_active || ($token && $token !== $table->qr_token)) {
+            return response()->json(['message' => 'This QR code is no longer valid'], 410);
+        }
+
+        $table->update(['last_scanned_at' => now()]);
+
+        return response()->json([
+            'message'     => 'Scan recorded',
+            'vendorId'    => $vendor->vendor_public_id,
+            'tableId'     => (string) $table->id,
+            'tableName'   => $table->name,
+            'tableNumber' => $table->number,
+        ]);
+    }
+
+    /**
      * GET /api/vendor/{vendorId}/tables/takeaway-qr
      */
     public function takeawayQR(Request $request, string $vendorId): JsonResponse
@@ -181,6 +206,28 @@ class TableController extends Controller
         ]);
 
         return response()->json($this->formatTakeawayQr($qr->fresh()));
+    }
+
+    /**
+     * POST /api/vendor/{vendorId}/takeaway/scan
+     */
+    public function recordTakeawayScan(Request $request, string $vendorId): JsonResponse
+    {
+        $vendor = $this->resolveVendor($vendorId);
+        $qr = VendorTakeawayQr::where('vendor_id', $vendor->id)->first();
+        $token = $request->query('token', $request->input('token'));
+
+        if (! $qr || ($token && $token !== $qr->qr_token)) {
+            return response()->json(['message' => 'This QR code is no longer valid'], 410);
+        }
+
+        $qr->update(['last_scanned_at' => now()]);
+
+        return response()->json([
+            'message'  => 'Scan recorded',
+            'vendorId' => $vendor->vendor_public_id,
+            'type'     => 'takeaway',
+        ]);
     }
 
     /**
@@ -230,6 +277,76 @@ class TableController extends Controller
         return response()->json($tables);
     }
 
+    /**
+     * POST /api/vendor/{vendorId}/tables/{tableId}/close-session
+     */
+    public function closeSession(Request $request, string $vendorId, string $tableId): JsonResponse
+    {
+        $vendor = $this->resolveVendor($vendorId);
+        $this->authorizeVendor($request, $vendor);
+
+        $data = $request->validate([
+            'force' => ['sometimes', 'boolean'],
+        ]);
+
+        $table = $vendor->restaurantTables()->findOrFail($tableId);
+
+        $sessions = TableScanSession::where('vendor_id', $vendor->id)
+            ->where('restaurant_table_id', $table->id)
+            ->where('status', 'active')
+            ->get();
+
+        if ($sessions->isEmpty()) {
+            return response()->json(['message' => 'No active table session found.'], 404);
+        }
+
+        $orders = Order::whereIn('table_scan_session_id', $sessions->pluck('id'))
+            ->where('status', '!=', 'cancelled')
+            ->get();
+
+        $total = round((float) $orders->sum(fn (Order $order) => (float) $order->amount), 2);
+        $paid = round((float) $orders
+            ->filter(fn (Order $order) => (bool) $order->payment_received)
+            ->sum(fn (Order $order) => (float) $order->amount), 2);
+        $remaining = round(max(0, $total - $paid), 2);
+        $cashPending = $orders
+            ->filter(fn (Order $order) => $order->payment_method === 'cash'
+                && (bool) $order->payment_pending
+                && ! (bool) $order->payment_received)
+            ->count();
+
+        if ($remaining > 0 && ! ($data['force'] ?? false)) {
+            return response()->json([
+                'message' => 'This table still has unpaid balances.',
+                'paymentSummary' => [
+                    'totalAmount'       => $total,
+                    'paidAmount'        => $paid,
+                    'remainingAmount'   => $remaining,
+                    'cashPendingOrders' => $cashPending,
+                    'ordersCount'       => $orders->count(),
+                ],
+            ], 409);
+        }
+
+        TableScanSession::whereIn('id', $sessions->pluck('id'))->update([
+            'status'    => 'closed',
+            'closed_at' => now(),
+        ]);
+
+        return response()->json([
+            'message' => 'Table session closed',
+            'table' => $this->formatTable($table->fresh(), 'idle'),
+            'closedSessionIds' => $sessions->pluck('id')->map(fn ($id) => (string) $id)->values(),
+            'paymentSummary' => [
+                'totalAmount'       => $total,
+                'paidAmount'        => $paid,
+                'remainingAmount'   => $remaining,
+                'cashPendingOrders' => $cashPending,
+                'ordersCount'       => $orders->count(),
+            ],
+        ]);
+    }
+
     // ----------------------------------------------------------------
     // Private helpers
     // ----------------------------------------------------------------
@@ -261,10 +378,10 @@ class TableController extends Controller
     }
 
     /** Derives status string from preloaded flip maps. */
-    private function deriveStatus(int $tableNumber, array $activeFlip, array $unpaidFlip): string
+    private function deriveStatus(int $tableId, array $activeFlip, array $unpaidFlip): string
     {
-        if (isset($activeFlip[$tableNumber])) return 'active';          // yellow
-        if (isset($unpaidFlip[$tableNumber])) return 'waiting_payment'; // red
+        if (isset($unpaidFlip[$tableId])) return 'waiting_payment'; // red
+        if (isset($activeFlip[$tableId])) return 'active';          // yellow
         return 'idle';                                                   // green
     }
 
@@ -295,7 +412,11 @@ class TableController extends Controller
     private function authorizeVendor(Request $request, Vendor $vendor): void
     {
         $user = $request->user();
-        if ($user && $user->getTable() === 'vendors' && $user->id !== $vendor->id) {
+        if ($user instanceof Vendor && $user->id !== $vendor->id) {
+            abort(403, 'Unauthorized');
+        }
+
+        if ($user instanceof TeamMember && $user->vendor_id !== $vendor->id) {
             abort(403, 'Unauthorized');
         }
     }

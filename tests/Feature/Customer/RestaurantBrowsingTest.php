@@ -85,8 +85,8 @@ class RestaurantBrowsingTest extends TestCase
         $response = $this->getJson("/api/customer/restaurants/{$this->vendor->vendor_public_id}");
 
         $response->assertOk()
-            ->assertJsonPath('restaurant.restaurant_name', 'Test Restaurant')
-            ->assertJsonStructure(['restaurant', 'avg_rating', 'review_count']);
+            ->assertJsonPath('restaurant_name', 'Test Restaurant')
+            ->assertJsonStructure(['vendor_public_id', 'restaurant_name', 'avg_rating', 'review_count']);
     }
 
     public function test_show_returns_404_for_invalid_id(): void

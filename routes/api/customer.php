@@ -85,6 +85,7 @@ Route::middleware('auth:customer')->group(function () {
     });
 
     // Order History
+    Route::get('orders/history',                          [OrderHistoryController::class, 'history'])->name('orders.history');
     Route::get('orders/restaurants',                      [OrderHistoryController::class, 'restaurants'])->name('orders.restaurants');
     Route::get('orders/restaurants/{vendorPublicId}',     [OrderHistoryController::class, 'vendorOrders'])->name('orders.vendor');
     Route::get('orders/{orderPublicId}',                  [OrderHistoryController::class, 'show'])->name('orders.show');

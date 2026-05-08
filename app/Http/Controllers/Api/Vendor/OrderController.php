@@ -5,10 +5,14 @@ namespace App\Http\Controllers\Api\Vendor;
 use App\Http\Controllers\Controller;
 use App\Models\CartItem;
 use App\Models\Order;
+use App\Models\RestaurantTable;
+use App\Models\TableScanSession;
 use App\Models\TableSession;
+use App\Models\TeamMember;
 use App\Models\Vendor;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 
 class OrderController extends Controller
 {
@@ -19,30 +23,41 @@ class OrderController extends Controller
     public function index(Request $request, string $vendorId): JsonResponse
     {
         $vendor = $this->resolveVendor($vendorId);
+        $this->authorizeVendor($request, $vendor);
 
         $statusFilter    = $request->query('status');
         $orderTypeFilter = $request->query('orderType');
 
-        // Dine-in: grouped by active sessions
-        $sessionsQuery = $vendor->tableSessions()
+        $activeScanSessions = TableScanSession::with([
+            'customer:id,first_name,last_name,email,phone,customer_public_id',
+            'restaurantTable:id,number,name',
+        ])
+            ->where('vendor_id', $vendor->id)
             ->where('status', 'active')
-            ->with([
-                'orders' => function ($q) use ($statusFilter) {
-                    $q->with('customer:id,name,email,phone,customer_public_id')
-                      ->orderBy('created_at');
-                    if ($statusFilter) {
-                        $q->where('status', $statusFilter);
-                    }
-                },
-            ]);
+            ->orderBy('scanned_at')
+            ->get();
 
-        $sessions = $sessionsQuery->get()->map(fn (TableSession $session) => $this->formatSession($session));
+        $ordersByScanSession = Order::with([
+            'customer:id,first_name,last_name,email,phone,customer_public_id',
+            'tableScanSession.restaurantTable:id,number,name',
+        ])
+            ->where('vendor_id', $vendor->id)
+            ->whereIn('table_scan_session_id', $activeScanSessions->pluck('id'))
+            ->when($statusFilter, fn ($q) => $q->where('status', $statusFilter))
+            ->orderBy('created_at')
+            ->get()
+            ->groupBy('table_scan_session_id');
+
+        $sessions = $activeScanSessions
+            ->groupBy('restaurant_table_id')
+            ->map(fn (Collection $group) => $this->formatTableScanSessionGroup($group, $ordersByScanSession))
+            ->values();
 
         // Takeaway / non-session orders
         $takeawayQuery = $vendor->orders()
             ->whereNull('table_scan_session_id')
             ->where('order_type', '!=', 'dine-in')
-            ->with('customer:id,name,email,phone,customer_public_id')
+            ->with('customer:id,first_name,last_name,email,phone,customer_public_id')
             ->orderByDesc('created_at');
 
         if ($statusFilter) {
@@ -72,8 +87,13 @@ class OrderController extends Controller
             ->where(function ($q) use ($orderId) {
                 $q->where('order_public_id', $orderId)->orWhere('id', $orderId);
             })
-            ->with('customer:id,name,email,phone,customer_public_id')
+            ->with([
+                'customer:id,first_name,last_name,email,phone,customer_public_id',
+                'tableScanSession.restaurantTable:id,number,name',
+            ])
             ->firstOrFail();
+
+        $this->authorizeVendor($request, $vendor);
 
         return response()->json($this->formatOrder($order));
     }
@@ -172,6 +192,60 @@ class OrderController extends Controller
     }
 
     /**
+     * PATCH /api/vendor/orders/{orderId}/items/{cartItemId}
+     */
+    public function updateItemStatus(Request $request, string $orderId, string $cartItemId): JsonResponse
+    {
+        $order = $this->resolveOrder($orderId);
+        $this->authorizeVendor($request, $order->vendor);
+
+        $data = $request->validate([
+            'status' => ['required', 'string', 'in:new,preparing,ready,served'],
+        ]);
+
+        $this->authorizeItemStatus($request, $data['status']);
+
+        $item = $this->loadLinkedCartItems($order)
+            ->first(fn (CartItem $cartItem) => (string) $cartItem->id === (string) $cartItemId);
+
+        if (! $item) {
+            return response()->json(['message' => 'Cart item is not linked to this order.'], 404);
+        }
+
+        $now = now();
+
+        $updates = match ($data['status']) {
+            'new' => [
+                'preparing_start_at' => null,
+                'ready_at'           => null,
+                'served_at'          => null,
+            ],
+            'preparing' => [
+                'preparing_start_at' => $item->preparing_start_at ?? $now,
+                'ready_at'           => null,
+                'served_at'          => null,
+            ],
+            'ready' => [
+                'preparing_start_at' => $item->preparing_start_at ?? $now,
+                'ready_at'           => $item->ready_at ?? $now,
+                'served_at'          => null,
+            ],
+            'served' => [
+                'preparing_start_at' => $item->preparing_start_at ?? $now,
+                'ready_at'           => $item->ready_at ?? $now,
+                'served_at'          => $item->served_at ?? $now,
+            ],
+        };
+
+        $item->update($updates);
+        $this->syncOrderStatusFromCartItems($order);
+
+        return response()->json($this->formatOrder(
+            $order->fresh()->load(['customer', 'tableScanSession.restaurantTable'])
+        ));
+    }
+
+    /**
      * PATCH /api/orders/{orderId}/picked-up
      */
     public function markPickedUp(Request $request, string $orderId): JsonResponse
@@ -192,9 +266,19 @@ class OrderController extends Controller
         $order = $this->resolveOrder($orderId);
         $this->authorizeVendor($request, $order->vendor);
 
+        $now = now();
+
+        $this->loadLinkedCartItems($order)->each(function (CartItem $item) use ($now) {
+            $item->update([
+                'preparing_start_at' => $item->preparing_start_at ?? $now,
+                'ready_at'           => $item->ready_at ?? $now,
+                'served_at'          => $item->served_at ?? $now,
+            ]);
+        });
+
         $order->update([
             'status'    => 'served',
-            'served_at' => now(),
+            'served_at' => $now,
         ]);
 
         return response()->json($this->formatOrder($order->fresh()->load('customer')));
@@ -283,6 +367,69 @@ class OrderController extends Controller
     // Private helpers
     // ----------------------------------------------------------------
 
+    private function formatTableScanSessionGroup(Collection $scanSessions, Collection $ordersByScanSession): array
+    {
+        /** @var TableScanSession $first */
+        $first = $scanSessions->first();
+        $table = $first->restaurantTable;
+
+        $sessionIds = $scanSessions->pluck('id')->map(fn ($id) => (int) $id)->values();
+        $orders = $sessionIds
+            ->flatMap(fn (int $id) => $ordersByScanSession->get($id, collect()))
+            ->sortBy('created_at')
+            ->values();
+
+        $nonCancelled = $orders->where('status', '!=', 'cancelled');
+        $totalAmount = round((float) $nonCancelled->sum(fn (Order $order) => (float) $order->amount), 2);
+        $paidAmount = round((float) $nonCancelled
+            ->filter(fn (Order $order) => (bool) $order->payment_received)
+            ->sum(fn (Order $order) => (float) $order->amount), 2);
+
+        $hasCashPending = $nonCancelled->contains(
+            fn (Order $order) => $order->payment_method === 'cash'
+                && (bool) $order->payment_pending
+                && ! (bool) $order->payment_received
+        );
+
+        $paymentStatus = match (true) {
+            $totalAmount > 0 && $paidAmount >= $totalAmount => 'paid',
+            $paidAmount > 0 => 'partial',
+            $hasCashPending => 'cash_pending',
+            default => 'unpaid',
+        };
+
+        $kitchenSummary = [
+            'total'     => $orders->count(),
+            'pending'   => $orders->where('status', 'pending')->count(),
+            'draft'     => $orders->where('status', 'draft')->count(),
+            'confirmed' => $orders->where('status', 'confirmed')->count(),
+            'preparing' => $orders->where('status', 'preparing')->count(),
+            'ready'     => $orders->where('status', 'ready')->count(),
+            'served'    => $orders->where('status', 'served')->count(),
+            'cancelled' => $orders->where('status', 'cancelled')->count(),
+        ];
+
+        return [
+            'sessionId'      => 'table-' . ($table?->id ?? $first->restaurant_table_id),
+            'tableId'        => $table ? (string) $table->id : (string) $first->restaurant_table_id,
+            'sessionIds'     => $sessionIds->map(fn (int $id) => (string) $id)->all(),
+            'vendorId'       => (string) $first->vendor_id,
+            'tableNumber'    => $table?->number,
+            'tableName'      => $table?->name,
+            'status'         => 'active',
+            'guestCount'     => $scanSessions->count(),
+            'totalAmount'    => $totalAmount,
+            'paidAmount'     => $paidAmount,
+            'paymentStatus'  => $paymentStatus,
+            'cashPending'    => $hasCashPending,
+            'closedAt'       => null,
+            'kitchenSummary' => $kitchenSummary,
+            'orders'         => $orders->map(fn (Order $order) => $this->formatOrder($order))->values(),
+            'createdAt'      => $scanSessions->min('scanned_at')?->toISOString() ?? $first->created_at?->toISOString(),
+            'updatedAt'      => $scanSessions->max('updated_at')?->toISOString() ?? $first->updated_at?->toISOString(),
+        ];
+    }
+
     private function formatSession(TableSession $session): array
     {
         $orders = $session->orders ?? collect();
@@ -368,40 +515,61 @@ class OrderController extends Controller
             $lineTotal  = round($unitPrice * $ci->quantity, 2);
             $orderIds   = array_values(array_map('intval', is_array($ci->order_ids) ? $ci->order_ids : []));
             $sharedBetween = 1 + count($orderIds);
+            $itemStatus = $this->cartItemStatus($ci);
 
             return [
                 'cartItemId'         => $ci->id,
+                'cart_item_id'       => $ci->id,
                 'menuItemId'         => $ci->menu_item_id,
+                'menu_item_id'       => $ci->menu_item_id,
                 'name'               => $ci->menuItem?->name,
                 'imageUrl'           => $ci->menuItem?->image_url,
+                'image_url'          => $ci->menuItem?->image_url,
+                'category'           => strtolower((string) ($ci->menuItem?->category?->name ?? 'other')),
                 'quantity'           => $ci->quantity,
                 'notes'              => $ci->notes,
+                'specialInstructions'=> $ci->notes,
                 'unitPrice'          => $unitPrice,
+                'unit_price'         => $unitPrice,
+                'price'              => $unitPrice,
                 'lineTotal'          => $lineTotal,
+                'line_total'         => $lineTotal,
+                'status'             => $itemStatus,
                 'sharedBetween'      => $sharedBetween,
                 'sharedWithOrderIds' => $orderIds,
                 'preparingStartAt'   => $ci->preparing_start_at?->toISOString(),
+                'preparing_start_at' => $ci->preparing_start_at?->toISOString(),
                 'readyAt'            => $ci->ready_at?->toISOString(),
+                'ready_at'           => $ci->ready_at?->toISOString(),
+                'servedAt'           => $ci->served_at?->toISOString(),
+                'served_at'          => $ci->served_at?->toISOString(),
             ];
         })->values()->all();
+
+        $table = $order->tableScanSession?->restaurantTable;
+        $customerName = $order->customer
+            ? trim(($order->customer->first_name ?? '') . ' ' . ($order->customer->last_name ?? ''))
+            : null;
+        $customerName = $customerName !== '' ? $customerName : null;
 
         return [
             'id'                 => (string) $order->id,
             'orderPublicId'      => $order->order_public_id,
             'orderNumber'        => $order->order_number ?? $order->id,
             'orderType'          => $order->order_type ?? 'dine-in',
-            'tableNumber'        => $order->table_number,
+            'tableNumber'        => $order->table_number ?? $table?->number,
+            'tableId'            => $table ? (string) $table->id : null,
             'tableScanSessionId' => $order->table_scan_session_id ? (string) $order->table_scan_session_id : null,
             'course'             => $order->course,
             'waiterConfirmed'    => (bool) $order->waiter_confirmed,
             'waiterConfirmedAt'  => $order->waiter_confirmed_at?->toISOString(),
             'customer' => $order->customer ? [
                 'id'    => (string) $order->customer->id,
-                'name'  => $order->customer->name,
+                'name'  => $customerName,
                 'email' => $order->customer->email,
                 'phone' => $order->customer->phone,
             ] : null,
-            'customerName'       => $order->customer?->name,
+            'customerName'       => $customerName,
             'customerPhone'      => $order->customer?->phone,
             'customerEmail'      => $order->customer?->email,
             'status'             => $rawStatus,
@@ -436,7 +604,7 @@ class OrderController extends Controller
      */
     private function loadLinkedCartItems(Order $order)
     {
-        return CartItem::with('menuItem:id,name,price,image_url')
+        return CartItem::with('menuItem:id,name,price,image_url,menu_category_id', 'menuItem.category:id,name')
             ->where(function ($q) use ($order) {
                 if ($order->table_scan_session_id) {
                     $q->where('table_scan_session_id', $order->table_scan_session_id);
@@ -457,7 +625,7 @@ class OrderController extends Controller
     {
         return Order::where('order_public_id', $orderId)
             ->orWhere('id', $orderId)
-            ->with('vendor')
+            ->with(['vendor', 'tableScanSession.restaurantTable'])
             ->firstOrFail();
     }
 
@@ -471,8 +639,81 @@ class OrderController extends Controller
     private function authorizeVendor(Request $request, Vendor $vendor): void
     {
         $user = $request->user();
-        if ($user && $user->getTable() === 'vendors' && $user->id !== $vendor->id) {
+
+        if ($user instanceof Vendor && $user->id !== $vendor->id) {
             abort(403, 'Unauthorized');
+        }
+
+        if ($user instanceof TeamMember && $user->vendor_id !== $vendor->id) {
+            abort(403, 'Unauthorized');
+        }
+    }
+
+    private function authorizeItemStatus(Request $request, string $status): void
+    {
+        $user = $request->user();
+
+        if (! $user instanceof TeamMember) {
+            return;
+        }
+
+        if ($user->role === 'kitchen' && ! in_array($status, ['new', 'preparing', 'ready'], true)) {
+            abort(403, 'Kitchen staff cannot mark items served.');
+        }
+
+        if ($user->role === 'waiter' && $status !== 'served') {
+            abort(403, 'Waiters can only mark items served.');
+        }
+    }
+
+    private function cartItemStatus(CartItem $item): string
+    {
+        if ($item->served_at) {
+            return 'served';
+        }
+
+        if ($item->ready_at) {
+            return 'ready';
+        }
+
+        if ($item->preparing_start_at) {
+            return 'in_progress';
+        }
+
+        return 'new';
+    }
+
+    private function syncOrderStatusFromCartItems(Order $order): void
+    {
+        $items = $this->loadLinkedCartItems($order);
+
+        if ($items->isEmpty() || $order->status === 'cancelled') {
+            return;
+        }
+
+        if ($items->every(fn (CartItem $item) => $item->served_at !== null)) {
+            $order->update([
+                'status'    => 'served',
+                'served_at' => $order->served_at ?? now(),
+            ]);
+            return;
+        }
+
+        if ($items->every(fn (CartItem $item) => $item->ready_at !== null || $item->served_at !== null)) {
+            $order->update(['status' => 'ready']);
+            return;
+        }
+
+        if ($items->contains(fn (CartItem $item) => $item->preparing_start_at !== null)) {
+            $order->update(['status' => 'preparing']);
+            return;
+        }
+
+        if (in_array($order->status, ['ready', 'preparing', 'served'], true)) {
+            $order->update([
+                'status'    => $order->waiter_confirmed ? 'confirmed' : 'pending',
+                'served_at' => null,
+            ]);
         }
     }
 }

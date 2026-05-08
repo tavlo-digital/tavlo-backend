@@ -55,16 +55,9 @@ class Order extends Model
         ];
     }
 
-    public function customer(): \Illuminate\Database\Eloquent\Relations\HasOneThrough
+    public function customer(): BelongsTo
     {
-        return $this->hasOneThrough(
-            Customer::class,
-            TableScanSession::class,
-            'id',                    // FK on table_scan_sessions referenced by orders.table_scan_session_id
-            'id',                    // FK on customers referenced by table_scan_sessions.customer_id
-            'table_scan_session_id', // local key on orders
-            'customer_id'            // local key on table_scan_sessions
-        );
+        return $this->belongsTo(Customer::class);
     }
 
     public function vendor(): BelongsTo

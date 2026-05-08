@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\Vendor;
 
 use App\Http\Controllers\Controller;
+use App\Models\TeamMember;
 use App\Models\Vendor;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -23,10 +24,10 @@ class AuthController extends Controller
 
         $vendor = Vendor::create($validated);
 
-        $token = $vendor->createToken('vendor-token', ['role:vendor'])->plainTextToken;
+        $token = $vendor->createToken('vendor-token', ['role:vendor', 'role:manager'])->plainTextToken;
 
         return response()->json([
-            'user'  => $vendor,
+            'user'  => $this->formatVendorUser($vendor),
             'token' => $token,
         ], 201);
     }
@@ -40,23 +41,46 @@ class AuthController extends Controller
 
         $vendor = Vendor::where('email', $request->email)->first();
 
-        if (! $vendor || ! Hash::check($request->password, $vendor->password)) {
+        if ($vendor && Hash::check($request->password, $vendor->password)) {
+            $token = $vendor->createToken('vendor-token', ['role:vendor', 'role:manager'])->plainTextToken;
+
+            return response()->json([
+                'user'  => $this->formatVendorUser($vendor),
+                'token' => $token,
+            ]);
+        }
+
+        $member = TeamMember::with('vendor')
+            ->where('email', $request->email)
+            ->where('status', 'active')
+            ->first();
+
+        if (! $member || ! $member->password || ! Hash::check($request->password, $member->password)) {
             throw ValidationException::withMessages([
                 'email' => ['The provided credentials are incorrect.'],
             ]);
         }
 
-        $token = $vendor->createToken('vendor-token', ['role:vendor'])->plainTextToken;
+        $token = $member->createToken('vendor-staff-token', [
+            'role:team_member',
+            "role:{$member->role}",
+        ])->plainTextToken;
 
         return response()->json([
-            'user'  => $vendor,
+            'user'  => $this->formatTeamMemberUser($member),
             'token' => $token,
         ]);
     }
 
     public function me(Request $request): JsonResponse
     {
-        return response()->json(['data' => $request->user()]);
+        $user = $request->user();
+
+        if ($user instanceof TeamMember) {
+            return response()->json(['data' => $this->formatTeamMemberUser($user->loadMissing('vendor'))]);
+        }
+
+        return response()->json(['data' => $this->formatVendorUser($user)]);
     }
 
     public function logout(Request $request): JsonResponse
@@ -64,5 +88,45 @@ class AuthController extends Controller
         $request->user()->currentAccessToken()->delete();
 
         return response()->json(['message' => 'Logged out.']);
+    }
+
+    private function formatVendorUser(Vendor $vendor): array
+    {
+        return [
+            'id'             => $vendor->id,
+            'vendorId'       => (string) $vendor->id,
+            'vendorPublicId' => $vendor->vendor_public_id,
+            'vendor_public_id' => $vendor->vendor_public_id,
+            'actorType'      => 'vendor',
+            'role'           => 'manager',
+            'name'           => $vendor->name,
+            'restaurantName' => $vendor->restaurant_name,
+            'country'        => $vendor->country,
+            'phone'          => $vendor->phone,
+            'email'          => $vendor->email,
+            'permissions'    => ['*'],
+            'created_at'     => $vendor->created_at?->toISOString(),
+        ];
+    }
+
+    private function formatTeamMemberUser(TeamMember $member): array
+    {
+        $vendor = $member->vendor;
+
+        return [
+            'id'             => $member->id,
+            'vendorId'       => $vendor ? (string) $vendor->id : null,
+            'vendorPublicId' => $vendor?->vendor_public_id,
+            'vendor_public_id' => $vendor?->vendor_public_id,
+            'actorType'      => 'team_member',
+            'role'           => $member->role,
+            'name'           => $member->name,
+            'restaurantName' => $vendor?->restaurant_name,
+            'country'        => $vendor?->country,
+            'phone'          => null,
+            'email'          => $member->email,
+            'permissions'    => $member->permissions ?? [],
+            'created_at'     => $member->created_at?->toISOString(),
+        ];
     }
 }

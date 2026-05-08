@@ -15,6 +15,7 @@ class CartItem extends Model
         'order_ids',
         'preparing_start_at',
         'ready_at',
+        'served_at',
     ];
 
     protected function casts(): array
@@ -24,6 +25,7 @@ class CartItem extends Model
             'order_ids'          => 'array',
             'preparing_start_at' => 'datetime',
             'ready_at'           => 'datetime',
+            'served_at'          => 'datetime',
         ];
     }
 

@@ -2,11 +2,15 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Model;
+use Illuminate\Foundation\Auth\User as Authenticatable;
+use Illuminate\Notifications\Notifiable;
 use Illuminate\Support\Str;
+use Laravel\Sanctum\HasApiTokens;
 
-class TeamMember extends Model
+class TeamMember extends Authenticatable
 {
+    use HasApiTokens, Notifiable;
+
     protected $table = 'team_members';
 
     protected $hidden = ['password', 'invitation_token'];
@@ -30,6 +34,7 @@ class TeamMember extends Model
             'permissions'  => 'array',
             'invited_at'   => 'datetime',
             'joined_at'    => 'datetime',
+            'password'     => 'hashed',
         ];
     }
 
@@ -44,13 +49,8 @@ class TeamMember extends Model
     public static function defaultPermissions(string $role): array
     {
         return match ($role) {
-            'manager' => [
-                'view_orders', 'manage_orders', 'view_menu', 'manage_menu',
-                'view_inventory', 'manage_inventory', 'view_reviews', 'manage_reviews',
-                'view_reservations', 'manage_reservations', 'view_analytics',
-            ],
-            'kitchen' => ['view_orders', 'manage_orders', 'view_menu', 'view_inventory'],
-            'waiter'  => ['view_orders', 'manage_orders', 'view_reservations', 'manage_reservations'],
+            'kitchen' => ['orders.view', 'orders.manage', 'orders.kitchen'],
+            'waiter'  => ['orders.view', 'orders.manage', 'tables.close'],
             default   => [],
         };
     }

@@ -24,9 +24,13 @@ use Illuminate\Support\Facades\Route;
 // Auth (public)
 Route::post('register', [AuthController::class, 'register'])->name('register');
 Route::post('login',    [AuthController::class, 'login'])->name('login');
+Route::get('team/invitations/{token}', [TeamController::class, 'invitation'])->name('team.invitations.show');
+Route::post('team/invitations/{token}/accept', [TeamController::class, 'acceptInvitation'])->name('team.invitations.accept');
+Route::post('{vendorId}/tables/{tableId}/scan', [TableController::class, 'recordScan'])->name('tables.scan');
+Route::post('{vendorId}/takeaway/scan', [TableController::class, 'recordTakeawayScan'])->name('takeaway.scan');
 
 // Authenticated vendor routes
-Route::middleware('auth:vendor')->group(function () {
+Route::middleware(['auth:vendor,team_member', 'vendor.staff.access'])->group(function () {
     Route::get('me',      [AuthController::class, 'me'])->name('me');
     Route::post('logout', [AuthController::class, 'logout'])->name('logout');
 
@@ -82,6 +86,7 @@ Route::middleware('auth:vendor')->group(function () {
     Route::patch('orders/{orderId}/confirm',                      [OrderController::class, 'confirm'])->name('orders.confirm');
     Route::patch('orders/{orderId}/confirm-cash',                 [OrderController::class, 'confirmCashPayment'])->name('orders.confirmCash');
     Route::patch('orders/{orderId}/ready',                        [OrderController::class, 'markReady'])->name('orders.ready');
+    Route::patch('orders/{orderId}/items/{cartItemId}',           [OrderController::class, 'updateItemStatus'])->name('orders.itemStatus');
     Route::patch('orders/{orderId}/picked-up',                    [OrderController::class, 'markPickedUp'])->name('orders.pickedUp');
     Route::patch('orders/{orderId}/served',                       [OrderController::class, 'markServed'])->name('orders.served');
     Route::patch('orders/{orderId}/cancel',                       [OrderController::class, 'cancel'])->name('orders.cancel');
@@ -126,10 +131,12 @@ Route::middleware('auth:vendor')->group(function () {
     Route::get('{vendorId}/tables/takeaway-qr',                   [TableController::class, 'takeawayQR'])->name('tables.takeawayQR');
     Route::post('{vendorId}/tables/takeaway-qr/refresh',          [TableController::class, 'refreshTakeawayQR'])->name('tables.refreshTakeawayQR');
     Route::post('{vendorId}/tables/sync',                         [TableController::class, 'sync'])->name('tables.sync');
+    Route::post('{vendorId}/tables/{tableId}/close-session',      [TableController::class, 'closeSession'])->name('tables.closeSession');
 
     // Team
     Route::get('{vendorId}/team',                                 [TeamController::class, 'index'])->name('team.index');
     Route::post('{vendorId}/team/invite',                         [TeamController::class, 'invite'])->name('team.invite');
+    Route::post('{vendorId}/team/{memberId}/resend',              [TeamController::class, 'resendInvite'])->name('team.resend');
     Route::patch('{vendorId}/team/{memberId}',                    [TeamController::class, 'update'])->name('team.update');
     Route::delete('{vendorId}/team/{memberId}',                   [TeamController::class, 'destroy'])->name('team.destroy');
 

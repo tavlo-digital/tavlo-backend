@@ -3,9 +3,14 @@
 namespace Tests\Feature\Customer;
 
 use App\Models\Customer;
+use App\Models\CartItem;
+use App\Models\MenuCategory;
+use App\Models\MenuItem;
 use App\Models\Order;
+use App\Models\RestaurantTable;
 use App\Models\Reservation;
 use App\Models\Review;
+use App\Models\TableScanSession;
 use App\Models\Vendor;
 use App\Models\VendorSetting;
 use App\Models\GdprRequest;
@@ -39,15 +44,39 @@ class CustomerFeaturesTest extends TestCase
         ];
     }
 
+    private function tableScanSession(?Customer $customer = null): TableScanSession
+    {
+        $table = RestaurantTable::create([
+            'vendor_id' => $this->vendor->id,
+            'number' => 1,
+            'name' => 'Table 1',
+            'qr_token' => RestaurantTable::generateQrToken(),
+            'is_active' => true,
+            'qr_created_at' => now(),
+        ]);
+
+        return TableScanSession::create([
+            'vendor_id' => $this->vendor->id,
+            'restaurant_table_id' => $table->id,
+            'customer_id' => ($customer ?? $this->customer)->id,
+            'pin' => '1234',
+            'status' => 'active',
+            'scanned_at' => now(),
+        ]);
+    }
+
     // ================================================================
     // ORDER HISTORY
     // ================================================================
 
     public function test_can_get_order_history_restaurants(): void
     {
+        $session = $this->tableScanSession();
+
         Order::factory()->create([
             'customer_id' => $this->customer->id,
             'vendor_id'   => $this->vendor->id,
+            'table_scan_session_id' => $session->id,
             'amount'      => 25.50,
         ]);
 
@@ -57,11 +86,108 @@ class CustomerFeaturesTest extends TestCase
             ->assertJsonCount(1);
     }
 
+    public function test_can_get_account_order_history_grouped_by_restaurant_with_paginated_orders(): void
+    {
+        $this->vendor->update([
+            'vendor_public_id' => 'REST-101',
+            'restaurant_name' => 'Bella Italia',
+        ]);
+        $this->vendor->vendorSetting()->update([
+            'currency' => 'USD',
+            'logo_url' => 'vendors/1/logo.png',
+        ]);
+
+        $category = MenuCategory::create([
+            'vendor_id' => $this->vendor->id,
+            'name' => 'Mains',
+            'slug' => 'mains',
+            'is_active' => true,
+            'sort_order' => 1,
+        ]);
+
+        $menuItem = MenuItem::create([
+            'vendor_id' => $this->vendor->id,
+            'menu_category_id' => $category->id,
+            'name' => 'Tonkotsu Ramen',
+            'price' => 16.24,
+            'image_url' => 'menu-items/42/photo.png',
+            'is_active' => true,
+            'available' => true,
+        ]);
+
+        $session = $this->tableScanSession();
+        CartItem::create([
+            'table_scan_session_id' => $session->id,
+            'menu_item_id' => $menuItem->id,
+            'quantity' => 1,
+            'notes' => null,
+        ]);
+
+        $first = Order::factory()->create([
+            'order_public_id' => 'ord-aB3xK9pQrS12',
+            'order_number' => 'ORD-8801',
+            'customer_id' => $this->customer->id,
+            'vendor_id' => $this->vendor->id,
+            'table_scan_session_id' => $session->id,
+            'order_type' => 'dine-in',
+            'payment_received' => true,
+            'payment_pending' => false,
+            'payment_method' => 'card',
+            'service_fee' => 0,
+            'vat_amount' => 4,
+            'amount' => 24.24,
+            'currency' => 'USD',
+            'created_at' => now()->subDay(),
+        ]);
+
+        Order::factory()->create([
+            'customer_id' => $this->customer->id,
+            'vendor_id' => $this->vendor->id,
+            'table_scan_session_id' => $session->id,
+            'payment_received' => true,
+            'payment_pending' => false,
+            'amount' => 10,
+            'currency' => 'USD',
+            'created_at' => now(),
+        ]);
+
+        $response = $this->getJson('/api/customer/orders/history?per_page=1&page=2', $this->headers);
+
+        $response->assertOk()
+            ->assertJsonPath('history.0.restaurant_public_id', 'REST-101')
+            ->assertJsonPath('history.0.restaurant_name', 'Bella Italia')
+            ->assertJsonPath('history.0.currency', 'USD')
+            ->assertJsonPath('history.0.orders_count', 2)
+            ->assertJsonPath('history.0.total_spent', 34.24)
+            ->assertJsonPath('history.0.orders.0.order_id', 'ORD-8801')
+            ->assertJsonPath('history.0.orders.0.order_public_id', $first->order_public_id)
+            ->assertJsonPath('history.0.orders.0.payment_status', 'paid')
+            ->assertJsonPath('history.0.orders.0.payment_method', 'card')
+            ->assertJsonPath('history.0.orders.0.items_count', 1)
+            ->assertJsonPath('history.0.orders.0.subtotal', 20.24)
+            ->assertJsonPath('history.0.orders.0.vat', 4)
+            ->assertJsonPath('history.0.orders.0.total_amount', 24.24)
+            ->assertJsonPath('history.0.orders.0.items.0.name', 'Tonkotsu Ramen')
+            ->assertJsonPath('history.0.orders.0.items.0.quantity', 1)
+            ->assertJsonPath('history.0.orders.0.items.0.unit_price', 16.24)
+            ->assertJsonPath('history.0.pagination.current_page', 2)
+            ->assertJsonPath('history.0.pagination.per_page', 1)
+            ->assertJsonPath('history.0.pagination.total', 2)
+            ->assertJsonPath('history.0.pagination.last_page', 2)
+            ->assertJsonPath('history.0.pagination.has_more', false)
+            ->assertJsonPath('summary.restaurants_count', 1)
+            ->assertJsonPath('summary.orders_count', 2)
+            ->assertJsonPath('summary.total_spent', 34.24);
+    }
+
     public function test_can_get_vendor_orders(): void
     {
+        $session = $this->tableScanSession();
+
         Order::factory()->count(3)->create([
             'customer_id' => $this->customer->id,
             'vendor_id'   => $this->vendor->id,
+            'table_scan_session_id' => $session->id,
         ]);
 
         $response = $this->getJson(
@@ -75,9 +201,67 @@ class CustomerFeaturesTest extends TestCase
 
     public function test_can_get_single_order(): void
     {
+        $this->vendor->update([
+            'vendor_public_id' => 'REST-101',
+            'restaurant_name' => 'Bella Italia',
+        ]);
+        $this->vendor->vendorSetting()->update([
+            'currency' => 'USD',
+            'logo_url' => 'vendors/1/logo.png',
+        ]);
+
+        $category = MenuCategory::create([
+            'vendor_id' => $this->vendor->id,
+            'name' => 'Drinks',
+            'slug' => 'drinks',
+            'is_active' => true,
+            'sort_order' => 1,
+        ]);
+        $ramen = MenuItem::create([
+            'vendor_id' => $this->vendor->id,
+            'menu_category_id' => $category->id,
+            'name' => 'Tonkotsu Ramen',
+            'price' => 16.24,
+            'is_active' => true,
+            'available' => true,
+        ]);
+        $latte = MenuItem::create([
+            'vendor_id' => $this->vendor->id,
+            'menu_category_id' => $category->id,
+            'name' => 'Matcha Latte',
+            'price' => 8.00,
+            'is_active' => true,
+            'available' => true,
+        ]);
+
+        $session = $this->tableScanSession();
+        CartItem::create([
+            'table_scan_session_id' => $session->id,
+            'menu_item_id' => $ramen->id,
+            'quantity' => 1,
+            'notes' => null,
+        ]);
+        CartItem::create([
+            'table_scan_session_id' => $session->id,
+            'menu_item_id' => $latte->id,
+            'quantity' => 1,
+            'notes' => null,
+        ]);
+
         $order = Order::factory()->create([
+            'order_number' => 'ORD-8842',
             'customer_id' => $this->customer->id,
             'vendor_id'   => $this->vendor->id,
+            'table_scan_session_id' => $session->id,
+            'status' => 'delivered',
+            'order_type' => 'dine-in',
+            'payment_received' => true,
+            'payment_pending' => false,
+            'payment_method' => 'card',
+            'service_fee' => 0,
+            'vat_amount' => 4,
+            'amount' => 24.24,
+            'currency' => 'USD',
         ]);
 
         $response = $this->getJson(
@@ -86,15 +270,37 @@ class CustomerFeaturesTest extends TestCase
         );
 
         $response->assertOk()
-            ->assertJsonPath('order_public_id', $order->order_public_id);
+            ->assertJsonPath('order_id', 'ORD-8842')
+            ->assertJsonPath('order_public_id', $order->order_public_id)
+            ->assertJsonPath('restaurant.restaurant_public_id', 'REST-101')
+            ->assertJsonPath('restaurant.restaurant_name', 'Bella Italia')
+            ->assertJsonPath('status', 'delivered')
+            ->assertJsonPath('order_type', 'dine-in')
+            ->assertJsonPath('payment_status', 'paid')
+            ->assertJsonPath('payment_method', 'card')
+            ->assertJsonPath('items.0.menu_item_id', $ramen->id)
+            ->assertJsonPath('items.0.name', 'Tonkotsu Ramen')
+            ->assertJsonPath('items.0.quantity', 1)
+            ->assertJsonPath('items.0.unit_price', 16.24)
+            ->assertJsonPath('items.0.line_total', 16.24)
+            ->assertJsonPath('items.1.menu_item_id', $latte->id)
+            ->assertJsonPath('items.1.name', 'Matcha Latte')
+            ->assertJsonPath('items.1.unit_price', 8)
+            ->assertJsonPath('totals.subtotal', 20.24)
+            ->assertJsonPath('totals.vat', 4)
+            ->assertJsonPath('totals.service_fee', 0)
+            ->assertJsonPath('totals.total', 24.24)
+            ->assertJsonPath('totals.currency', 'USD');
     }
 
     public function test_cannot_view_other_customers_order(): void
     {
         $other = Customer::factory()->create();
+        $session = $this->tableScanSession($other);
         $order = Order::factory()->create([
             'customer_id' => $other->id,
             'vendor_id'   => $this->vendor->id,
+            'table_scan_session_id' => $session->id,
         ]);
 
         $this->getJson(
@@ -192,9 +398,11 @@ class CustomerFeaturesTest extends TestCase
 
     public function test_can_add_favorite(): void
     {
-        $response = $this->postJson('/api/customer/favorites', [
-            'vendor_public_id' => $this->vendor->vendor_public_id,
-        ], $this->headers);
+        $response = $this->postJson(
+            "/api/customer/favorites/{$this->vendor->vendor_public_id}/add",
+            [],
+            $this->headers
+        );
 
         $response->assertCreated();
 
@@ -218,7 +426,7 @@ class CustomerFeaturesTest extends TestCase
         $this->customer->favorites()->attach($this->vendor->id);
 
         $response = $this->deleteJson(
-            "/api/customer/favorites/{$this->vendor->vendor_public_id}",
+            "/api/customer/favorites/{$this->vendor->vendor_public_id}/delete",
             [],
             $this->headers
         );

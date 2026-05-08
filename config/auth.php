@@ -1,6 +1,7 @@
 <?php
 
 use App\Models\Customer;
+use App\Models\TeamMember;
 use App\Models\User;
 use App\Models\Vendor;
 
@@ -52,6 +53,10 @@ return [
             'driver' => 'sanctum',
             'provider' => 'vendors',
         ],
+        'team_member' => [
+            'driver' => 'sanctum',
+            'provider' => 'team_members',
+        ],
     ],
 
     /*
@@ -83,6 +88,10 @@ return [
         'vendors' => [
             'driver' => 'eloquent',
             'model' => Vendor::class,
+        ],
+        'team_members' => [
+            'driver' => 'eloquent',
+            'model' => TeamMember::class,
         ],
 
         // 'users' => [
