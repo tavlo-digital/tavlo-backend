@@ -92,9 +92,9 @@ class StripeConnectController extends Controller
 
         $status = $this->stripeService->getAccountStatus($settings->stripe_account_id);
 
-        // Sync onboarding completion status to DB
-        if ($status['onboarding_complete'] && ! $settings->stripe_onboarding_complete) {
-            $settings->update(['stripe_onboarding_complete' => true]);
+        // Two-way sync: set true when charges_enabled, clear if Stripe later deactivates it
+        if ($status['onboarding_complete'] !== (bool) $settings->stripe_onboarding_complete) {
+            $settings->update(['stripe_onboarding_complete' => $status['onboarding_complete']]);
         }
 
         return response()->json([
@@ -104,6 +104,35 @@ class StripeConnectController extends Controller
             'chargesEnabled'     => $status['charges_enabled'],
             'payoutsEnabled'     => $status['payouts_enabled'],
         ]);
+    }
+
+    /**
+     * POST /api/vendor/{vendorId}/stripe/disconnect
+     */
+    public function disconnect(Request $request, string $vendorId): JsonResponse
+    {
+        $vendor = $this->resolveVendor($vendorId);
+        $this->authorizeVendor($request, $vendor);
+
+        $settings = $vendor->vendorSetting;
+
+        if (! $settings?->stripe_account_id) {
+            return response()->json(['message' => 'No Stripe account is connected.'], 422);
+        }
+
+        try {
+            $this->stripeService->deleteAccount($settings->stripe_account_id);
+        } catch (\Exception $e) {
+            \Log::warning("Stripe account deletion failed for vendor {$vendor->id}: {$e->getMessage()}");
+        }
+
+        $settings->update([
+            'stripe_account_id'          => null,
+            'stripe_onboarding_complete' => false,
+            'stripe_enabled'             => false,
+        ]);
+
+        return response()->json(['message' => 'Stripe account disconnected successfully.']);
     }
 
     // ----------------------------------------------------------------

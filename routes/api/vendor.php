@@ -109,6 +109,7 @@ Route::middleware(['auth:vendor,team_member', 'vendor.staff.access'])->group(fun
     Route::post('{vendorId}/stripe/connect',                      [StripeConnectController::class, 'createAccount'])->name('stripe.connect');
     Route::post('{vendorId}/stripe/onboarding-link',              [StripeConnectController::class, 'createOnboardingLink'])->name('stripe.onboarding');
     Route::get('{vendorId}/stripe/status',                        [StripeConnectController::class, 'getStatus'])->name('stripe.status');
+    Route::post('{vendorId}/stripe/disconnect',                    [StripeConnectController::class, 'disconnect'])->name('stripe.disconnect');
 
     // Reviews
     Route::get('{vendorId}/complaints',                           [ReviewController::class, 'complaints'])->name('complaints');

@@ -63,12 +63,20 @@ class StripeConnectService
             'charges_enabled'     => $account->charges_enabled,
             'payouts_enabled'     => $account->payouts_enabled,
             'details_submitted'   => $account->details_submitted,
-            // The merchant has finished filling the onboarding form. We use
-            // details_submitted alone (not charges_enabled) because card_payments /
-            // transfers capabilities can stay "pending" for a while after onboarding,
-            // especially in test mode — Stripe still considers the account onboarded.
-            'onboarding_complete' => (bool) $account->details_submitted,
+            // charges_enabled is true only when Stripe has approved both card_payments
+            // and transfers capabilities. We require this (not just details_submitted)
+            // because transfer_data[destination] payments fail with an InvalidRequestException
+            // if transfers capability is pending, even after the form is submitted.
+            'onboarding_complete' => (bool) $account->charges_enabled,
         ];
+    }
+
+    /**
+     * Delete (disconnect) the connected Stripe Express account.
+     */
+    public function deleteAccount(string $stripeAccountId): void
+    {
+        $this->stripe()->accounts->delete($stripeAccountId);
     }
 
     private function stripe(): StripeClient

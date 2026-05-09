@@ -14,6 +14,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
+use Stripe\Exception\InvalidRequestException as StripeInvalidRequestException;
 use Stripe\Exception\SignatureVerificationException;
 use UnexpectedValueException;
 
@@ -132,12 +133,19 @@ class PaymentController extends Controller
             $metadata['table_session_id'] = (string) $order->table_scan_session_id;
         }
 
-        $intent = $this->stripe->createPaymentIntent(
-            $this->stripeAmountMinor($amount, $currency),
-            $currency,
-            $settings->stripe_account_id,
-            $metadata
-        );
+        try {
+            $intent = $this->stripe->createPaymentIntent(
+                $this->stripeAmountMinor($amount, $currency),
+                $currency,
+                $settings->stripe_account_id,
+                $metadata
+            );
+        } catch (StripeInvalidRequestException $e) {
+            \Log::error("Stripe payment intent failed for vendor {$order->vendor_id}: {$e->getMessage()}");
+            return response()->json([
+                'message' => 'Online payments are not available for this restaurant yet. Please pay on-site.',
+            ], 422);
+        }
 
         DB::transaction(function () use ($order, $customer, $settings, $intent, $amount, $currency, $metadata) {
             OrderPayment::create([
