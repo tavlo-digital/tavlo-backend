@@ -413,6 +413,36 @@ class VendorSettingsController extends Controller
     }
 
     /**
+     * POST /api/vendor/{vendorId}/settings/delete-account
+     */
+    public function deleteAccount(Request $request, string $vendorId): JsonResponse
+    {
+        $vendor = $this->resolveVendor($vendorId);
+        $this->authorizeVendor($request, $vendor);
+
+        $request->validate([
+            'password' => ['required', 'string'],
+        ]);
+
+        if (! \Hash::check($request->input('password'), $vendor->password)) {
+            return response()->json(['message' => 'The password you entered is incorrect.'], 422);
+        }
+
+        $vendor->tokens()->delete();
+
+        $vendor->update([
+            'status' => 'deactivated',
+            'live_status' => 'offline',
+        ]);
+
+        if ($vendor->vendorSetting) {
+            $vendor->vendorSetting->update(['is_live_and_discoverable' => false]);
+        }
+
+        return response()->json(['message' => 'Your account has been deactivated successfully.']);
+    }
+
+    /**
      * GET /api/vendor/{vendorId}/settings/export
      * Returns a JSON blob of vendor data for download.
      */

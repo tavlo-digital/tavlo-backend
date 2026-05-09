@@ -103,6 +103,7 @@ Route::middleware(['auth:vendor,team_member', 'vendor.staff.access'])->group(fun
     Route::post('{vendorId}/settings/logo',                       [VendorSettingsController::class, 'uploadLogo'])->name('settings.logo');
     Route::post('{vendorId}/settings/cover-photo',                [VendorSettingsController::class, 'uploadCoverPhoto'])->name('settings.coverPhoto');
     Route::get('{vendorId}/settings/export',                      [VendorSettingsController::class, 'exportData'])->name('settings.export');
+    Route::post('{vendorId}/settings/delete-account',                [VendorSettingsController::class, 'deleteAccount'])->name('settings.deleteAccount');
 
     // Stripe Connect
     Route::post('{vendorId}/stripe/connect',                      [StripeConnectController::class, 'createAccount'])->name('stripe.connect');
