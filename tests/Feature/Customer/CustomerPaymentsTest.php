@@ -87,6 +87,68 @@ class CustomerPaymentsTest extends TestCase
             ->assertUnauthorized();
     }
 
+    public function test_payment_methods_returns_on_site_and_connected_stripe(): void
+    {
+        $this->settings->update([
+            'accept_on_site' => true,
+            'stripe_enabled' => true,
+            'stripe_account_id' => 'acct_test_123',
+            'stripe_onboarding_complete' => true,
+        ]);
+
+        $this->getJson("/api/customer/payment-methods?restaurant_id={$this->vendor->vendor_public_id}")
+            ->assertOk()
+            ->assertJsonPath('method.on-site', true)
+            ->assertJsonPath('method.stripe', true);
+    }
+
+    public function test_payment_methods_resolves_restaurant_slug(): void
+    {
+        $this->settings->update([
+            'accept_on_site' => false,
+            'stripe_enabled' => true,
+            'stripe_account_id' => 'acct_test_123',
+            'stripe_onboarding_complete' => true,
+        ]);
+
+        $this->getJson("/api/customer/payment-methods?restaurant_id={$this->vendor->slug}")
+            ->assertOk()
+            ->assertJsonPath('method.on-site', false)
+            ->assertJsonPath('method.stripe', true);
+    }
+
+    public function test_payment_methods_hides_stripe_when_disabled_or_unconnected(): void
+    {
+        $this->settings->update([
+            'accept_on_site' => false,
+            'stripe_enabled' => false,
+            'stripe_account_id' => 'acct_test_123',
+            'stripe_onboarding_complete' => true,
+        ]);
+
+        $this->getJson("/api/customer/payment-methods?restaurant_id={$this->vendor->id}")
+            ->assertOk()
+            ->assertJsonPath('method.on-site', false)
+            ->assertJsonPath('method.stripe', false);
+
+        $this->settings->update([
+            'stripe_enabled' => true,
+            'stripe_account_id' => null,
+            'stripe_onboarding_complete' => true,
+        ]);
+
+        $this->getJson("/api/customer/payment-methods?restaurant_id={$this->vendor->id}")
+            ->assertOk()
+            ->assertJsonPath('method.stripe', false);
+    }
+
+    public function test_payment_methods_requires_restaurant_id(): void
+    {
+        $this->getJson('/api/customer/payment-methods')
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('restaurant_id');
+    }
+
     public function test_create_intent_rejects_another_customers_order(): void
     {
         $other = Customer::factory()->create();

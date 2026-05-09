@@ -7,6 +7,7 @@ use App\Models\Vendor;
 use App\Models\MenuCategory;
 use App\Models\MenuItem;
 use App\Models\RestaurantTable;
+use App\Models\VendorSetting;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -36,7 +37,7 @@ class RestaurantController extends Controller
     {
         $query = Vendor::whereHas('vendorSetting', fn ($q) => $q->where('is_live_and_discoverable', true))
             ->with([
-                'vendorSetting:id,vendor_id,logo_url,cover_photo_url,business_hours,currency,enable_reservations,loyalty_enabled,points_per_euro,accept_card,accept_cash',
+                'vendorSetting:id,vendor_id,logo_url,cover_photo_url,business_hours,currency,enable_reservations,loyalty_enabled,points_per_euro,accept_on_site,stripe_enabled,stripe_account_id,stripe_onboarding_complete',
                 'menuCategories' => fn ($q) => $q->where('is_active', true)->select('id', 'vendor_id', 'name', 'slug'),
                 'takeawayQr:id,vendor_id',
             ])
@@ -195,10 +196,7 @@ class RestaurantController extends Controller
                 'is_open'             => $isOpen,
                 'today_hours'         => $todayHours,
                 'business_hours'      => $businessHours ?: null,
-                'payment_methods'     => [
-                    'card' => (bool) $setting?->accept_card,
-                    'cash' => (bool) $setting?->accept_cash,
-                ],
+                'payment_methods'     => $this->paymentMethods($setting),
                 'loyalty'             => $setting?->loyalty_enabled ? [
                     'enabled'        => true,
                     'points_per_euro' => $setting->points_per_euro,
@@ -224,7 +222,7 @@ class RestaurantController extends Controller
         $vendor = Vendor::where('vendor_public_id', $vendorPublicId)
             ->whereHas('vendorSetting', fn ($q) => $q->where('is_live_and_discoverable', true))
             ->with([
-                'vendorSetting:id,vendor_id,logo_url,cover_photo_url,business_hours,currency,accept_card,accept_cash,enable_reservations,loyalty_enabled,points_per_euro',
+                'vendorSetting:id,vendor_id,logo_url,cover_photo_url,business_hours,currency,accept_on_site,stripe_enabled,stripe_account_id,stripe_onboarding_complete,enable_reservations,loyalty_enabled,points_per_euro',
                 'menuCategories' => fn ($q) => $q->where('is_active', true)->select('id', 'vendor_id', 'name'),
                 'takeawayQr:id,vendor_id',
             ])
@@ -286,10 +284,7 @@ class RestaurantController extends Controller
             'today_hours'      => $todayHours,
             'business_hours'   => $businessHours ?: null,
             'distance_km'      => $distanceKm,
-            'payment_methods'  => [
-                'card' => (bool) $setting->accept_card,
-                'cash' => (bool) $setting->accept_cash,
-            ],
+            'payment_methods'  => $this->paymentMethods($setting),
             'loyalty' => [
                 'enabled'        => (bool) $setting->loyalty_enabled,
                 'points_per_euro' => $setting->points_per_euro,
@@ -605,16 +600,7 @@ class RestaurantController extends Controller
             $businessHours = json_decode($businessHours, true) ?: [];
         }
 
-        $paymentMethods = [
-            'cash'          => (bool) ($setting?->accept_cash),
-            'card'          => (bool) ($setting?->accept_card),
-            'visa'          => (bool) ($setting?->accept_visa),
-            'mastercard'    => (bool) ($setting?->accept_mastercard),
-            'amex'          => (bool) ($setting?->accept_amex),
-            'apple_pay'     => (bool) ($setting?->accept_apple_pay),
-            'google_pay'    => (bool) ($setting?->accept_google_pay),
-            'bank_transfer' => (bool) ($setting?->accept_bank_transfer),
-        ];
+        $paymentMethods = $this->paymentMethods($setting);
 
         $contact = [];
         if ($setting?->show_phone_public ?? true) {
@@ -681,5 +667,17 @@ class RestaurantController extends Controller
             return false;
         }
         return $customer->favorites()->where('vendors.id', $vendorId)->exists();
+    }
+
+    private function paymentMethods(?VendorSetting $setting): array
+    {
+        return [
+            'on-site' => (bool) ($setting?->accept_on_site ?? true),
+            'stripe' => (bool) (
+                $setting?->stripe_enabled
+                && $setting->stripe_account_id
+                && $setting->stripe_onboarding_complete
+            ),
+        ];
     }
 }

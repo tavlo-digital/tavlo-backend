@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\CartItem;
 use App\Models\Order;
 use App\Models\OrderPayment;
+use App\Models\Vendor;
 use App\Services\StripePaymentService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
@@ -19,6 +20,41 @@ class PaymentController extends Controller
 {
     public function __construct(private readonly StripePaymentService $stripe)
     {
+    }
+
+    /**
+     * GET /api/customer/payment-methods?restaurant_id=...
+     */
+    public function methods(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'restaurant_id' => ['required', 'string', 'max:255'],
+        ]);
+
+        $restaurantId = $data['restaurant_id'];
+        $vendor = Vendor::with('vendorSetting')
+            ->where(function (Builder $query) use ($restaurantId) {
+                $query->where('vendor_public_id', $restaurantId)
+                    ->orWhere('slug', $restaurantId);
+
+                if (ctype_digit($restaurantId)) {
+                    $query->orWhere('id', (int) $restaurantId);
+                }
+            })
+            ->firstOrFail();
+
+        $settings = $vendor->vendorSetting;
+
+        return response()->json([
+            'method' => [
+                'on-site' => (bool) ($settings?->accept_on_site ?? true),
+                'stripe' => (bool) (
+                    $settings?->stripe_enabled
+                    && $settings->stripe_account_id
+                    && $settings->stripe_onboarding_complete
+                ),
+            ],
+        ]);
     }
 
     /**

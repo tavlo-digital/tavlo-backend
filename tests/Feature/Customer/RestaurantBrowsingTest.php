@@ -43,7 +43,9 @@ class RestaurantBrowsingTest extends TestCase
         $response = $this->getJson('/api/customer/restaurants');
 
         $response->assertOk()
-            ->assertJsonPath('data.0.restaurant_name', 'Test Restaurant');
+            ->assertJsonPath('data.0.restaurant_name', 'Test Restaurant')
+            ->assertJsonPath('data.0.payment_methods.on-site', true)
+            ->assertJsonPath('data.0.payment_methods.stripe', false);
     }
 
     public function test_can_filter_restaurants_by_city(): void
@@ -86,7 +88,24 @@ class RestaurantBrowsingTest extends TestCase
 
         $response->assertOk()
             ->assertJsonPath('restaurant_name', 'Test Restaurant')
+            ->assertJsonPath('payment_methods.on-site', true)
+            ->assertJsonPath('payment_methods.stripe', false)
             ->assertJsonStructure(['vendor_public_id', 'restaurant_name', 'avg_rating', 'review_count']);
+    }
+
+    public function test_restaurant_about_uses_simplified_payment_methods(): void
+    {
+        $this->vendor->vendorSetting->update([
+            'accept_on_site' => false,
+            'stripe_enabled' => true,
+            'stripe_account_id' => 'acct_test_123',
+            'stripe_onboarding_complete' => true,
+        ]);
+
+        $this->getJson("/api/customer/restaurants/{$this->vendor->vendor_public_id}/about")
+            ->assertOk()
+            ->assertJsonPath('payment_methods.on-site', false)
+            ->assertJsonPath('payment_methods.stripe', true);
     }
 
     public function test_show_returns_404_for_invalid_id(): void

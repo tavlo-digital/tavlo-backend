@@ -206,8 +206,7 @@ class VendorSeeder extends Seeder
                 [
                     'is_live_and_discoverable' => true,
                     'currency' => 'EUR',
-                    'accept_cash' => true,
-                    'accept_card' => true,
+                    'accept_on_site' => true,
                     'enable_reservations' => true,
                     'loyalty_enabled' => true,
                     'points_per_euro' => 20,

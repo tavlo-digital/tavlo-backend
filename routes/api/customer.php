@@ -47,6 +47,7 @@ Route::get('categories', [RestaurantController::class, 'allCategories'])->name('
 
 // Stripe webhooks are authenticated by Stripe signature, not customer bearer auth.
 Route::post('payments/webhook', [PaymentController::class, 'webhook'])->name('payments.webhook');
+Route::get('payment-methods', [PaymentController::class, 'methods'])->name('payment-methods');
 
 Route::prefix('restaurants')->name('restaurants.')->group(function () {
     Route::get('/',                                  [RestaurantController::class, 'index'])->name('index');

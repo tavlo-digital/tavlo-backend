@@ -43,12 +43,8 @@ class VendorSettingsTest extends TestCase
             ->assertJsonStructure([
                 'id',
                 'restaurantName',
-                'acceptCash',
-                'acceptCard',
-                'acceptVisa',
-                'acceptMastercard',
-                'acceptAmex',
-                'acceptBankTransfer',
+                'acceptOnSite',
+                'stripeEnabled',
                 'stripeAccountId',
                 'stripeOnboardingComplete',
                 'redemptionRate',
@@ -60,6 +56,14 @@ class VendorSettingsTest extends TestCase
                 'menuTheme',
                 'currency',
             ]);
+
+        $payload = $response->json();
+        $this->assertArrayNotHasKey('acceptCash', $payload);
+        $this->assertArrayNotHasKey('acceptCard', $payload);
+        $this->assertArrayNotHasKey('acceptVisa', $payload);
+        $this->assertArrayNotHasKey('acceptMastercard', $payload);
+        $this->assertArrayNotHasKey('acceptAmex', $payload);
+        $this->assertArrayNotHasKey('acceptBankTransfer', $payload);
     }
 
     public function test_get_settings_requires_authentication(): void
@@ -97,32 +101,27 @@ class VendorSettingsTest extends TestCase
         ]);
     }
 
-    public function test_can_update_payment_settings_with_bank_transfer(): void
+    public function test_can_update_payment_settings(): void
     {
         $response = $this->putJson(
             "/api/vendor/{$this->vendor->vendor_public_id}/settings",
             [
-                'acceptCard'        => true,
-                'acceptVisa'        => true,
-                'acceptMastercard'  => true,
-                'acceptAmex'        => false,
-                'acceptBankTransfer' => true,
+                'acceptOnSite'  => false,
+                'stripeEnabled' => true,
             ],
             $this->authHeaders()
         );
 
         $response->assertOk()
             ->assertJsonFragment([
-                'acceptBankTransfer' => true,
-                'acceptVisa'         => true,
-                'acceptAmex'         => false,
+                'acceptOnSite'  => false,
+                'stripeEnabled' => true,
             ]);
 
         $this->assertDatabaseHas('vendor_settings', [
-            'vendor_id'           => $this->vendor->id,
-            'accept_bank_transfer' => true,
-            'accept_visa'          => true,
-            'accept_amex'          => false,
+            'vendor_id'       => $this->vendor->id,
+            'accept_on_site'  => false,
+            'stripe_enabled'  => true,
         ]);
     }
 
