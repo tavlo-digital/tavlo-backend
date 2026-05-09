@@ -2,17 +2,13 @@
 
 namespace App\Services;
 
+use Symfony\Component\HttpKernel\Exception\ServiceUnavailableHttpException;
 use Stripe\StripeClient;
 use Stripe\Webhook;
 
 class StripePaymentService
 {
-    private StripeClient $stripe;
-
-    public function __construct()
-    {
-        $this->stripe = new StripeClient(config('services.stripe.secret'));
-    }
+    private ?StripeClient $stripe = null;
 
     /**
      * @param array<string, string> $metadata
@@ -20,7 +16,7 @@ class StripePaymentService
      */
     public function createPaymentIntent(int $amountMinor, string $currency, string $stripeAccountId, array $metadata): array
     {
-        $intent = $this->stripe->paymentIntents->create([
+        $intent = $this->stripe()->paymentIntents->create([
             'amount' => $amountMinor,
             'currency' => strtolower($currency),
             'automatic_payment_methods' => [
@@ -41,7 +37,7 @@ class StripePaymentService
     public function retrievePaymentIntent(string $paymentIntentId): array
     {
         return $this->paymentIntentPayload(
-            $this->stripe->paymentIntents->retrieve($paymentIntentId)
+            $this->stripe()->paymentIntents->retrieve($paymentIntentId)
         );
     }
 
@@ -81,5 +77,23 @@ class StripePaymentService
             'metadata' => is_array($metadata) ? $metadata : [],
             'payment_method' => isset($intent->payment_method) ? (string) $intent->payment_method : null,
         ];
+    }
+
+    private function stripe(): StripeClient
+    {
+        if ($this->stripe) {
+            return $this->stripe;
+        }
+
+        $secret = trim((string) config('services.stripe.secret'));
+
+        if ($secret === '') {
+            throw new ServiceUnavailableHttpException(
+                null,
+                'Stripe is not configured. Set STRIPE_SECRET and clear Laravel config cache.'
+            );
+        }
+
+        return $this->stripe = new StripeClient($secret);
     }
 }

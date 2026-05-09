@@ -33,20 +33,15 @@ jobs:
       - name: Build frontend assets
         run: npm run build
 
-      - name: Write .env file
-        env:
-          ENV_FILE_CONTENT: ${{ secrets.STAGING_ENV_FILE }}
-        run: printenv ENV_FILE_CONTENT > .env
-
       - name: Deploy files via rsync
         uses: burnett01/rsync-deployments@7.0.1
         with:
           switches: -avz --delete
-                    --exclude='.git/' 
-                    --exclude='node_modules/'
-                    --exclude='vendor/'
-                    --exclude='public/'
-                    --exclude='storage/'
+            --exclude='.git/'
+            --exclude='node_modules/'
+            --exclude='vendor/'
+            --exclude='public/'
+            --exclude='storage/'
 
           path: ./
           remote_path: ${{ secrets.STAGING_DEPLOY_PATH }}

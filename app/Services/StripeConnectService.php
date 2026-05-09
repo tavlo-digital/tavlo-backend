@@ -3,23 +3,19 @@
 namespace App\Services;
 
 use App\Models\Vendor;
+use Symfony\Component\HttpKernel\Exception\ServiceUnavailableHttpException;
 use Stripe\StripeClient;
 
 class StripeConnectService
 {
-    private StripeClient $stripe;
-
-    public function __construct()
-    {
-        $this->stripe = new StripeClient(config('services.stripe.secret'));
-    }
+    private ?StripeClient $stripe = null;
 
     /**
      * Create a Stripe Express account for the vendor and return the account ID.
      */
     public function createExpressAccount(Vendor $vendor): string
     {
-        $account = $this->stripe->accounts->create([
+        $account = $this->stripe()->accounts->create([
             'type'         => 'express',
             'email'        => $vendor->email,
             'business_profile' => [
@@ -45,7 +41,7 @@ class StripeConnectService
         string $refreshUrl,
         string $returnUrl
     ): string {
-        $link = $this->stripe->accountLinks->create([
+        $link = $this->stripe()->accountLinks->create([
             'account'     => $stripeAccountId,
             'refresh_url' => $refreshUrl,
             'return_url'  => $returnUrl,
@@ -60,7 +56,7 @@ class StripeConnectService
      */
     public function getAccountStatus(string $stripeAccountId): array
     {
-        $account = $this->stripe->accounts->retrieve($stripeAccountId);
+        $account = $this->stripe()->accounts->retrieve($stripeAccountId);
 
         return [
             'id'                  => $account->id,
@@ -73,5 +69,23 @@ class StripeConnectService
             // especially in test mode — Stripe still considers the account onboarded.
             'onboarding_complete' => (bool) $account->details_submitted,
         ];
+    }
+
+    private function stripe(): StripeClient
+    {
+        if ($this->stripe) {
+            return $this->stripe;
+        }
+
+        $secret = trim((string) config('services.stripe.secret'));
+
+        if ($secret === '') {
+            throw new ServiceUnavailableHttpException(
+                null,
+                'Stripe is not configured. Set STRIPE_SECRET and clear Laravel config cache.'
+            );
+        }
+
+        return $this->stripe = new StripeClient($secret);
     }
 }
