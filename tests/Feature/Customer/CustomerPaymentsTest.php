@@ -102,6 +102,25 @@ class CustomerPaymentsTest extends TestCase
             ->assertJsonPath('method.stripe', true);
     }
 
+    public function test_payment_methods_accepts_vendor_public_id_alias_and_wrapped_identifier(): void
+    {
+        $this->settings->update([
+            'accept_on_site' => true,
+            'stripe_enabled' => true,
+            'stripe_account_id' => 'acct_test_123',
+            'stripe_onboarding_complete' => true,
+        ]);
+
+        $this->getJson("/api/customer/payment-methods?vendor_public_id={$this->vendor->vendor_public_id}")
+            ->assertOk()
+            ->assertJsonPath('method.stripe', true);
+
+        $wrapped = urlencode('{' . $this->vendor->vendor_public_id . '}');
+        $this->getJson("/api/customer/payment-methods?restaurant_id={$wrapped}")
+            ->assertOk()
+            ->assertJsonPath('method.on-site', true);
+    }
+
     public function test_payment_methods_resolves_restaurant_slug(): void
     {
         $this->settings->update([
@@ -147,6 +166,13 @@ class CustomerPaymentsTest extends TestCase
         $this->getJson('/api/customer/payment-methods')
             ->assertStatus(422)
             ->assertJsonValidationErrors('restaurant_id');
+    }
+
+    public function test_payment_methods_returns_clean_404_for_unknown_restaurant(): void
+    {
+        $this->getJson('/api/customer/payment-methods?restaurant_id=missing-vendor')
+            ->assertNotFound()
+            ->assertJsonPath('message', 'Restaurant not found.');
     }
 
     public function test_create_intent_rejects_another_customers_order(): void

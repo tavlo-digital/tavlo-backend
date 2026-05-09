@@ -28,10 +28,19 @@ class PaymentController extends Controller
     public function methods(Request $request): JsonResponse
     {
         $data = $request->validate([
-            'restaurant_id' => ['required', 'string', 'max:255'],
+            'restaurant_id' => ['nullable', 'string', 'max:255'],
+            'vendor_public_id' => ['nullable', 'string', 'max:255'],
         ]);
 
-        $restaurantId = $data['restaurant_id'];
+        $restaurantId = trim((string) ($data['restaurant_id'] ?? $data['vendor_public_id'] ?? ''));
+        $restaurantId = trim($restaurantId, '{}');
+
+        if ($restaurantId === '') {
+            throw ValidationException::withMessages([
+                'restaurant_id' => ['The restaurant id field is required.'],
+            ]);
+        }
+
         $vendor = Vendor::with('vendorSetting')
             ->where(function (Builder $query) use ($restaurantId) {
                 $query->where('vendor_public_id', $restaurantId)
@@ -41,7 +50,11 @@ class PaymentController extends Controller
                     $query->orWhere('id', (int) $restaurantId);
                 }
             })
-            ->firstOrFail();
+            ->first();
+
+        if (! $vendor) {
+            return response()->json(['message' => 'Restaurant not found.'], 404);
+        }
 
         $settings = $vendor->vendorSetting;
 
