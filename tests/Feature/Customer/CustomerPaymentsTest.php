@@ -83,7 +83,10 @@ class CustomerPaymentsTest extends TestCase
 
     public function test_create_intent_requires_authentication(): void
     {
-        $this->postJson('/api/customer/payments/create-intent', ['orderId' => 'ord-test'])
+        $this->postJson('/api/customer/payments/create-intent', [
+            'order_id' => 'ord-test',
+            'customer_id' => '1',
+        ])
             ->assertUnauthorized();
     }
 
@@ -181,8 +184,24 @@ class CustomerPaymentsTest extends TestCase
         $order = $this->order(customer: $other);
 
         $this->withHeaders($this->headers)
-            ->postJson('/api/customer/payments/create-intent', ['orderId' => $order->order_public_id])
+            ->postJson('/api/customer/payments/create-intent', [
+                'order_id' => $order->order_public_id,
+                'customer_id' => (string) $this->customer->id,
+            ])
             ->assertNotFound();
+    }
+
+    public function test_create_intent_rejects_mismatched_customer_id(): void
+    {
+        $order = $this->order();
+
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/payments/create-intent', [
+                'order_id' => $order->order_public_id,
+                'customer_id' => '9999',
+            ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('customer_id');
     }
 
     public function test_create_intent_rejects_already_paid_order(): void
@@ -190,7 +209,10 @@ class CustomerPaymentsTest extends TestCase
         $order = $this->order(['payment_received' => true, 'payment_pending' => false]);
 
         $this->withHeaders($this->headers)
-            ->postJson('/api/customer/payments/create-intent', ['orderId' => $order->order_public_id])
+            ->postJson('/api/customer/payments/create-intent', [
+                'order_id' => $order->order_public_id,
+                'customer_id' => (string) $this->customer->id,
+            ])
             ->assertStatus(422)
             ->assertJsonPath('message', 'Order is already paid.');
     }
@@ -201,7 +223,10 @@ class CustomerPaymentsTest extends TestCase
         $order = $this->order();
 
         $this->withHeaders($this->headers)
-            ->postJson('/api/customer/payments/create-intent', ['orderId' => $order->order_public_id])
+            ->postJson('/api/customer/payments/create-intent', [
+                'order_id' => $order->order_public_id,
+                'customer_id' => (string) $this->customer->id,
+            ])
             ->assertStatus(422)
             ->assertJsonPath('message', 'Stripe payments are not enabled for this restaurant.');
     }
@@ -217,9 +242,8 @@ class CustomerPaymentsTest extends TestCase
 
         $response = $this->withHeaders($this->headers)
             ->postJson('/api/customer/payments/create-intent', [
-                'orderId' => $order->order_public_id,
-                'userId' => (string) $this->customer->id,
-                'customerId' => (string) $this->customer->id,
+                'order_id' => $order->order_public_id,
+                'customer_id' => (string) $this->customer->id,
             ]);
 
         $response->assertOk()
@@ -228,8 +252,8 @@ class CustomerPaymentsTest extends TestCase
 
         $this->assertSame(1200, $this->stripe->created[0]['amountMinor']);
         $this->assertSame('acct_test_123', $this->stripe->created[0]['stripeAccountId']);
-        $this->assertSame('dine_in', $this->stripe->created[0]['metadata']['paymentFor']);
-        $this->assertSame((string) $this->session->id, $this->stripe->created[0]['metadata']['tableSessionId']);
+        $this->assertSame('dine_in', $this->stripe->created[0]['metadata']['payment_for']);
+        $this->assertSame((string) $this->session->id, $this->stripe->created[0]['metadata']['table_session_id']);
 
         $this->assertDatabaseHas('order_payments', [
             'order_id' => $order->id,
@@ -250,6 +274,19 @@ class CustomerPaymentsTest extends TestCase
         ]);
     }
 
+    public function test_create_intent_accepts_numeric_order_id(): void
+    {
+        $order = $this->order();
+
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/payments/create-intent', [
+                'order_id' => $order->id,
+                'customer_id' => $this->customer->id,
+            ])
+            ->assertOk()
+            ->assertJsonPath('paymentIntentId', 'pi_fake_1');
+    }
+
     public function test_verify_marks_order_paid_when_payment_intent_succeeded(): void
     {
         $order = $this->order();
@@ -258,7 +295,7 @@ class CustomerPaymentsTest extends TestCase
             'id' => 'pi_paid',
             'client_secret' => null,
             'status' => 'succeeded',
-            'metadata' => ['order_id' => (string) $order->id, 'customerId' => (string) $this->customer->id],
+            'metadata' => ['order_id' => (string) $order->id, 'customer_id' => (string) $this->customer->id],
             'payment_method' => 'pm_card_visa',
         ];
 
@@ -290,7 +327,7 @@ class CustomerPaymentsTest extends TestCase
             'id' => 'pi_processing',
             'client_secret' => null,
             'status' => 'processing',
-            'metadata' => ['order_id' => (string) $order->id, 'customerId' => (string) $this->customer->id],
+            'metadata' => ['order_id' => (string) $order->id, 'customer_id' => (string) $this->customer->id],
             'payment_method' => null,
         ];
 
@@ -399,7 +436,7 @@ class CustomerPaymentsTest extends TestCase
             'status' => 'processing',
             'metadata' => [
                 'order_id' => (string) $order->id,
-                'customerId' => (string) $this->customer->id,
+                'customer_id' => (string) $this->customer->id,
             ],
         ]);
     }

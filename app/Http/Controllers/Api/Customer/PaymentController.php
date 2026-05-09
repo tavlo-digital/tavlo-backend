@@ -8,6 +8,7 @@ use App\Models\Order;
 use App\Models\OrderPayment;
 use App\Models\Vendor;
 use App\Services\StripePaymentService;
+use Closure;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -76,22 +77,33 @@ class PaymentController extends Controller
     public function createIntent(Request $request): JsonResponse
     {
         $data = $request->validate([
-            'orderId' => ['required', 'string', 'max:255'],
-            'userId' => ['nullable', 'string', 'max:255'],
-            'customerId' => ['nullable', 'string', 'max:255'],
+            'order_id' => [
+                'required',
+                function (string $attribute, mixed $value, Closure $fail): void {
+                    if (! is_string($value) && ! is_int($value)) {
+                        $fail("The {$attribute} field must be a string or integer.");
+
+                        return;
+                    }
+
+                    if (mb_strlen((string) $value) > 255) {
+                        $fail("The {$attribute} field must not be greater than 255 characters.");
+                    }
+                },
+            ],
+            'customer_id' => ['required', 'integer'],
         ]);
 
         $customer = $request->user();
+        $customerId = (int) $data['customer_id'];
 
-        foreach (['userId', 'customerId'] as $field) {
-            if (isset($data[$field]) && (string) $data[$field] !== (string) $customer->id) {
-                throw ValidationException::withMessages([
-                    $field => ['The provided customer identifier does not match the authenticated customer.'],
-                ]);
-            }
+        if ($customerId !== (int) $customer->id) {
+            throw ValidationException::withMessages([
+                'customer_id' => ['The provided customer identifier does not match the authenticated customer.'],
+            ]);
         }
 
-        $order = $this->customerOrder($data['orderId'], $customer->id);
+        $order = $this->customerOrder((string) $data['order_id'], $customer->id);
 
         if ($order->payment_received) {
             return response()->json(['message' => 'Order is already paid.'], 422);
@@ -109,16 +121,15 @@ class PaymentController extends Controller
 
         $currency = $settings->currency ?: $order->currency;
         $metadata = [
-            'orderId' => (string) $order->order_public_id,
             'order_id' => (string) $order->id,
+            'order_public_id' => (string) $order->order_public_id,
             'vendor_id' => (string) $order->vendor_id,
-            'userId' => (string) $customer->id,
-            'customerId' => (string) $customer->id,
-            'paymentFor' => $order->table_scan_session_id ? 'dine_in' : 'order',
+            'customer_id' => (string) $customer->id,
+            'payment_for' => $order->table_scan_session_id ? 'dine_in' : 'order',
         ];
 
         if ($order->table_scan_session_id) {
-            $metadata['tableSessionId'] = (string) $order->table_scan_session_id;
+            $metadata['table_session_id'] = (string) $order->table_scan_session_id;
         }
 
         $intent = $this->stripe->createPaymentIntent(
@@ -300,7 +311,8 @@ class PaymentController extends Controller
             abort(422, 'PaymentIntent does not match this order.');
         }
 
-        if (isset($metadata['customerId']) && (string) $metadata['customerId'] !== (string) $payment->customer_id) {
+        $metadataCustomerId = $metadata['customer_id'] ?? $metadata['customerId'] ?? null;
+        if ($metadataCustomerId !== null && (string) $metadataCustomerId !== (string) $payment->customer_id) {
             abort(422, 'PaymentIntent does not match this customer.');
         }
     }
