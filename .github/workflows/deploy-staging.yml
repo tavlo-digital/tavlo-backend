@@ -33,6 +33,11 @@ jobs:
       - name: Build frontend assets
         run: npm run build
 
+      # - name: Write .env file
+      #   env:
+      #     ENV_FILE_CONTENT: ${{ secrets.STAGING_ENV_FILE }}
+      #   run: printenv ENV_FILE_CONTENT > .env
+
       - name: Deploy files via rsync
         uses: burnett01/rsync-deployments@7.0.1
         with:
@@ -42,6 +47,8 @@ jobs:
             --exclude='vendor/'
             --exclude='public/'
             --exclude='storage/'
+            --exclude='.env'
+            --exclude='.env.*'
 
           path: ./
           remote_path: ${{ secrets.STAGING_DEPLOY_PATH }}
@@ -59,15 +66,27 @@ jobs:
           script: |
             cd ${{ secrets.STAGING_DEPLOY_PATH }}
 
-            php artisan key:generate --force
+            if [ ! -f .env ]; then
+              echo "Missing .env on server. Create it in ${{ secrets.STAGING_DEPLOY_PATH }} before deploying."
+              exit 1
+            fi
+
+            if ! grep -Eq '^APP_KEY=base64:.+' .env; then
+              echo "Missing APP_KEY in server .env. Run php artisan key:generate once, then redeploy."
+              exit 1
+            fi
 
             # Set permissions
             chmod -R 775 storage bootstrap/cache
+
+            # Clear any stale cached config before rebuilding caches
+            rm -f bootstrap/cache/config.php
 
             # Run database migrations
             php artisan migrate --force
 
             # Clear and cache config/routes/views
+            php artisan config:clear
             php artisan config:cache
             php artisan route:cache
             php artisan view:cache
