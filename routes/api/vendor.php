@@ -33,6 +33,7 @@ Route::post('{vendorId}/takeaway/scan', [TableController::class, 'recordTakeaway
 Route::middleware(['auth:vendor,team_member', 'vendor.staff.access'])->group(function () {
     Route::get('me',      [AuthController::class, 'me'])->name('me');
     Route::post('logout', [AuthController::class, 'logout'])->name('logout');
+    Route::post('profile/password', [AuthController::class, 'changePassword'])->name('profile.password');
 
     // Menu (legacy endpoints kept for compatibility)
     Route::get('{vendorId}/menu',                    [MenuController::class, 'show'])->name('menu.show');

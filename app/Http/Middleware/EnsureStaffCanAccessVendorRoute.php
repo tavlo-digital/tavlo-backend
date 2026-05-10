@@ -30,6 +30,7 @@ class EnsureStaffCanAccessVendorRoute
         $allowedForEveryone = [
             'vendor.me',
             'vendor.logout',
+            'vendor.profile.password',
             'vendor.orders.index',
             'vendor.orders.show',
             'vendor.orders.itemStatus',
