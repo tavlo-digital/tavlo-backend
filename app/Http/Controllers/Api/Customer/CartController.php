@@ -63,7 +63,14 @@ class CartController extends Controller
             ->whereIn('id', $sessionIds)
             ->get();
 
-        $people = $sessions->map(function (TableScanSession $s) use ($mySession) {
+        $latestOrderAt = Order::whereIn('table_scan_session_id', $sessionIds)
+            ->selectRaw('table_scan_session_id, MAX(created_at) as latest_order_at')
+            ->groupBy('table_scan_session_id')
+            ->pluck('latest_order_at', 'table_scan_session_id');
+
+        $people = $sessions->map(function (TableScanSession $s) use ($mySession, $latestOrderAt) {
+            $orderCutoff = $latestOrderAt->get($s->id);
+
             return [
                 'session_id'  => $s->id,
                 'customer_id' => $s->customer_id,
@@ -72,7 +79,8 @@ class CartController extends Controller
                     ? trim($s->customer->first_name . ' ' . $s->customer->last_name)
                     : 'Guest',
                 'personal_items' => $s->cartItems
-                    ->filter(fn(CartItem $item) => empty($item->order_ids))
+                    ->filter(fn(CartItem $item) => empty($item->order_ids)
+                        && (! $orderCutoff || $item->created_at > $orderCutoff))
                     ->values()
                     ->map(fn(CartItem $item) => $this->itemPayload($item)),
             ];
