@@ -18,6 +18,7 @@ class Order extends Model
         'status',
         'amount',
         'currency',
+        'tip_amount',
         'payment_method',
         'transaction_id',
         'payment_pending',
@@ -44,6 +45,7 @@ class Order extends Model
     {
         return [
             'amount'               => 'decimal:2',
+            'tip_amount'           => 'decimal:2',
             'service_fee'          => 'decimal:2',
             'vat_amount'           => 'decimal:2',
             'payment_pending'      => 'boolean',

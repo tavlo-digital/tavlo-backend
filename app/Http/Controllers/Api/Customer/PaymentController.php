@@ -179,6 +179,117 @@ class PaymentController extends Controller
     }
 
     /**
+     * POST /api/customer/payments/update-intent
+     */
+    public function updateIntent(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'payment_intent_id' => ['required', 'string', 'max:255'],
+            'order_id' => [
+                'required',
+                function (string $attribute, mixed $value, Closure $fail): void {
+                    if (! is_string($value) && ! is_int($value)) {
+                        $fail("The {$attribute} field must be a string or integer.");
+
+                        return;
+                    }
+
+                    if (mb_strlen((string) $value) > 255) {
+                        $fail("The {$attribute} field must not be greater than 255 characters.");
+                    }
+                },
+            ],
+            'customer_id' => ['required', 'integer'],
+            'tip_amount' => ['required', 'numeric', 'min:0', 'max:999999.99'],
+        ]);
+
+        $customer = $request->user();
+        $customerId = (int) $data['customer_id'];
+
+        if ($customerId !== (int) $customer->id) {
+            throw ValidationException::withMessages([
+                'customer_id' => ['The provided customer identifier does not match the authenticated customer.'],
+            ]);
+        }
+
+        $order = $this->customerOrder((string) $data['order_id'], $customer->id);
+
+        if ($order->payment_received) {
+            return response()->json(['message' => 'Order is already paid.'], 422);
+        }
+
+        $paymentIntentId = $this->normalizePaymentIntentId($data['payment_intent_id']);
+        $payment = OrderPayment::where('stripe_payment_intent_id', $paymentIntentId)
+            ->where('order_id', $order->id)
+            ->where('customer_id', $customer->id)
+            ->firstOrFail();
+
+        $intent = $this->stripe->retrievePaymentIntent($paymentIntentId);
+        $this->assertIntentMatchesPayment($intent, $payment);
+
+        if (in_array($intent['status'] ?? $payment->status, ['succeeded', 'processing'], true)) {
+            return response()->json(['message' => 'PaymentIntent cannot be updated in its current status.'], 422);
+        }
+
+        $settings = $order->vendor?->vendorSetting;
+        $currency = $settings?->currency ?: $order->currency;
+        $baseAmount = $this->finalOrderAmount($order);
+        $tipAmount = round((float) $data['tip_amount'], 2);
+        $payableAmount = round($baseAmount + $tipAmount, 2);
+
+        if ($payableAmount <= 0) {
+            return response()->json(['message' => 'Payment amount must be greater than zero.'], 422);
+        }
+
+        $metadata = array_merge($intent['metadata'] ?? [], [
+            'order_id' => (string) $order->id,
+            'order_public_id' => (string) $order->order_public_id,
+            'vendor_id' => (string) $order->vendor_id,
+            'customer_id' => (string) $customer->id,
+            'tip_amount' => number_format($tipAmount, 2, '.', ''),
+            'base_amount' => number_format($baseAmount, 2, '.', ''),
+            'payable_amount' => number_format($payableAmount, 2, '.', ''),
+        ]);
+
+        try {
+            $updatedIntent = $this->stripe->updatePaymentIntent(
+                $paymentIntentId,
+                $this->stripeAmountMinor($payableAmount, $currency),
+                $currency,
+                $metadata
+            );
+        } catch (StripeInvalidRequestException $e) {
+            \Log::error("Stripe payment intent update failed for order {$order->id}: {$e->getMessage()}");
+            return response()->json(['message' => 'PaymentIntent could not be updated.'], 422);
+        }
+
+        DB::transaction(function () use ($order, $payment, $baseAmount, $tipAmount, $payableAmount, $currency, $updatedIntent, $metadata) {
+            $order->update([
+                'amount' => $baseAmount,
+                'tip_amount' => $tipAmount,
+                'currency' => strtoupper($currency),
+                'payment_method' => 'stripe',
+                'transaction_id' => $updatedIntent['id'],
+                'payment_pending' => true,
+                'payment_received' => false,
+            ]);
+
+            $payment->update([
+                'amount' => $payableAmount,
+                'currency' => strtoupper($currency),
+                'status' => $updatedIntent['status'] ?? $payment->status,
+                'payment_method' => $updatedIntent['payment_method'] ?? $payment->payment_method,
+                'metadata' => $metadata,
+            ]);
+        });
+
+        return response()->json([
+            'clientSecret' => $updatedIntent['client_secret'],
+            'paymentIntentId' => $updatedIntent['id'],
+        ]);
+    }
+
+    /**
      * GET /api/customer/payments/verify?payment_intent=pi_xxx
      */
     public function verify(Request $request): JsonResponse
@@ -309,6 +420,13 @@ class PaymentController extends Controller
         return in_array(strtoupper($currency), $zeroDecimalCurrencies, true)
             ? (int) round($amount)
             : (int) round($amount * 100);
+    }
+
+    private function normalizePaymentIntentId(string $paymentIntentId): string
+    {
+        return str_contains($paymentIntentId, '_secret_')
+            ? explode('_secret_', $paymentIntentId, 2)[0]
+            : $paymentIntentId;
     }
 
     private function assertIntentMatchesPayment(array $intent, OrderPayment $payment): void

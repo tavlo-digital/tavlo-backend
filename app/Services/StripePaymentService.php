@@ -42,6 +42,25 @@ class StripePaymentService
     }
 
     /**
+     * @param array<string, string> $metadata
+     * @return array{id: string, client_secret: string|null, status: string|null, metadata: array<string, mixed>, payment_method: string|null}
+     */
+    public function updatePaymentIntent(string $paymentIntentId, int $amountMinor, string $currency, array $metadata = []): array
+    {
+        $payload = [
+            'amount' => $amountMinor,
+        ];
+
+        if ($metadata !== []) {
+            $payload['metadata'] = $metadata;
+        }
+
+        return $this->paymentIntentPayload(
+            $this->stripe()->paymentIntents->update($paymentIntentId, $payload)
+        );
+    }
+
+    /**
      * @return array{type: string, payment_intent: array{id: string, client_secret: string|null, status: string|null, metadata: array<string, mixed>, payment_method: string|null}}
      */
     public function parseWebhookEvent(string $payload, ?string $signature): array

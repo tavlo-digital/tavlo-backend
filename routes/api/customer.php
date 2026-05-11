@@ -98,6 +98,7 @@ Route::middleware('auth:customer')->group(function () {
 
     // Stripe Elements Payments
     Route::post('payments/create-intent', [PaymentController::class, 'createIntent'])->name('payments.create-intent');
+    Route::post('payments/update-intent', [PaymentController::class, 'updateIntent'])->name('payments.update-intent');
     Route::get('payments/verify', [PaymentController::class, 'verify'])->name('payments.verify');
 
     // Reservations

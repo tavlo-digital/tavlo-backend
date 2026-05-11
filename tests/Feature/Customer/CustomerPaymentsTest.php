@@ -287,6 +287,73 @@ class CustomerPaymentsTest extends TestCase
             ->assertJsonPath('paymentIntentId', 'pi_fake_1');
     }
 
+    public function test_update_intent_adds_tip_and_updates_payable_amount(): void
+    {
+        $order = $this->order();
+        CartItem::create([
+            'table_scan_session_id' => $this->session->id,
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 2,
+        ]);
+
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/payments/create-intent', [
+                'order_id' => $order->order_public_id,
+                'customer_id' => $this->customer->id,
+            ])
+            ->assertOk()
+            ->assertJsonPath('clientSecret', 'pi_fake_1_secret_test');
+
+        $response = $this->withHeaders($this->headers)
+            ->postJson('/api/customer/payments/update-intent', [
+                'payment_intent_id' => 'pi_fake_1_secret_test',
+                'order_id' => $order->order_public_id,
+                'customer_id' => $this->customer->id,
+                'tip_amount' => 5.00,
+            ]);
+
+        $response->assertOk()
+            ->assertJsonPath('clientSecret', 'pi_fake_1_secret_test')
+            ->assertJsonPath('paymentIntentId', 'pi_fake_1');
+
+        $this->assertSame(1700, $this->stripe->updated[0]['amountMinor']);
+        $this->assertSame('5.00', $this->stripe->updated[0]['metadata']['tip_amount']);
+        $this->assertSame('12.00', $this->stripe->updated[0]['metadata']['base_amount']);
+        $this->assertSame('17.00', $this->stripe->updated[0]['metadata']['payable_amount']);
+
+        $this->assertDatabaseHas('orders', [
+            'id' => $order->id,
+            'amount' => 12,
+            'tip_amount' => 5,
+            'transaction_id' => 'pi_fake_1',
+            'payment_pending' => true,
+            'payment_received' => false,
+        ]);
+
+        $this->assertDatabaseHas('order_payments', [
+            'order_id' => $order->id,
+            'stripe_payment_intent_id' => 'pi_fake_1',
+            'amount' => 17,
+            'currency' => 'EUR',
+        ]);
+    }
+
+    public function test_update_intent_rejects_mismatched_customer_id(): void
+    {
+        $order = $this->order();
+        $this->payment($order, 'pi_existing');
+
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/payments/update-intent', [
+                'payment_intent_id' => 'pi_existing',
+                'order_id' => $order->order_public_id,
+                'customer_id' => 9999,
+                'tip_amount' => 5.00,
+            ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('customer_id');
+    }
+
     public function test_verify_marks_order_paid_when_payment_intent_succeeded(): void
     {
         $order = $this->order();
@@ -445,6 +512,7 @@ class CustomerPaymentsTest extends TestCase
 class FakeStripePaymentService extends StripePaymentService
 {
     public array $created = [];
+    public array $updated = [];
     public array $intents = [];
     public array $events = [];
     public bool $rejectWebhook = false;
@@ -466,6 +534,24 @@ class FakeStripePaymentService extends StripePaymentService
 
         $this->created[] = compact('amountMinor', 'currency', 'stripeAccountId', 'metadata');
         $this->intents[$id] = $payload;
+
+        return $payload;
+    }
+
+    public function updatePaymentIntent(string $paymentIntentId, int $amountMinor, string $currency, array $metadata = []): array
+    {
+        $payload = $this->intents[$paymentIntentId] ?? [
+            'id' => $paymentIntentId,
+            'client_secret' => $paymentIntentId . '_secret_test',
+            'status' => 'requires_payment_method',
+            'metadata' => [],
+            'payment_method' => null,
+        ];
+
+        $payload['metadata'] = $metadata;
+
+        $this->updated[] = compact('paymentIntentId', 'amountMinor', 'currency', 'metadata');
+        $this->intents[$paymentIntentId] = $payload;
 
         return $payload;
     }
