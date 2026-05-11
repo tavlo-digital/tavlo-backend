@@ -136,6 +136,78 @@ class TableCartTest extends TestCase
         $this->assertCount(1, $response->json('people'));
     }
 
+    public function test_get_cart_keeps_items_visible_while_order_is_draft(): void
+    {
+        $item = CartItem::create([
+            'table_scan_session_id' => $this->session->id,
+            'menu_item_id'          => $this->menuItem->id,
+            'quantity'              => 1,
+        ]);
+        $item->forceFill(['created_at' => now()->subMinute()])->save();
+
+        $draft = Order::create([
+            'order_public_id'       => 'ord-draft-cart-visible',
+            'customer_id'           => $this->customer->id,
+            'vendor_id'             => $this->vendor->id,
+            'table_scan_session_id' => $this->session->id,
+            'status'                => 'draft',
+            'amount'                => 3.50,
+            'currency'              => 'EUR',
+        ]);
+
+        $other = Customer::factory()->create(['first_name' => 'Bob', 'last_name' => 'Jones']);
+        $otherSession = TableScanSession::create([
+            'vendor_id'           => $this->vendor->id,
+            'restaurant_table_id' => $this->table->id,
+            'customer_id'         => $other->id,
+            'pin'                 => '',
+            'status'              => 'active',
+            'scanned_at'          => now(),
+        ]);
+
+        CartItem::create([
+            'table_scan_session_id' => $otherSession->id,
+            'menu_item_id'          => $this->menuItem->id,
+            'quantity'              => 2,
+            'order_ids'             => [$draft->id],
+        ]);
+
+        $response = $this->withHeaders($this->headers)
+            ->getJson('/api/customer/cart');
+
+        $response->assertOk();
+
+        $people = collect($response->json('people'))->keyBy('session_id');
+        $this->assertCount(1, $people[$this->session->id]['personal_items']);
+        $this->assertCount(1, $people[$otherSession->id]['personal_items']);
+    }
+
+    public function test_get_cart_hides_items_after_order_is_confirmed(): void
+    {
+        $item = CartItem::create([
+            'table_scan_session_id' => $this->session->id,
+            'menu_item_id'          => $this->menuItem->id,
+            'quantity'              => 1,
+        ]);
+        $item->forceFill(['created_at' => now()->subMinute()])->save();
+
+        Order::create([
+            'order_public_id'       => 'ord-confirmed-cart-hidden',
+            'customer_id'           => $this->customer->id,
+            'vendor_id'             => $this->vendor->id,
+            'table_scan_session_id' => $this->session->id,
+            'status'                => 'confirmed',
+            'amount'                => 3.50,
+            'currency'              => 'EUR',
+        ]);
+
+        $response = $this->withHeaders($this->headers)
+            ->getJson('/api/customer/cart');
+
+        $response->assertOk()
+            ->assertJsonPath('people.0.personal_items', []);
+    }
+
     // ----------------------------------------------------------------
     // POST /api/customer/cart/items
     // ----------------------------------------------------------------
