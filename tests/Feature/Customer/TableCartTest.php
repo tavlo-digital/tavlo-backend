@@ -10,6 +10,7 @@ use App\Models\Order;
 use App\Models\RestaurantTable;
 use App\Models\TableScanSession;
 use App\Models\Vendor;
+use App\Models\VendorSetting;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -347,5 +348,136 @@ class TableCartTest extends TestCase
         $this->assertSame('Ready', $items[$ready->id]['status']);
         $this->assertSame('Served', $items[$served->id]['status']);
         $this->assertSame($served->fresh()->served_at->toIso8601String(), $items[$served->id]['served_at']);
+    }
+
+    public function test_order_tracking_returns_own_items_and_empty_shared_items_by_default(): void
+    {
+        VendorSetting::factory()->create([
+            'vendor_id' => $this->vendor->id,
+            'currency' => 'EUR',
+            'estimated_prep_time' => 30,
+        ]);
+
+        CartItem::create([
+            'table_scan_session_id' => $this->session->id,
+            'menu_item_id'          => $this->menuItem->id,
+            'quantity'              => 2,
+            'notes'                 => 'No salt',
+        ]);
+
+        $order = Order::create([
+            'order_public_id'       => 'ord-tracking-default',
+            'customer_id'           => $this->customer->id,
+            'vendor_id'             => $this->vendor->id,
+            'table_scan_session_id' => $this->session->id,
+            'status'                => 'draft',
+            'amount'                => 7,
+            'currency'              => 'EUR',
+            'order_number'          => 1001,
+            'order_type'            => 'dine-in',
+            'payment_pending'       => true,
+            'payment_received'      => false,
+        ]);
+
+        $response = $this->withHeaders($this->headers)
+            ->getJson("/api/customer/orders/{$order->order_public_id}/tracking");
+
+        $response->assertOk()
+            ->assertJsonPath('id', $order->id)
+            ->assertJsonPath('order_public_id', 'ord-tracking-default')
+            ->assertJsonPath('order_number', '1001')
+            ->assertJsonPath('status', 'draft')
+            ->assertJsonPath('total_amount', 7)
+            ->assertJsonPath('currency', 'EUR')
+            ->assertJsonPath('payment_pending', true)
+            ->assertJsonPath('payment_received', false)
+            ->assertJsonPath('items.0.name', 'Fries')
+            ->assertJsonPath('items.0.quantity', 2)
+            ->assertJsonPath('items.0.unit_price', 3.5)
+            ->assertJsonPath('items.0.line_total', 7)
+            ->assertJsonPath('items.0.notes', 'No salt')
+            ->assertJsonPath('shared_items', []);
+
+        $this->assertSame(
+            $order->created_at->copy()->addMinutes(30)->toIso8601String(),
+            $response->json('estimated_delivery_time')
+        );
+    }
+
+    public function test_order_tracking_includes_only_actual_shared_items(): void
+    {
+        $other = Customer::factory()->create(['first_name' => 'Bob', 'last_name' => 'Jones']);
+        $otherSession = TableScanSession::create([
+            'vendor_id'           => $this->vendor->id,
+            'restaurant_table_id' => $this->table->id,
+            'customer_id'         => $other->id,
+            'pin'                 => '',
+            'status'              => 'active',
+            'scanned_at'          => now(),
+        ]);
+
+        $pizza = MenuItem::create([
+            'vendor_id'        => $this->vendor->id,
+            'menu_category_id' => $this->menuItem->menu_category_id,
+            'name'             => 'Pizza',
+            'price'            => 18.99,
+        ]);
+
+        $order = Order::create([
+            'order_public_id'       => 'ord-tracking-shared',
+            'customer_id'           => $this->customer->id,
+            'vendor_id'             => $this->vendor->id,
+            'table_scan_session_id' => $this->session->id,
+            'status'                => 'confirmed',
+            'amount'                => 25.99,
+            'currency'              => 'EUR',
+            'order_type'            => 'dine-in',
+        ]);
+
+        $otherOrder = Order::create([
+            'order_public_id'       => 'ord-bob-shared',
+            'customer_id'           => $other->id,
+            'vendor_id'             => $this->vendor->id,
+            'table_scan_session_id' => $otherSession->id,
+            'status'                => 'confirmed',
+            'amount'                => 9.50,
+            'currency'              => 'EUR',
+            'order_type'            => 'dine-in',
+        ]);
+
+        $ownedShared = CartItem::create([
+            'table_scan_session_id' => $this->session->id,
+            'menu_item_id'          => $this->menuItem->id,
+            'quantity'              => 2,
+            'order_ids'             => [$otherOrder->id],
+            'preparing_start_at'    => now(),
+        ]);
+
+        $sharedInto = CartItem::create([
+            'table_scan_session_id' => $otherSession->id,
+            'menu_item_id'          => $pizza->id,
+            'quantity'              => 1,
+            'order_ids'             => [$order->id],
+        ]);
+
+        $response = $this->withHeaders($this->headers)
+            ->getJson("/api/customer/orders/{$order->order_public_id}/tracking");
+
+        $response->assertOk()
+            ->assertJsonPath('items.0.cart_item_id', $ownedShared->id)
+            ->assertJsonPath('items.0.status', 'Preparing');
+
+        $sharedItems = collect($response->json('shared_items'))->keyBy('cart_item_id');
+
+        $this->assertSame(2, $sharedItems->count());
+        $this->assertSame(2, $sharedItems[$ownedShared->id]['shared_between']);
+        $this->assertSame(3.5, $sharedItems[$ownedShared->id]['my_share']);
+        $this->assertSame($otherOrder->id, $sharedItems[$ownedShared->id]['shared_with'][0]['order_id']);
+        $this->assertSame($other->id, $sharedItems[$ownedShared->id]['shared_with'][0]['customer_id']);
+        $this->assertSame('Bob Jones', $sharedItems[$ownedShared->id]['shared_with'][0]['customer_name']);
+        $this->assertSame(9.5, $sharedItems[$sharedInto->id]['my_share']);
+        $this->assertSame($order->id, $sharedItems[$sharedInto->id]['shared_with'][0]['order_id']);
+        $this->assertSame($this->customer->id, $sharedItems[$sharedInto->id]['shared_with'][0]['customer_id']);
+        $this->assertSame('Alice Smith', $sharedItems[$sharedInto->id]['shared_with'][0]['customer_name']);
     }
 }

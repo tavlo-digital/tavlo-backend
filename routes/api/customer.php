@@ -93,6 +93,7 @@ Route::middleware('auth:customer')->group(function () {
     Route::get('orders/history',                          [OrderHistoryController::class, 'history'])->name('orders.history');
     Route::get('orders/restaurants',                      [OrderHistoryController::class, 'restaurants'])->name('orders.restaurants');
     Route::get('orders/restaurants/{vendorPublicId}',     [OrderHistoryController::class, 'vendorOrders'])->name('orders.vendor');
+    Route::get('orders/{orderPublicId}/tracking',         [OrderHistoryController::class, 'tracking'])->name('orders.tracking');
     Route::get('orders/{orderPublicId}',                  [OrderHistoryController::class, 'show'])->name('orders.show');
 
     // Stripe Elements Payments
