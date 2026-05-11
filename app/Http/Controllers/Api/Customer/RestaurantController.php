@@ -3,13 +3,16 @@
 namespace App\Http\Controllers\Api\Customer;
 
 use App\Http\Controllers\Controller;
-use App\Models\Vendor;
+use App\Models\CartItem;
 use App\Models\MenuCategory;
 use App\Models\MenuItem;
 use App\Models\RestaurantTable;
+use App\Models\Vendor;
 use App\Models\VendorSetting;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Str;
 
 class RestaurantController extends Controller
 {
@@ -469,7 +472,7 @@ class RestaurantController extends Controller
             ->where('flagged', false)
             ->with([
                 'customer:id,first_name,last_name,profile_picture',
-                'order:id,items',
+                'order:id,table_scan_session_id',
             ]);
 
         if ($request->filled('rating')) {
@@ -489,45 +492,32 @@ class RestaurantController extends Controller
 
         $reviews = $query->paginate($request->integer('per_page', 20));
 
-        // Collect all distinct item names across the paginated reviews' orders,
-        // then look them up once in the vendor's menu for id/slug/image parity.
-        $itemNames = collect();
-        foreach ($reviews->getCollection() as $review) {
-            foreach ((array) ($review->order?->items ?? []) as $line) {
-                if (is_array($line) && !empty($line['name'])) {
-                    $itemNames->push($line['name']);
-                }
-            }
-        }
-        $itemNames = $itemNames->unique()->values();
+        $cartItemsByOrderId = $this->cartItemsByReviewOrder(
+            $reviews->getCollection()->pluck('order')->filter()
+        );
 
-        $menuLookup = $itemNames->isEmpty()
-            ? collect()
-            : MenuItem::where('vendor_id', $vendor->id)
-                ->whereIn('name', $itemNames)
-                ->get(['id', 'name', 'image_url'])
-                ->keyBy('name');
-
-        $reviews->getCollection()->transform(function ($review) use ($menuLookup) {
+        $reviews->getCollection()->transform(function ($review) use ($cartItemsByOrderId) {
             $customer = $review->customer;
             $reviewerName = $customer
                 ? trim(($customer->first_name ?? '') . ' ' . ($customer->last_name ?? ''))
                 : 'Anonymous';
 
-            $menuItems = [];
-            foreach ((array) ($review->order?->items ?? []) as $line) {
-                if (!is_array($line) || empty($line['name'])) {
-                    continue;
-                }
-                $match = $menuLookup->get($line['name']);
-                $menuItems[] = [
-                    'id'        => $match?->id,
-                    'name'      => $line['name'],
-                    'slug'      => \Illuminate\Support\Str::slug($line['name']),
-                    'image_url' => $match?->image_url,
-                    'quantity'  => (int) ($line['quantity'] ?? $line['qty'] ?? 1),
-                ];
-            }
+            $menuItems = $cartItemsByOrderId
+                ->get($review->order_id, collect())
+                ->map(function (CartItem $item) {
+                    $menuItem = $item->menuItem;
+                    $name = $menuItem?->name;
+
+                    return [
+                        'id'        => $menuItem?->id,
+                        'name'      => $name,
+                        'slug'      => $name ? Str::slug($name) : null,
+                        'image_url' => $menuItem?->image_url,
+                        'quantity'  => (int) $item->quantity,
+                    ];
+                })
+                ->values()
+                ->all();
 
             return [
                 'review_public_id' => $review->review_public_id,
@@ -578,6 +568,50 @@ class RestaurantController extends Controller
         ];
 
         return response()->json($payload);
+    }
+
+    private function cartItemsByReviewOrder(Collection $orders): Collection
+    {
+        $orders = $orders->filter()->keyBy('id');
+
+        if ($orders->isEmpty()) {
+            return collect();
+        }
+
+        $orderIds = $orders->keys()->map(fn ($id) => (int) $id)->values();
+        $sessionIds = $orders
+            ->pluck('table_scan_session_id')
+            ->filter()
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values();
+
+        $cartItems = CartItem::with('menuItem:id,name,image_url')
+            ->where(function ($query) use ($orderIds, $sessionIds) {
+                if ($sessionIds->isNotEmpty()) {
+                    $query->whereIn('table_scan_session_id', $sessionIds->all());
+                }
+
+                foreach ($orderIds as $orderId) {
+                    $query->orWhereJsonContains('order_ids', $orderId);
+                }
+            })
+            ->orderBy('id')
+            ->get();
+
+        return $orders->mapWithKeys(function ($order, int $orderId) use ($cartItems) {
+            $items = $cartItems
+                ->filter(function (CartItem $item) use ($order, $orderId) {
+                    $orderIds = array_map('intval', is_array($item->order_ids) ? $item->order_ids : []);
+
+                    return (int) $item->table_scan_session_id === (int) $order->table_scan_session_id
+                        || in_array($orderId, $orderIds, true);
+                })
+                ->unique('id')
+                ->values();
+
+            return [$orderId => $items];
+        });
     }
 
     /**

@@ -63,12 +63,21 @@ class CartController extends Controller
             ->whereIn('id', $sessionIds)
             ->get();
 
+        $orderedStatuses = ['confirmed', 'preparing', 'ready', 'delivered', 'completed'];
+
         $latestOrderAt = Order::whereIn('table_scan_session_id', $sessionIds)
+            ->whereIn('status', $orderedStatuses)
             ->selectRaw('table_scan_session_id, MAX(created_at) as latest_order_at')
             ->groupBy('table_scan_session_id')
             ->pluck('latest_order_at', 'table_scan_session_id');
 
-        $people = $sessions->map(function (TableScanSession $s) use ($mySession, $latestOrderAt) {
+        $orderedOrderIds = Order::whereIn('table_scan_session_id', $sessionIds)
+            ->whereIn('status', $orderedStatuses)
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        $people = $sessions->map(function (TableScanSession $s) use ($mySession, $latestOrderAt, $orderedOrderIds) {
             $orderCutoff = $latestOrderAt->get($s->id);
 
             return [
@@ -79,7 +88,7 @@ class CartController extends Controller
                     ? trim($s->customer->first_name . ' ' . $s->customer->last_name)
                     : 'Guest',
                 'personal_items' => $s->cartItems
-                    ->filter(fn(CartItem $item) => empty($item->order_ids)
+                    ->filter(fn(CartItem $item) => ! $this->cartItemBelongsToOrderedOrder($item, $orderedOrderIds)
                         && (! $orderCutoff || $item->created_at > $orderCutoff))
                     ->values()
                     ->map(fn(CartItem $item) => $this->itemPayload($item)),
@@ -101,6 +110,17 @@ class CartController extends Controller
             ] : null,
             'people' => $people->values(),
         ]);
+    }
+
+    private function cartItemBelongsToOrderedOrder(CartItem $item, array $orderedOrderIds): bool
+    {
+        if (empty($orderedOrderIds)) {
+            return false;
+        }
+
+        $itemOrderIds = array_map('intval', is_array($item->order_ids) ? $item->order_ids : []);
+
+        return ! empty(array_intersect($itemOrderIds, $orderedOrderIds));
     }
 
     /**

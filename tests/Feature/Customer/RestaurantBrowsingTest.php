@@ -2,10 +2,14 @@
 
 namespace Tests\Feature\Customer;
 
+use App\Models\CartItem;
 use App\Models\Customer;
 use App\Models\MenuCategory;
 use App\Models\MenuItem;
+use App\Models\Order;
 use App\Models\RestaurantTable;
+use App\Models\Review;
+use App\Models\TableScanSession;
 use App\Models\Vendor;
 use App\Models\VendorSetting;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -230,5 +234,85 @@ class RestaurantBrowsingTest extends TestCase
         $response->assertOk()
             ->assertJsonCount(1)
             ->assertJsonPath('0.name', 'Table 1');
+    }
+
+    // ----------------------------------------------------------------
+    // GET /api/customer/restaurants/{vendorPublicId}/reviews
+    // ----------------------------------------------------------------
+
+    public function test_restaurant_reviews_derive_menu_items_from_cart_items(): void
+    {
+        $customer = Customer::factory()->create([
+            'first_name' => 'John',
+            'last_name' => 'Diner',
+        ]);
+
+        $table = RestaurantTable::create([
+            'vendor_id' => $this->vendor->id,
+            'number' => 7,
+            'name' => 'Table 7',
+            'qr_token' => 'review-table-token',
+            'is_active' => true,
+            'qr_created_at' => now(),
+        ]);
+
+        $session = TableScanSession::create([
+            'vendor_id' => $this->vendor->id,
+            'restaurant_table_id' => $table->id,
+            'customer_id' => $customer->id,
+            'pin' => '1234',
+            'status' => 'active',
+            'scanned_at' => now(),
+        ]);
+
+        $category = MenuCategory::create([
+            'vendor_id' => $this->vendor->id,
+            'name' => 'Mains',
+            'slug' => 'mains',
+            'is_active' => true,
+            'sort_order' => 1,
+        ]);
+
+        $menuItem = MenuItem::create([
+            'vendor_id' => $this->vendor->id,
+            'menu_category_id' => $category->id,
+            'name' => 'Caesar Salad',
+            'price' => 8.50,
+            'image_url' => 'menu-items/57/photo.png',
+            'is_active' => true,
+            'available' => true,
+            'sort_order' => 1,
+        ]);
+
+        $order = Order::factory()->create([
+            'customer_id' => $customer->id,
+            'vendor_id' => $this->vendor->id,
+            'table_scan_session_id' => $session->id,
+        ]);
+
+        CartItem::create([
+            'table_scan_session_id' => $session->id,
+            'menu_item_id' => $menuItem->id,
+            'quantity' => 2,
+        ]);
+
+        Review::create([
+            'review_public_id' => 'rev_public_menu_items',
+            'customer_id' => $customer->id,
+            'vendor_id' => $this->vendor->id,
+            'order_id' => $order->id,
+            'rating' => 5,
+            'text' => 'Fresh and fast.',
+        ]);
+
+        $response = $this->getJson("/api/customer/restaurants/{$this->vendor->vendor_public_id}/reviews");
+
+        $response->assertOk()
+            ->assertJsonPath('data.0.menu_items.0.id', $menuItem->id)
+            ->assertJsonPath('data.0.menu_items.0.name', 'Caesar Salad')
+            ->assertJsonPath('data.0.menu_items.0.slug', 'caesar-salad')
+            ->assertJsonPath('data.0.menu_items.0.image_url', 'menu-items/57/photo.png')
+            ->assertJsonPath('data.0.menu_items.0.quantity', 2)
+            ->assertJsonPath('review_summary.total_reviews', 1);
     }
 }
