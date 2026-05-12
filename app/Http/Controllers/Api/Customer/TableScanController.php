@@ -44,6 +44,19 @@ class TableScanController extends Controller
         $customer = $request->user();
 
         $result = DB::transaction(function () use ($table, $vendor, $customer) {
+            $customerSession = TableScanSession::query()
+                ->where('restaurant_table_id', $table->id)
+                ->where('customer_id', $customer->id)
+                ->where('status', 'active')
+                ->where('pin', '!=', '')
+                ->lockForUpdate()
+                ->latest('id')
+                ->first();
+
+            if ($customerSession) {
+                return ['customer_session' => $customerSession];
+            }
+
             $activeSession = TableScanSession::query()
                 ->where('restaurant_table_id', $table->id)
                 ->where('status', 'active')
@@ -69,6 +82,17 @@ class TableScanController extends Controller
             return ['created' => $session];
         });
 
+        if (isset($result['customer_session'])) {
+            /** @var \App\Models\TableScanSession $session */
+            $session = $result['customer_session'];
+
+            return response()->json($this->sessionResponsePayload($session, $table, $vendor, [
+                'message'     => 'Table session was already started',
+                'status'      => 'active',
+                'requiresPin' => false,
+            ]), 201);
+        }
+
         if (isset($result['existing'])) {
             /** @var \App\Models\TableScanSession $existing */
             $existing = $result['existing'];
@@ -86,7 +110,7 @@ class TableScanController extends Controller
         return response()->json($this->sessionResponsePayload($session, $table, $vendor, [
             'message'     => 'Table session started',
             'status'      => 'active',
-            'requiresPin' => true,
+            'requiresPin' => false,
         ]), 201);
     }
 

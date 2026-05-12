@@ -24,8 +24,14 @@ class TableScanTest extends TestCase
         $this->customer = Customer::factory()->create();
         $this->vendor   = Vendor::factory()->create();
 
-        $token = $this->customer->createToken('test', ['role:customer'])->plainTextToken;
-        $this->headers = [
+        $this->headers = $this->headersFor($this->customer);
+    }
+
+    private function headersFor(Customer $customer): array
+    {
+        $token = $customer->createToken('test', ['role:customer'])->plainTextToken;
+
+        return [
             'Authorization' => "Bearer {$token}",
             'Accept'        => 'application/json',
         ];
@@ -45,6 +51,7 @@ class TableScanTest extends TestCase
     private function postScan(?string $token, ?array $headers = null)
     {
         $headers ??= $this->headers;
+        $this->app['auth']->forgetGuards();
 
         $server = [];
         foreach ($headers as $key => $value) {
@@ -100,7 +107,7 @@ class TableScanTest extends TestCase
             ->assertStatus(410);
     }
 
-    public function test_valid_scan_creates_active_session_with_pin_and_returns_payload(): void
+    public function test_valid_scan_creates_active_session_with_pin_without_requiring_pin_entry(): void
     {
         $table = $this->makeTable(['number' => 7, 'name' => 'T7']);
 
@@ -115,7 +122,8 @@ class TableScanTest extends TestCase
             ])
             ->assertJsonPath('table.number', 7)
             ->assertJsonPath('table.name', 'T7')
-            ->assertJsonPath('session.status', 'active');
+            ->assertJsonPath('session.status', 'active')
+            ->assertJsonPath('requiresPin', false);
 
         $pin = $response->json('pin');
         $this->assertMatchesRegularExpression('/^\d{4}$/', $pin);
@@ -126,6 +134,26 @@ class TableScanTest extends TestCase
             'customer_id'         => $this->customer->id,
             'status'              => 'active',
             'pin'                 => $pin,
+        ]);
+    }
+
+    public function test_guest_scan_without_existing_active_session_does_not_require_pin_entry(): void
+    {
+        $guest = Customer::factory()->create([
+            'account_type'        => 'guest',
+            'registration_source' => 'guest',
+        ]);
+        $table = $this->makeTable();
+
+        $this->postScan($table->qr_token, $this->headersFor($guest))
+            ->assertCreated()
+            ->assertJsonPath('requiresPin', false)
+            ->assertJsonPath('session.status', 'active');
+
+        $this->assertDatabaseHas('table_scan_sessions', [
+            'restaurant_table_id' => $table->id,
+            'customer_id'         => $guest->id,
+            'status'              => 'active',
         ]);
     }
 
@@ -192,7 +220,7 @@ class TableScanTest extends TestCase
         $this->assertDatabaseCount('table_scan_sessions', 2);
     }
 
-    public function test_second_scan_is_blocked_when_active_session_exists_for_table(): void
+    public function test_same_customer_second_scan_returns_existing_session_without_requiring_pin_entry(): void
     {
         $table = $this->makeTable();
 
@@ -201,10 +229,33 @@ class TableScanTest extends TestCase
             ->json();
 
         $this->postScan($table->qr_token, $this->headers)
+            ->assertCreated()
+            ->assertJson([
+                'message'     => 'Table session was already started',
+                'status'      => 'active',
+                'requiresPin' => false,
+                'pin'         => $first['pin'],
+            ])
+            ->assertJsonPath('session.id', $first['session']['id']);
+
+        $this->assertSame(1, TableScanSession::where('restaurant_table_id', $table->id)->where('status', 'active')->count());
+    }
+
+    public function test_other_customer_scan_is_blocked_when_active_session_exists_for_table(): void
+    {
+        $table = $this->makeTable();
+
+        $first = $this->postScan($table->qr_token, $this->headers)
+            ->assertCreated()
+            ->json();
+
+        $otherCustomer = Customer::factory()->create();
+
+        $this->postScan($table->qr_token, $this->headersFor($otherCustomer))
             ->assertStatus(409)
             ->assertJson([
-                'message' => 'This table already has an active session',
-                'status'  => 'active',
+                'message'     => 'This table already has an active session',
+                'status'      => 'active',
                 'requiresPin' => true,
             ]);
 
