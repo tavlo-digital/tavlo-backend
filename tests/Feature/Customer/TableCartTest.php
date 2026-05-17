@@ -54,6 +54,13 @@ class TableCartTest extends TestCase
             'menu_category_id' => $category->id,
             'name'             => 'Fries',
             'price'            => 3.50,
+            'vat_rate'         => 20,
+            'paid_addons'      => [
+                ['name' => 'Cheese sauce', 'price' => 1.50],
+                ['name' => 'Truffle mayo', 'price' => 2.00],
+            ],
+            'free_addons'      => ['Ketchup', 'Chili flakes'],
+            'removable_items'  => ['Salt'],
         ]);
 
         $this->session = TableScanSession::create([
@@ -115,6 +122,51 @@ class TableCartTest extends TestCase
 
         $response->assertOk();
         $this->assertCount(2, $response->json('people'));
+    }
+
+    public function test_get_cart_items_include_price_vat_and_line_total(): void
+    {
+        CartItem::create([
+            'table_scan_session_id' => $this->session->id,
+            'menu_item_id'          => $this->menuItem->id,
+            'quantity'              => 2,
+            'notes'                 => 'No salt',
+        ]);
+
+        $other = Customer::factory()->create(['first_name' => 'Bob', 'last_name' => 'Jones']);
+        $otherSession = TableScanSession::create([
+            'vendor_id'           => $this->vendor->id,
+            'restaurant_table_id' => $this->table->id,
+            'customer_id'         => $other->id,
+            'pin'                 => '',
+            'status'              => 'active',
+            'scanned_at'          => now(),
+        ]);
+
+        CartItem::create([
+            'table_scan_session_id' => $otherSession->id,
+            'menu_item_id'          => $this->menuItem->id,
+            'quantity'              => 1,
+        ]);
+
+        $response = $this->withHeaders($this->headers)
+            ->getJson('/api/customer/cart');
+
+        $response->assertOk();
+
+        $people = collect($response->json('people'))->keyBy('session_id');
+        $myItem = $people[$this->session->id]['personal_items'][0];
+        $otherItem = $people[$otherSession->id]['personal_items'][0];
+
+        $this->assertSame(3.5, $myItem['price']);
+        $this->assertSame(1.4, $myItem['vat_amount']);
+        $this->assertSame(7, $myItem['line_total']);
+        $this->assertSame(20, $myItem['menu_item']['vat_rate']);
+        $this->assertSame(1.4, $myItem['menu_item']['vat_amount']);
+        $this->assertSame('food', $myItem['menu_item']['tax_category']);
+
+        $this->assertSame(0.7, $otherItem['vat_amount']);
+        $this->assertSame(20, $otherItem['menu_item']['vat_rate']);
     }
 
     public function test_get_cart_does_not_include_closed_sessions(): void
@@ -245,16 +297,93 @@ class TableCartTest extends TestCase
             ]);
 
         $response->assertCreated()
-            ->assertJsonStructure(['id', 'quantity', 'notes', 'menu_item'])
+            ->assertJsonStructure(['id', 'quantity', 'notes', 'price', 'vat_amount', 'line_total', 'menu_item'])
             ->assertJsonPath('quantity', 2)
             ->assertJsonPath('notes', 'No salt')
-            ->assertJsonPath('menu_item.name', 'Fries');
+            ->assertJsonPath('price', 3.5)
+            ->assertJsonPath('vat_amount', 1.4)
+            ->assertJsonPath('line_total', 7)
+            ->assertJsonPath('menu_item.name', 'Fries')
+            ->assertJsonPath('menu_item.vat_rate', 20)
+            ->assertJsonPath('menu_item.vat_amount', 1.4);
 
         $this->assertDatabaseHas('cart_items', [
             'table_scan_session_id' => $this->session->id,
             'menu_item_id'          => $this->menuItem->id,
             'quantity'              => 2,
         ]);
+    }
+
+    public function test_add_item_accepts_customization_options(): void
+    {
+        $response = $this->withHeaders($this->headers)
+            ->postJson('/api/customer/cart/items', [
+                'menu_item_id' => $this->menuItem->id,
+                'quantity' => 2,
+                'paid_addons' => [
+                    ['name' => 'Cheese sauce', 'price' => 0],
+                ],
+                'free_addons' => ['Ketchup'],
+                'removed_items' => ['Salt'],
+            ]);
+
+        $response->assertCreated()
+            ->assertJsonPath('quantity', 2)
+            ->assertJsonPath('price', 5)
+            ->assertJsonPath('line_total', 10)
+            ->assertJsonPath('vat_amount', 2)
+            ->assertJsonPath('paid_addons.0.name', 'Cheese sauce')
+            ->assertJsonPath('paid_addons.0.price', 1.5)
+            ->assertJsonPath('free_addons.0', 'Ketchup')
+            ->assertJsonPath('removed_items.0', 'Salt');
+
+        $cart = $this->withHeaders($this->headers)->getJson('/api/customer/cart');
+
+        $cart->assertOk()
+            ->assertJsonPath('people.0.personal_items.0.paid_addons.0.name', 'Cheese sauce')
+            ->assertJsonPath('people.0.personal_items.0.free_addons.0', 'Ketchup')
+            ->assertJsonPath('people.0.personal_items.0.removed_items.0', 'Salt')
+            ->assertJsonPath('people.0.personal_items.0.line_total', 10);
+    }
+
+    public function test_add_item_rejects_unavailable_customization_options(): void
+    {
+        $response = $this->withHeaders($this->headers)
+            ->postJson('/api/customer/cart/items', [
+                'menu_item_id' => $this->menuItem->id,
+                'paid_addons' => [
+                    ['name' => 'Gold flakes', 'price' => 0],
+                ],
+            ]);
+
+        $response->assertUnprocessable()
+            ->assertJsonValidationErrors(['paid_addons']);
+    }
+
+    public function test_same_menu_item_with_different_customizations_creates_separate_cart_rows(): void
+    {
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/cart/items', [
+                'menu_item_id' => $this->menuItem->id,
+                'paid_addons' => [
+                    ['name' => 'Cheese sauce'],
+                ],
+            ])
+            ->assertCreated();
+
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/cart/items', [
+                'menu_item_id' => $this->menuItem->id,
+                'paid_addons' => [
+                    ['name' => 'Truffle mayo'],
+                ],
+            ])
+            ->assertCreated();
+
+        $response = $this->withHeaders($this->headers)->getJson('/api/customer/cart');
+
+        $response->assertOk()
+            ->assertJsonCount(2, 'people.0.personal_items');
     }
 
     public function test_add_item_defaults_quantity_to_1(): void
@@ -420,6 +549,48 @@ class TableCartTest extends TestCase
         $this->assertSame('Ready', $items[$ready->id]['status']);
         $this->assertSame('Served', $items[$served->id]['status']);
         $this->assertSame($served->fresh()->served_at->toIso8601String(), $items[$served->id]['served_at']);
+    }
+
+    public function test_table_history_items_include_vat_and_customizations(): void
+    {
+        $item = CartItem::create([
+            'table_scan_session_id' => $this->session->id,
+            'menu_item_id'          => $this->menuItem->id,
+            'quantity'              => 2,
+            'paid_addons'           => [
+                ['name' => 'Cheese sauce', 'price' => 1.50],
+            ],
+            'free_addons'           => ['Ketchup'],
+            'removed_items'         => ['Salt'],
+        ]);
+
+        Order::create([
+            'order_public_id'       => 'ord-history-customizations',
+            'customer_id'           => $this->customer->id,
+            'vendor_id'             => $this->vendor->id,
+            'table_scan_session_id' => $this->session->id,
+            'status'                => 'confirmed',
+            'amount'                => 10,
+            'currency'              => 'EUR',
+            'order_type'            => 'dine-in',
+        ]);
+
+        $response = $this->withHeaders($this->headers)
+            ->getJson('/api/customer/table/history');
+
+        $response->assertOk();
+
+        $payload = collect($response->json('people.0.order.items'))->keyBy('cart_item_id')[$item->id];
+
+        $this->assertSame(5, $payload['unit_price']);
+        $this->assertSame(10, $payload['line_total']);
+        $this->assertSame(20, $payload['vat_rate']);
+        $this->assertSame('food', $payload['tax_category']);
+        $this->assertSame(2, $payload['vat_amount']);
+        $this->assertSame('Cheese sauce', $payload['paid_addons'][0]['name']);
+        $this->assertSame(1.5, $payload['paid_addons'][0]['price']);
+        $this->assertSame('Ketchup', $payload['free_addons'][0]);
+        $this->assertSame('Salt', $payload['removed_items'][0]);
     }
 
     public function test_order_tracking_returns_own_items_and_empty_shared_items_by_default(): void

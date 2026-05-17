@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
 class ProfileController extends Controller
@@ -16,6 +17,11 @@ class ProfileController extends Controller
     public function show(Request $request): JsonResponse
     {
         $customer = $request->user();
+        $profile = $customer->toArray();
+        $profile['monthly_orders'] = $customer->orders()
+            ->whereBetween('created_at', [now()->startOfMonth(), now()->endOfMonth()])
+            ->count();
+        $profile['orders_count'] = $customer->orders()->count();
 
         $recentVendors = $customer->orders()
             ->with('vendor:id,vendor_public_id,restaurant_name,slug')
@@ -33,7 +39,7 @@ class ProfileController extends Controller
             ->get();
 
         return response()->json([
-            'profile'           => $customer,
+            'profile'           => $profile,
             'recent_restaurants' => $recentVendors,
             'loyalty_overview'  => $loyaltyOverview,
         ]);
@@ -45,6 +51,8 @@ class ProfileController extends Controller
     public function update(Request $request): JsonResponse
     {
         $validated = $request->validate([
+            'first_name'      => ['nullable', 'string', 'max:255'],
+            'last_name'       => ['nullable', 'string', 'max:255'],
             'gender'          => ['nullable', 'string', 'in:male,female,other,prefer_not_to_say'],
             'date_of_birth'   => ['nullable', 'date', 'before:today'],
             'address'         => ['nullable', 'string', 'max:500'],
@@ -56,6 +64,71 @@ class ProfileController extends Controller
         return response()->json([
             'message' => 'Profile updated.',
             'user'    => $request->user()->fresh(),
+        ]);
+    }
+
+    /**
+     * Change phone number.
+     */
+    public function changePhone(Request $request): JsonResponse
+    {
+        $customer = $request->user();
+
+        $validated = $request->validate([
+            'new_number' => [
+                'required',
+                'string',
+                'max:30',
+                Rule::unique('customers', 'phone')->ignore($customer->id),
+            ],
+        ]);
+
+        $updates = ['phone' => $validated['new_number']];
+        if ($validated['new_number'] !== $customer->phone) {
+            $updates['phone_verified'] = false;
+        }
+
+        $customer->update($updates);
+
+        return response()->json([
+            'message' => 'Phone number updated.',
+            'user'    => $customer->fresh(),
+        ]);
+    }
+
+    /**
+     * Change email address.
+     */
+    public function changeEmail(Request $request): JsonResponse
+    {
+        $customer = $request->user();
+
+        $validated = $request->validate([
+            'current_email' => ['required', 'email'],
+            'new_email'     => [
+                'required',
+                'email',
+                'max:255',
+                Rule::unique('customers', 'email')->ignore($customer->id),
+            ],
+        ]);
+
+        if (strtolower($validated['current_email']) !== strtolower($customer->email)) {
+            throw ValidationException::withMessages([
+                'current_email' => ['The current email address is incorrect.'],
+            ]);
+        }
+
+        $updates = ['email' => $validated['new_email']];
+        if (strtolower($validated['new_email']) !== strtolower($customer->email)) {
+            $updates['email_verified_at'] = null;
+        }
+
+        $customer->update($updates);
+
+        return response()->json([
+            'message' => 'Email address updated.',
+            'user'    => $customer->fresh(),
         ]);
     }
 

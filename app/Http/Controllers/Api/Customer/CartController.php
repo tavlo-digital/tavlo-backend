@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\Customer;
 
 use App\Http\Controllers\Controller;
 use App\Models\CartItem;
+use App\Models\MenuItem;
 use App\Models\Order;
 use App\Models\TableScanSession;
 use Illuminate\Http\JsonResponse;
@@ -11,6 +12,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 
 class CartController extends Controller
 {
@@ -56,7 +58,7 @@ class CartController extends Controller
 
         $sessions = TableScanSession::with([
             'customer:id,first_name,last_name',
-            'cartItems.menuItem:id,name,price,image_url',
+            'cartItems.menuItem:id,name,price,image_url,vat_rate,tax_category',
             'restaurantTable:id,number,name',
             'vendor:id,vendor_public_id,restaurant_name',
         ])
@@ -131,9 +133,18 @@ class CartController extends Controller
     public function addItem(Request $request): JsonResponse
     {
         $data = Validator::make($request->all(), [
-            'menu_item_id' => ['required', 'integer', 'exists:menu_items,id'],
-            'quantity'     => ['sometimes', 'integer', 'min:1', 'max:99'],
-            'notes'        => ['nullable', 'string', 'max:500'],
+            'menu_item_id'           => ['required', 'integer', 'exists:menu_items,id'],
+            'quantity'               => ['sometimes', 'integer', 'min:1', 'max:99'],
+            'notes'                  => ['nullable', 'string', 'max:500'],
+            'paid_addons'            => ['sometimes', 'array'],
+            'paid_addons.*.name'     => ['required_with:paid_addons', 'string', 'max:255'],
+            'paid_addons.*.price'    => ['sometimes', 'numeric', 'min:0'],
+            'free_addons'            => ['sometimes', 'array'],
+            'free_addons.*'          => ['string', 'max:255'],
+            'removed_items'          => ['sometimes', 'array'],
+            'removed_items.*'        => ['string', 'max:255'],
+            'removable_items'        => ['sometimes', 'array'],
+            'removable_items.*'      => ['string', 'max:255'],
         ])->validate();
 
         $mySession = $this->activeSession($request);
@@ -141,9 +152,13 @@ class CartController extends Controller
             return response()->json(['message' => 'No active table session found.'], 422);
         }
 
+        $menuItem = MenuItem::findOrFail($data['menu_item_id']);
+        $customizations = $this->normalizeCustomizations($menuItem, $data);
+
         $existing = CartItem::where('table_scan_session_id', $mySession->id)
             ->where('menu_item_id', $data['menu_item_id'])
-            ->first();
+            ->get()
+            ->first(fn (CartItem $cartItem) => $this->cartCustomizationsMatch($cartItem, $customizations));
 
         if ($existing) {
             $existing->update([
@@ -156,10 +171,13 @@ class CartController extends Controller
                 'menu_item_id'          => $data['menu_item_id'],
                 'quantity'              => $data['quantity'] ?? 1,
                 'notes'                 => $data['notes'] ?? null,
+                'paid_addons'           => $customizations['paid_addons'],
+                'free_addons'           => $customizations['free_addons'],
+                'removed_items'         => $customizations['removed_items'],
             ]);
         }
 
-        $item->load('menuItem:id,name,price,image_url');
+        $item->load('menuItem:id,name,price,image_url,vat_rate,tax_category');
 
         return response()->json($this->itemPayload($item), 201);
     }
@@ -172,8 +190,17 @@ class CartController extends Controller
     public function updateItem(Request $request, int $id): JsonResponse
     {
         $data = Validator::make($request->all(), [
-            'quantity' => ['sometimes', 'integer', 'min:1', 'max:99'],
-            'notes'    => ['nullable', 'string', 'max:500'],
+            'quantity'               => ['sometimes', 'integer', 'min:1', 'max:99'],
+            'notes'                  => ['nullable', 'string', 'max:500'],
+            'paid_addons'            => ['sometimes', 'array'],
+            'paid_addons.*.name'     => ['required_with:paid_addons', 'string', 'max:255'],
+            'paid_addons.*.price'    => ['sometimes', 'numeric', 'min:0'],
+            'free_addons'            => ['sometimes', 'array'],
+            'free_addons.*'          => ['string', 'max:255'],
+            'removed_items'          => ['sometimes', 'array'],
+            'removed_items.*'        => ['string', 'max:255'],
+            'removable_items'        => ['sometimes', 'array'],
+            'removable_items.*'      => ['string', 'max:255'],
         ])->validate();
 
         $mySession = $this->activeSession($request);
@@ -189,8 +216,22 @@ class CartController extends Controller
             return response()->json(['message' => 'Item not found.'], 404);
         }
 
-        $item->update(array_filter($data, fn($v) => $v !== null));
-        $item->load('menuItem:id,name,price,image_url');
+        $updates = array_filter(
+            array_intersect_key($data, array_flip(['quantity', 'notes'])),
+            fn ($v) => $v !== null
+        );
+        if (
+            array_key_exists('paid_addons', $data)
+            || array_key_exists('free_addons', $data)
+            || array_key_exists('removed_items', $data)
+            || array_key_exists('removable_items', $data)
+        ) {
+            $item->load('menuItem:id,paid_addons,free_addons,removable_items');
+            $updates = array_merge($updates, $this->normalizeCustomizations($item->menuItem, $data, $item));
+        }
+
+        $item->update($updates);
+        $item->load('menuItem:id,name,price,image_url,vat_rate,tax_category');
 
         return response()->json($this->itemPayload($item));
     }
@@ -255,8 +296,8 @@ class CartController extends Controller
             $isMe = $s->id === $mySession->id;
 
             $items = $s->cartItems->map(function (CartItem $item) use ($isMe, &$personalTotal, &$personalCount, &$tableTotal, &$tableItemCount) {
-                $unitPrice = $item->menuItem ? (float) $item->menuItem->price : 0.0;
-                $lineTotal = round($unitPrice * $item->quantity, 2);
+                $unitPrice = $this->cartItemUnitPrice($item);
+                $lineTotal = $this->cartItemLineTotal($item);
 
                 $personalTotal += $lineTotal;
                 $personalCount += $item->quantity;
@@ -270,6 +311,9 @@ class CartController extends Controller
                     'image_url'    => $item->menuItem?->image_url,
                     'quantity'     => $item->quantity,
                     'unit_price'   => $unitPrice,
+                    'paid_addons'  => $item->paid_addons ?? [],
+                    'free_addons'  => $item->free_addons ?? [],
+                    'removed_items' => $item->removed_items ?? [],
                     'total_price'  => $lineTotal,
                     'is_mine'      => $isMe,
                 ];
@@ -324,8 +368,7 @@ class CartController extends Controller
 
         $myTotal = 0.0;
         foreach ($myCartItems as $item) {
-            $unitPrice  = $item->menuItem ? (float) $item->menuItem->price : 0.0;
-            $lineTotal  = $unitPrice * $item->quantity;
+            $lineTotal  = $this->cartItemLineTotal($item);
             $shareCount = 1 + count($item->order_ids ?? []);
             $myTotal   += $lineTotal / $shareCount;
         }
@@ -498,15 +541,13 @@ class CartController extends Controller
         $total = 0.0;
 
         foreach ($owned as $item) {
-            $unitPrice  = $item->menuItem ? (float) $item->menuItem->price : 0.0;
-            $lineTotal  = $unitPrice * $item->quantity;
+            $lineTotal  = $this->cartItemLineTotal($item);
             $shareCount = 1 + count($item->order_ids ?? []);
             $total     += $lineTotal / $shareCount;
         }
 
         foreach ($sharedInto as $item) {
-            $unitPrice  = $item->menuItem ? (float) $item->menuItem->price : 0.0;
-            $lineTotal  = $unitPrice * $item->quantity;
+            $lineTotal  = $this->cartItemLineTotal($item);
             $shareCount = 1 + count($item->order_ids ?? []);
             $total     += $lineTotal / $shareCount;
         }
@@ -537,7 +578,7 @@ class CartController extends Controller
             ->get()
             ->groupBy('table_scan_session_id');
 
-        $allCartItems = CartItem::with('menuItem:id,name,price,image_url')
+        $allCartItems = CartItem::with('menuItem:id,name,price,image_url,vat_rate,tax_category')
             ->whereIn('table_scan_session_id', $sessionIds)
             ->get();
 
@@ -627,8 +668,10 @@ class CartController extends Controller
      */
     private function cartItemPayload(CartItem $ci, Order $order, TableScanSession $mySession, $ordersById = null, $sessionCustomerNames = null): array
     {
-        $unitPrice = $ci->menuItem ? (float) $ci->menuItem->price : 0.0;
-        $lineTotal = round($unitPrice * $ci->quantity, 2);
+        $unitPrice = $this->cartItemUnitPrice($ci);
+        $lineTotal = $this->cartItemLineTotal($ci);
+        $vatRate = $ci->menuItem ? (float) $ci->menuItem->vat_rate : 0.0;
+        $vatAmount = round($lineTotal * ($vatRate / 100), 2);
         $orderIds  = array_values(array_map('intval', is_array($ci->order_ids) ? $ci->order_ids : []));
         $sharedBetween = 1 + count($orderIds);
         $myShare   = round($lineTotal / $sharedBetween, 2);
@@ -655,6 +698,12 @@ class CartController extends Controller
             'image_url'          => $ci->menuItem?->image_url,
             'quantity'           => $ci->quantity,
             'unit_price'         => $unitPrice,
+            'paid_addons'        => $ci->paid_addons ?? [],
+            'free_addons'        => $ci->free_addons ?? [],
+            'removed_items'      => $ci->removed_items ?? [],
+            'vat_rate'           => $vatRate,
+            'tax_category'       => $ci->menuItem?->tax_category,
+            'vat_amount'         => $vatAmount,
             'line_total'         => $lineTotal,
             'is_mine'            => (int) $ci->table_scan_session_id === (int) $mySession->id,
             'shared_between'     => $sharedBetween,
@@ -721,19 +770,133 @@ class CartController extends Controller
         ];
     }
 
+    private function normalizeCustomizations(MenuItem $menuItem, array $data, ?CartItem $existing = null): array
+    {
+        return [
+            'paid_addons' => array_key_exists('paid_addons', $data)
+                ? $this->normalizePaidAddons($menuItem, $data['paid_addons'] ?? [])
+                : ($existing?->paid_addons ?? []),
+            'free_addons' => array_key_exists('free_addons', $data)
+                ? $this->normalizeStringSelections('free_addons', $menuItem->free_addons ?? [], $data['free_addons'] ?? [])
+                : ($existing?->free_addons ?? []),
+            'removed_items' => (array_key_exists('removed_items', $data) || array_key_exists('removable_items', $data))
+                ? $this->normalizeStringSelections(
+                    'removed_items',
+                    $menuItem->removable_items ?? [],
+                    $data['removed_items'] ?? $data['removable_items'] ?? []
+                )
+                : ($existing?->removed_items ?? []),
+        ];
+    }
+
+    private function normalizePaidAddons(MenuItem $menuItem, array $selected): array
+    {
+        $configured = collect($menuItem->paid_addons ?? [])
+            ->filter(fn ($addon) => is_array($addon) && isset($addon['name']))
+            ->mapWithKeys(fn ($addon) => [
+                strtolower(trim((string) $addon['name'])) => [
+                    'name' => (string) $addon['name'],
+                    'price' => round((float) ($addon['price'] ?? 0), 2),
+                ],
+            ]);
+
+        $normalized = collect($selected)
+            ->map(function ($addon) use ($configured) {
+                $name = is_array($addon) ? trim((string) ($addon['name'] ?? '')) : '';
+                $matched = $configured->get(strtolower($name));
+
+                if (! $matched) {
+                    throw ValidationException::withMessages([
+                        'paid_addons' => ["The selected paid add-on '{$name}' is not available for this menu item."],
+                    ]);
+                }
+
+                return $matched;
+            })
+            ->unique('name')
+            ->sortBy('name')
+            ->values()
+            ->all();
+
+        return $normalized;
+    }
+
+    private function normalizeStringSelections(string $field, array $configured, array $selected): array
+    {
+        $available = collect($configured)
+            ->filter(fn ($item) => is_string($item) && trim($item) !== '')
+            ->mapWithKeys(fn ($item) => [strtolower(trim($item)) => trim($item)]);
+
+        return collect($selected)
+            ->map(function ($item) use ($field, $available) {
+                $value = trim((string) $item);
+                $matched = $available->get(strtolower($value));
+
+                if (! $matched) {
+                    throw ValidationException::withMessages([
+                        $field => ["The selected {$field} value '{$value}' is not available for this menu item."],
+                    ]);
+                }
+
+                return $matched;
+            })
+            ->unique()
+            ->sort()
+            ->values()
+            ->all();
+    }
+
+    private function cartCustomizationsMatch(CartItem $item, array $customizations): bool
+    {
+        return ($item->paid_addons ?? []) === $customizations['paid_addons']
+            && ($item->free_addons ?? []) === $customizations['free_addons']
+            && ($item->removed_items ?? []) === $customizations['removed_items'];
+    }
+
+    private function selectedPaidAddonsTotal(CartItem $item): float
+    {
+        return round(collect($item->paid_addons ?? [])->sum(fn ($addon) => (float) ($addon['price'] ?? 0)), 2);
+    }
+
+    private function cartItemUnitPrice(CartItem $item): float
+    {
+        $basePrice = $item->menuItem ? (float) $item->menuItem->price : 0.0;
+
+        return round($basePrice + $this->selectedPaidAddonsTotal($item), 2);
+    }
+
+    private function cartItemLineTotal(CartItem $item): float
+    {
+        return round($this->cartItemUnitPrice($item) * (int) $item->quantity, 2);
+    }
+
     private function itemPayload(CartItem $item): array
     {
         $menuItem = $item->relationLoaded('menuItem') ? $item->menuItem : null;
+        $basePrice = $menuItem ? (float) $menuItem->price : 0.0;
+        $price = $this->cartItemUnitPrice($item);
+        $vatRate = $menuItem ? (float) $menuItem->vat_rate : 0.0;
+        $lineTotal = $this->cartItemLineTotal($item);
+        $vatAmount = round($lineTotal * ($vatRate / 100), 2);
 
         return [
-            'id'        => $item->id,
-            'quantity'  => $item->quantity,
-            'notes'     => $item->notes,
-            'menu_item' => $menuItem ? [
-                'id'        => $menuItem->id,
-                'name'      => $menuItem->name,
-                'price'     => (float) $menuItem->price,
-                'image_url' => $menuItem->image_url,
+            'id'         => $item->id,
+            'quantity'   => $item->quantity,
+            'notes'      => $item->notes,
+            'price'      => $price,
+            'paid_addons' => $item->paid_addons ?? [],
+            'free_addons' => $item->free_addons ?? [],
+            'removed_items' => $item->removed_items ?? [],
+            'vat_amount' => $vatAmount,
+            'line_total' => $lineTotal,
+            'menu_item'  => $menuItem ? [
+                'id'           => $menuItem->id,
+                'name'         => $menuItem->name,
+                'price'        => $basePrice,
+                'vat_rate'     => $vatRate,
+                'vat_amount'   => $vatAmount,
+                'tax_category' => $menuItem->tax_category,
+                'image_url'    => $menuItem->image_url,
             ] : null,
         ];
     }

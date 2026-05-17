@@ -402,12 +402,20 @@ class PaymentController extends Controller
             ->get();
 
         return round($owned->merge($sharedInto)->sum(function (CartItem $item) {
-            $unitPrice = $item->menuItem ? (float) $item->menuItem->price : 0.0;
+            $unitPrice = $this->cartItemUnitPrice($item);
             $lineTotal = $unitPrice * $item->quantity;
             $shareCount = 1 + count($item->order_ids ?? []);
 
             return $lineTotal / $shareCount;
         }), 2);
+    }
+
+    private function cartItemUnitPrice(CartItem $item): float
+    {
+        $basePrice = $item->menuItem ? (float) $item->menuItem->price : 0.0;
+        $addonsTotal = collect($item->paid_addons ?? [])->sum(fn ($addon) => (float) ($addon['price'] ?? 0));
+
+        return round($basePrice + $addonsTotal, 2);
     }
 
     private function stripeAmountMinor(float $amount, string $currency): int

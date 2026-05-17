@@ -5,9 +5,11 @@ namespace App\Http\Controllers\Api\Customer;
 use App\Http\Controllers\Controller;
 use App\Models\Review;
 use App\Models\Order;
+use App\Models\Vendor;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 
 class ReviewController extends Controller
 {
@@ -25,39 +27,44 @@ class ReviewController extends Controller
     }
 
     /**
-     * Create a new review for an order.
+     * Create a new review for a vendor the customer has ordered from.
      */
     public function store(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'order_public_id' => ['required', 'string', 'exists:orders,order_public_id'],
+            'vendor_public_id' => ['required', 'string', 'exists:vendors,vendor_public_id'],
             'rating'          => ['required', 'integer', 'min:1', 'max:5'],
-            'text'            => ['nullable', 'string', 'max:2000'],
-            'images'          => ['nullable', 'array', 'max:5'],
-            'images.*'        => ['string', 'max:500'],
+            'review'          => ['nullable', 'string', 'max:2000'],
         ]);
 
-        $order = Order::where('order_public_id', $validated['order_public_id'])
-            ->where('customer_id', $request->user()->id)
-            ->firstOrFail();
+        $vendor = Vendor::where('vendor_public_id', $validated['vendor_public_id'])->firstOrFail();
 
-        // Check if review already exists for this order
-        $existing = Review::where('order_id', $order->id)
+        $order = Order::where('vendor_id', $vendor->id)
+            ->where('customer_id', $request->user()->id)
+            ->latest('created_at')
+            ->first();
+
+        if (! $order) {
+            throw ValidationException::withMessages([
+                'vendor_public_id' => ['You must place an order with this restaurant before reviewing it.'],
+            ]);
+        }
+
+        $existing = Review::where('vendor_id', $vendor->id)
             ->where('customer_id', $request->user()->id)
             ->first();
 
         if ($existing) {
-            return response()->json(['message' => 'You have already reviewed this order.'], 422);
+            return response()->json(['message' => 'You have already reviewed this restaurant.'], 422);
         }
 
         $review = Review::create([
             'review_public_id' => 'rev_' . Str::random(16),
             'customer_id'      => $request->user()->id,
-            'vendor_id'        => $order->vendor_id,
+            'vendor_id'        => $vendor->id,
             'order_id'         => $order->id,
             'rating'           => $validated['rating'],
-            'text'             => $validated['text'] ?? null,
-            'images'           => $validated['images'] ?? null,
+            'text'             => $validated['review'] ?? null,
         ]);
 
         return response()->json([

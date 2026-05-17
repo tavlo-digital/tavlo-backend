@@ -16,7 +16,12 @@ class FavoriteController extends Controller
     {
         $favorites = $request->user()
             ->favorites()
-            ->with('vendorSetting:id,vendor_id,logo_url,cover_photo_url,description,business_hours')
+            ->with([
+                'vendorSetting:id,vendor_id,logo_url,cover_photo_url,description,business_hours',
+                'menuCategories' => fn ($query) => $query
+                    ->where('is_active', true)
+                    ->select('id', 'vendor_id', 'name'),
+            ])
             ->withAvg('reviews', 'rating')
             ->withCount('reviews')
             ->get([
@@ -56,6 +61,8 @@ class FavoriteController extends Controller
                 'review_count'     => $vendor->reviews_count ?? 0,
                 'is_open'          => $isOpen,
                 'status'           => $isOpen ? 'Open' : 'Closed',
+                'business_hours'   => $businessHours ?: null,
+                'cuisines'         => $vendor->menuCategories->pluck('name')->unique()->values(),
             ];
         });
 

@@ -357,12 +357,18 @@ class RestaurantController extends Controller
                 'has_discount'      => (bool) $item->has_discount,
                 'discount_percent'  => $item->has_discount ? (float) $item->discount_percent : null,
                 'discounted_price'  => $item->has_discount ? (float) $item->discounted_price : null,
+                'vat_rate'          => (float) $item->vat_rate,
+                'tax_category'      => $item->tax_category,
+                'vat_amount'        => $this->menuItemVatAmount($item),
                 'rating'            => (float) ($item->rating ?? 0),
                 'review_count'      => (int) ($item->review_count ?? 0),
                 'ordered_count'     => (int) ($item->ordered_count ?? 0),
                 'popularity_rank'   => $rank !== false ? $rank + 1 : null,
                 'calories'          => $item->calories,
                 'dietary_preference' => $item->dietary_preference,
+                'paid_addons'       => $item->paid_addons ?? [],
+                'free_addons'       => $item->free_addons ?? [],
+                'removable_items'   => $item->removable_items ?? [],
                 'category'          => $item->category ? [
                     'id'   => $item->category->id,
                     'name' => $item->category->name,
@@ -406,6 +412,9 @@ class RestaurantController extends Controller
             'has_discount'       => (bool) $item->has_discount,
             'discount_percent'   => $item->has_discount ? (float) $item->discount_percent : null,
             'discounted_price'   => $item->has_discount ? (float) $item->discounted_price : null,
+            'vat_rate'           => (float) $item->vat_rate,
+            'tax_category'       => $item->tax_category,
+            'vat_amount'         => $this->menuItemVatAmount($item),
             'available'          => (bool) $item->available,
             'rating'             => (float) ($item->rating ?? 0),
             'review_count'       => (int) ($item->review_count ?? 0),
@@ -415,6 +424,9 @@ class RestaurantController extends Controller
             'carbs'              => $item->carbs ? (float) $item->carbs : null,
             'protein'            => $item->protein ? (float) $item->protein : null,
             'dietary_preference' => $item->dietary_preference,
+            'paid_addons'        => $item->paid_addons ?? [],
+            'free_addons'        => $item->free_addons ?? [],
+            'removable_items'    => $item->removable_items ?? [],
             'ingredients'        => $item->ingredients,
             'category'           => $item->category ? [
                 'id'   => $item->category->id,
@@ -445,6 +457,15 @@ class RestaurantController extends Controller
                 ]),
             ]),
         ]);
+    }
+
+    private function menuItemVatAmount(MenuItem $item): float
+    {
+        $effectivePrice = $item->has_discount && $item->discounted_price !== null
+            ? (float) $item->discounted_price
+            : (float) $item->price;
+
+        return round($effectivePrice * ((float) $item->vat_rate / 100), 2);
     }
 
     /**

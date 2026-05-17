@@ -68,7 +68,9 @@ Route::middleware('auth:customer')->group(function () {
 
     // Profile
     Route::get('profile',              [ProfileController::class, 'show'])->name('profile.show');
-    Route::patch('profile',            [ProfileController::class, 'update'])->name('profile.update');
+    Route::match(['patch', 'put'], 'profile', [ProfileController::class, 'update'])->name('profile.update');
+    Route::put('profile/change-phone', [ProfileController::class, 'changePhone'])->name('profile.phone');
+    Route::match(['put', 'post'], 'profile/change-email', [ProfileController::class, 'changeEmail'])->name('profile.email');
     Route::post('profile/password',    [ProfileController::class, 'changePassword'])->name('profile.password');
 
     // Table session flow

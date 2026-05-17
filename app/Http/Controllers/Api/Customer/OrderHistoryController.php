@@ -208,7 +208,7 @@ class OrderHistoryController extends Controller
     private function formatHistoryItem(CartItem $item): array
     {
         $menuItem = $item->menuItem;
-        $unitPrice = (float) ($menuItem?->price ?? 0);
+        $unitPrice = $this->cartItemUnitPrice($item);
         $lineTotal = round($unitPrice * $item->quantity, 2);
 
         return [
@@ -220,6 +220,9 @@ class OrderHistoryController extends Controller
             'line_total' => $lineTotal,
             'image_url' => $this->media->url($menuItem?->image_url),
             'notes' => $item->notes,
+            'paid_addons' => $item->paid_addons ?? [],
+            'free_addons' => $item->free_addons ?? [],
+            'removed_items' => $item->removed_items ?? [],
         ];
     }
 
@@ -299,7 +302,7 @@ class OrderHistoryController extends Controller
     private function formatTrackingItem(CartItem $item): array
     {
         $menuItem = $item->menuItem;
-        $unitPrice = (float) ($menuItem?->price ?? 0);
+        $unitPrice = $this->cartItemUnitPrice($item);
         $lineTotal = round($unitPrice * $item->quantity, 2);
 
         return [
@@ -312,7 +315,18 @@ class OrderHistoryController extends Controller
             'line_total' => $lineTotal,
             'status' => $this->cartItemStatus($item),
             'notes' => $item->notes,
+            'paid_addons' => $item->paid_addons ?? [],
+            'free_addons' => $item->free_addons ?? [],
+            'removed_items' => $item->removed_items ?? [],
         ];
+    }
+
+    private function cartItemUnitPrice(CartItem $item): float
+    {
+        $basePrice = (float) ($item->menuItem?->price ?? 0);
+        $addonsTotal = collect($item->paid_addons ?? [])->sum(fn ($addon) => (float) ($addon['price'] ?? 0));
+
+        return round($basePrice + $addonsTotal, 2);
     }
 
     private function formatTrackingSharedItem(CartItem $item, Collection $ordersById, Collection $sessionCustomerNames): array

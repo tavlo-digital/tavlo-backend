@@ -414,11 +414,29 @@ class CustomerFeaturesTest extends TestCase
     public function test_can_list_favorites(): void
     {
         $this->customer->favorites()->attach($this->vendor->id);
+        $this->vendor->vendorSetting()->update([
+            'business_hours' => [
+                strtolower(now()->format('l')) => [
+                    'open' => '00:00',
+                    'close' => '23:59',
+                    'closed' => false,
+                ],
+            ],
+        ]);
+        MenuCategory::create([
+            'vendor_id' => $this->vendor->id,
+            'name' => 'Burgers',
+            'slug' => 'burgers',
+            'is_active' => true,
+            'sort_order' => 1,
+        ]);
 
         $response = $this->getJson('/api/customer/favorites', $this->headers);
 
         $response->assertOk()
-            ->assertJsonCount(1);
+            ->assertJsonCount(1)
+            ->assertJsonPath('0.business_hours.' . strtolower(now()->format('l')) . '.closed', false)
+            ->assertJsonPath('0.cuisines.0', 'Burgers');
     }
 
     public function test_can_remove_favorite(): void
@@ -449,13 +467,28 @@ class CustomerFeaturesTest extends TestCase
         ]);
 
         $response = $this->postJson('/api/customer/reviews', [
-            'order_public_id' => $order->order_public_id,
+            'vendor_public_id' => $this->vendor->vendor_public_id,
             'rating'          => 5,
-            'text'            => 'Amazing food!',
+            'review'          => 'Amazing food!',
         ], $this->headers);
 
         $response->assertCreated()
-            ->assertJsonPath('review.rating', 5);
+            ->assertJsonPath('review.rating', 5)
+            ->assertJsonPath('review.vendor_id', $this->vendor->id)
+            ->assertJsonPath('review.order_id', $order->id)
+            ->assertJsonPath('review.text', 'Amazing food!');
+    }
+
+    public function test_cannot_review_vendor_without_order(): void
+    {
+        $response = $this->postJson('/api/customer/reviews', [
+            'vendor_public_id' => $this->vendor->vendor_public_id,
+            'rating'           => 5,
+            'review'           => 'Amazing food!',
+        ], $this->headers);
+
+        $response->assertUnprocessable()
+            ->assertJsonValidationErrors(['vendor_public_id']);
     }
 
     public function test_cannot_review_same_order_twice(): void
@@ -474,8 +507,9 @@ class CustomerFeaturesTest extends TestCase
         ]);
 
         $response = $this->postJson('/api/customer/reviews', [
-            'order_public_id' => $order->order_public_id,
-            'rating'          => 5,
+            'vendor_public_id' => $this->vendor->vendor_public_id,
+            'rating'           => 5,
+            'review'           => 'Another review',
         ], $this->headers);
 
         $response->assertStatus(422);

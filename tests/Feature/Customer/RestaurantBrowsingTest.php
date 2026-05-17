@@ -158,6 +158,13 @@ class RestaurantBrowsingTest extends TestCase
             'menu_category_id' => $category->id,
             'name'             => 'Schnitzel',
             'price'            => 14.90,
+            'vat_rate'         => 10,
+            'tax_category'     => 'food',
+            'paid_addons'      => [
+                ['name' => 'Extra cheese', 'price' => 1.50],
+            ],
+            'free_addons'      => ['Ketchup'],
+            'removable_items'  => ['Onions'],
             'is_active'        => true,
             'available'        => true,
             'sort_order'       => 1,
@@ -167,7 +174,46 @@ class RestaurantBrowsingTest extends TestCase
 
         $response->assertOk()
             ->assertJsonCount(1)
-            ->assertJsonPath('0.name', 'Schnitzel');
+            ->assertJsonPath('0.name', 'Schnitzel')
+            ->assertJsonPath('0.vat_rate', 10)
+            ->assertJsonPath('0.tax_category', 'food')
+            ->assertJsonPath('0.vat_amount', 1.49)
+            ->assertJsonPath('0.paid_addons.0.name', 'Extra cheese')
+            ->assertJsonPath('0.paid_addons.0.price', 1.5)
+            ->assertJsonPath('0.free_addons.0', 'Ketchup')
+            ->assertJsonPath('0.removable_items.0', 'Onions');
+    }
+
+    public function test_restaurant_menu_vat_amount_uses_discounted_price(): void
+    {
+        $category = MenuCategory::create([
+            'vendor_id' => $this->vendor->id,
+            'name'      => 'Mains',
+            'slug'      => 'discounted-mains',
+            'is_active' => true,
+            'sort_order' => 1,
+        ]);
+
+        MenuItem::create([
+            'vendor_id'        => $this->vendor->id,
+            'menu_category_id' => $category->id,
+            'name'             => 'Discounted Pasta',
+            'price'            => 20.00,
+            'has_discount'     => true,
+            'discount_percent' => 25,
+            'discounted_price' => 15.00,
+            'vat_rate'         => 10,
+            'tax_category'     => 'food',
+            'is_active'        => true,
+            'available'        => true,
+            'sort_order'       => 1,
+        ]);
+
+        $response = $this->getJson("/api/customer/restaurants/{$this->vendor->vendor_public_id}/menu");
+
+        $response->assertOk()
+            ->assertJsonPath('0.discounted_price', 15)
+            ->assertJsonPath('0.vat_amount', 1.5);
     }
 
     public function test_can_filter_menu_by_category(): void
@@ -213,6 +259,46 @@ class RestaurantBrowsingTest extends TestCase
         $response->assertOk()
             ->assertJsonCount(1)
             ->assertJsonPath('0.name', 'Steak');
+    }
+
+    public function test_can_get_restaurant_menu_item_detail_with_vat(): void
+    {
+        $category = MenuCategory::create([
+            'vendor_id' => $this->vendor->id,
+            'name'      => 'Mains',
+            'slug'      => 'detail-mains',
+            'is_active' => true,
+            'sort_order' => 1,
+        ]);
+
+        $item = MenuItem::create([
+            'vendor_id'        => $this->vendor->id,
+            'menu_category_id' => $category->id,
+            'name'             => 'Caesar Salad',
+            'price'            => 12.50,
+            'vat_rate'         => 20,
+            'tax_category'     => 'food',
+            'paid_addons'      => [
+                ['name' => 'Grilled chicken', 'price' => 3.00],
+            ],
+            'free_addons'      => ['Croutons'],
+            'removable_items'  => ['Parmesan'],
+            'is_active'        => true,
+            'available'        => true,
+            'sort_order'       => 1,
+        ]);
+
+        $response = $this->getJson("/api/customer/restaurants/{$this->vendor->vendor_public_id}/menu/{$item->id}");
+
+        $response->assertOk()
+            ->assertJsonPath('name', 'Caesar Salad')
+            ->assertJsonPath('vat_rate', 20)
+            ->assertJsonPath('tax_category', 'food')
+            ->assertJsonPath('vat_amount', 2.5)
+            ->assertJsonPath('paid_addons.0.name', 'Grilled chicken')
+            ->assertJsonPath('paid_addons.0.price', 3)
+            ->assertJsonPath('free_addons.0', 'Croutons')
+            ->assertJsonPath('removable_items.0', 'Parmesan');
     }
 
     // ----------------------------------------------------------------

@@ -12,6 +12,9 @@ class CartItem extends Model
         'menu_item_id',
         'quantity',
         'notes',
+        'paid_addons',
+        'free_addons',
+        'removed_items',
         'order_ids',
         'preparing_start_at',
         'ready_at',
@@ -22,6 +25,9 @@ class CartItem extends Model
     {
         return [
             'quantity'           => 'integer',
+            'paid_addons'        => 'array',
+            'free_addons'        => 'array',
+            'removed_items'      => 'array',
             'order_ids'          => 'array',
             'preparing_start_at' => 'datetime',
             'ready_at'           => 'datetime',
