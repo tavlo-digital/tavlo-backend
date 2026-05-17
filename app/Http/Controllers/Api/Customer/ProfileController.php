@@ -19,11 +19,18 @@ class ProfileController extends Controller
         $customer = $request->user();
         $profile = $customer->toArray();
         $profile['monthly_orders'] = $customer->orders()
+            ->where('payment_received', true)
+            ->where('status', '!=', 'draft')
             ->whereBetween('created_at', [now()->startOfMonth(), now()->endOfMonth()])
             ->count();
-        $profile['orders_count'] = $customer->orders()->count();
+        $profile['orders_count'] = $customer->orders()
+            ->where('payment_received', true)
+            ->where('status', '!=', 'draft')
+            ->count();
 
         $recentVendors = $customer->orders()
+            ->where('payment_received', true)
+            ->where('status', '!=', 'draft')
             ->with('vendor:id,vendor_public_id,restaurant_name,slug')
             ->select('vendor_id', 'created_at')
             ->orderByDesc('created_at')

@@ -41,12 +41,14 @@ class ReviewController extends Controller
 
         $order = Order::where('vendor_id', $vendor->id)
             ->where('customer_id', $request->user()->id)
+            ->where('payment_received', true)
+            ->where('status', '!=', 'draft')
             ->latest('created_at')
             ->first();
 
         if (! $order) {
             throw ValidationException::withMessages([
-                'vendor_public_id' => ['You must place an order with this restaurant before reviewing it.'],
+                'vendor_public_id' => ['You must have a paid order with this restaurant before reviewing it.'],
             ]);
         }
 

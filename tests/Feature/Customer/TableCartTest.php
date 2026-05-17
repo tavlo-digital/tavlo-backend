@@ -6,6 +6,8 @@ use App\Models\CartItem;
 use App\Models\Customer;
 use App\Models\MenuItem;
 use App\Models\MenuCategory;
+use App\Models\ModifierGroup;
+use App\Models\ModifierOption;
 use App\Models\Order;
 use App\Models\RestaurantTable;
 use App\Models\TableScanSession;
@@ -221,7 +223,7 @@ class TableCartTest extends TestCase
             'table_scan_session_id' => $otherSession->id,
             'menu_item_id'          => $this->menuItem->id,
             'quantity'              => 2,
-            'order_ids'             => [$draft->id],
+            'shared_order_ids'             => [$draft->id],
         ]);
 
         $response = $this->withHeaders($this->headers)
@@ -243,7 +245,7 @@ class TableCartTest extends TestCase
         ]);
         $item->forceFill(['created_at' => now()->subMinute()])->save();
 
-        Order::create([
+        $order = Order::create([
             'order_public_id'       => 'ord-confirmed-cart-hidden',
             'customer_id'           => $this->customer->id,
             'vendor_id'             => $this->vendor->id,
@@ -252,6 +254,7 @@ class TableCartTest extends TestCase
             'amount'                => 3.50,
             'currency'              => 'EUR',
         ]);
+        $item->update(['order_id' => $order->id]);
 
         $response = $this->withHeaders($this->headers)
             ->getJson('/api/customer/cart');
@@ -346,6 +349,80 @@ class TableCartTest extends TestCase
             ->assertJsonPath('people.0.personal_items.0.line_total', 10);
     }
 
+    public function test_add_item_accepts_selected_modifier_groups_and_prices_them(): void
+    {
+        $group = ModifierGroup::create([
+            'vendor_id' => $this->vendor->id,
+            'name' => 'Choose your side',
+            'type' => 'single',
+            'min_selection' => 1,
+            'max_selection' => 1,
+            'is_required' => true,
+            'is_active' => true,
+        ]);
+        $fries = ModifierOption::create([
+            'modifier_group_id' => $group->id,
+            'name' => 'Onion Rings',
+            'price_adjustment' => 1.50,
+            'is_active' => true,
+        ]);
+        $this->menuItem->modifierGroups()->sync([$group->id => ['sort_order' => 0]]);
+
+        $response = $this->withHeaders($this->headers)
+            ->postJson('/api/customer/cart/items', [
+                'menu_item_id' => $this->menuItem->id,
+                'quantity' => 2,
+                'selected_modifiers' => [
+                    [
+                        'modifier_group_id' => $group->id,
+                        'option_ids' => [$fries->id],
+                    ],
+                ],
+            ]);
+
+        $response->assertCreated()
+            ->assertJsonPath('price', 5)
+            ->assertJsonPath('line_total', 10)
+            ->assertJsonPath('vat_amount', 2)
+            ->assertJsonPath('selected_modifiers.0.name', 'Choose your side')
+            ->assertJsonPath('selected_modifiers.0.options.0.name', 'Onion Rings')
+            ->assertJsonPath('selected_modifiers.0.options.0.price_adjustment', 1.5);
+
+        $cart = $this->withHeaders($this->headers)->getJson('/api/customer/cart');
+
+        $cart->assertOk()
+            ->assertJsonPath('people.0.personal_items.0.selected_modifiers.0.options.0.name', 'Onion Rings')
+            ->assertJsonPath('people.0.personal_items.0.line_total', 10);
+    }
+
+    public function test_add_item_rejects_missing_required_modifier_selection(): void
+    {
+        $group = ModifierGroup::create([
+            'vendor_id' => $this->vendor->id,
+            'name' => 'Choose your side',
+            'type' => 'single',
+            'min_selection' => 1,
+            'max_selection' => 1,
+            'is_required' => true,
+            'is_active' => true,
+        ]);
+        ModifierOption::create([
+            'modifier_group_id' => $group->id,
+            'name' => 'Fries',
+            'price_adjustment' => 0,
+            'is_active' => true,
+        ]);
+        $this->menuItem->modifierGroups()->sync([$group->id => ['sort_order' => 0]]);
+
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/cart/items', [
+                'menu_item_id' => $this->menuItem->id,
+                'selected_modifiers' => [],
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['selected_modifiers']);
+    }
+
     public function test_add_item_rejects_unavailable_customization_options(): void
     {
         $response = $this->withHeaders($this->headers)
@@ -358,6 +435,37 @@ class TableCartTest extends TestCase
 
         $response->assertUnprocessable()
             ->assertJsonValidationErrors(['paid_addons']);
+    }
+
+    public function test_add_item_rejects_menu_item_from_another_restaurant(): void
+    {
+        $otherVendor = Vendor::factory()->create();
+        $otherCategory = MenuCategory::create([
+            'vendor_id' => $otherVendor->id,
+            'name' => 'Other Sides',
+            'slug' => 'other-sides-' . $otherVendor->id,
+        ]);
+        $otherItem = MenuItem::create([
+            'vendor_id' => $otherVendor->id,
+            'menu_category_id' => $otherCategory->id,
+            'name' => 'Other Fries',
+            'price' => 4,
+        ]);
+
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/cart/items', ['menu_item_id' => $otherItem->id])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['menu_item_id']);
+    }
+
+    public function test_add_item_rejects_unavailable_menu_item(): void
+    {
+        $this->menuItem->update(['available' => false]);
+
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/cart/items', ['menu_item_id' => $this->menuItem->id])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['menu_item_id']);
     }
 
     public function test_same_menu_item_with_different_customizations_creates_separate_cart_rows(): void
@@ -497,6 +605,76 @@ class TableCartTest extends TestCase
         $this->assertCount(1, $response->json('people.0.personal_items'));
     }
 
+    public function test_confirmed_order_binds_open_cart_items_and_next_same_item_stays_visible(): void
+    {
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/cart/items', ['menu_item_id' => $this->menuItem->id])
+            ->assertCreated();
+
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/table/order/draft')
+            ->assertCreated();
+
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/table/order/confirmed')
+            ->assertOk();
+
+        $order = Order::where('customer_id', $this->customer->id)->latest('id')->first();
+        $this->assertDatabaseHas('cart_items', [
+            'table_scan_session_id' => $this->session->id,
+            'menu_item_id' => $this->menuItem->id,
+            'order_id' => $order->id,
+        ]);
+
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/cart/items', ['menu_item_id' => $this->menuItem->id])
+            ->assertCreated();
+
+        $response = $this->withHeaders($this->headers)->getJson('/api/customer/cart');
+
+        $response->assertOk()
+            ->assertJsonCount(1, 'people.0.personal_items')
+            ->assertJsonPath('people.0.personal_items.0.quantity', 1);
+    }
+
+    public function test_confirm_order_does_not_confirm_draft_from_a_different_active_session(): void
+    {
+        $order = Order::create([
+            'order_public_id' => 'ord-wrong-session-draft',
+            'customer_id' => $this->customer->id,
+            'vendor_id' => $this->vendor->id,
+            'table_scan_session_id' => $this->session->id,
+            'status' => 'draft',
+            'amount' => 3.50,
+            'currency' => 'EUR',
+            'order_type' => 'dine-in',
+            'payment_pending' => true,
+            'payment_received' => false,
+        ]);
+
+        $otherTable = $this->vendor->restaurantTables()->create([
+            'number' => 2,
+            'name' => 'T2',
+            'qr_token' => RestaurantTable::generateQrToken(),
+            'is_active' => true,
+            'qr_created_at' => now(),
+        ]);
+        TableScanSession::create([
+            'vendor_id' => $this->vendor->id,
+            'restaurant_table_id' => $otherTable->id,
+            'customer_id' => $this->customer->id,
+            'pin' => '5678',
+            'status' => 'active',
+            'scanned_at' => now()->addMinute(),
+        ]);
+
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/table/order/confirmed')
+            ->assertNotFound();
+
+        $this->assertSame('draft', $order->fresh()->status);
+    }
+
     public function test_table_history_items_include_status_from_preparation_timestamps(): void
     {
         $new = CartItem::create([
@@ -526,7 +704,7 @@ class TableCartTest extends TestCase
             'served_at'             => now(),
         ]);
 
-        Order::create([
+        $order = Order::create([
             'order_public_id'       => 'ord-status-test',
             'customer_id'           => $this->customer->id,
             'vendor_id'             => $this->vendor->id,
@@ -536,6 +714,8 @@ class TableCartTest extends TestCase
             'currency'              => 'EUR',
             'order_type'            => 'dine-in',
         ]);
+        CartItem::whereIn('id', [$new->id, $preparing->id, $ready->id, $served->id])
+            ->update(['order_id' => $order->id]);
 
         $response = $this->withHeaders($this->headers)
             ->getJson('/api/customer/table/history');
@@ -562,9 +742,22 @@ class TableCartTest extends TestCase
             ],
             'free_addons'           => ['Ketchup'],
             'removed_items'         => ['Salt'],
+            'selected_modifiers'    => [
+                [
+                    'modifier_group_id' => 1,
+                    'name' => 'Choose your side',
+                    'type' => 'single',
+                    'is_required' => true,
+                    'min_selection' => 1,
+                    'max_selection' => 1,
+                    'options' => [
+                        ['id' => 1, 'name' => 'Onion Rings', 'price_adjustment' => 1.50],
+                    ],
+                ],
+            ],
         ]);
 
-        Order::create([
+        $order = Order::create([
             'order_public_id'       => 'ord-history-customizations',
             'customer_id'           => $this->customer->id,
             'vendor_id'             => $this->vendor->id,
@@ -574,6 +767,7 @@ class TableCartTest extends TestCase
             'currency'              => 'EUR',
             'order_type'            => 'dine-in',
         ]);
+        $item->update(['order_id' => $order->id]);
 
         $response = $this->withHeaders($this->headers)
             ->getJson('/api/customer/table/history');
@@ -582,15 +776,17 @@ class TableCartTest extends TestCase
 
         $payload = collect($response->json('people.0.order.items'))->keyBy('cart_item_id')[$item->id];
 
-        $this->assertSame(5, $payload['unit_price']);
-        $this->assertSame(10, $payload['line_total']);
+        $this->assertSame(6.5, $payload['unit_price']);
+        $this->assertSame(13, $payload['line_total']);
         $this->assertSame(20, $payload['vat_rate']);
         $this->assertSame('food', $payload['tax_category']);
-        $this->assertSame(2, $payload['vat_amount']);
+        $this->assertSame(2.6, $payload['vat_amount']);
         $this->assertSame('Cheese sauce', $payload['paid_addons'][0]['name']);
         $this->assertSame(1.5, $payload['paid_addons'][0]['price']);
         $this->assertSame('Ketchup', $payload['free_addons'][0]);
         $this->assertSame('Salt', $payload['removed_items'][0]);
+        $this->assertSame('Choose your side', $payload['selected_modifiers'][0]['name']);
+        $this->assertSame('Onion Rings', $payload['selected_modifiers'][0]['options'][0]['name']);
     }
 
     public function test_order_tracking_returns_own_items_and_empty_shared_items_by_default(): void
@@ -691,8 +887,9 @@ class TableCartTest extends TestCase
         $ownedShared = CartItem::create([
             'table_scan_session_id' => $this->session->id,
             'menu_item_id'          => $this->menuItem->id,
+            'order_id'              => $order->id,
             'quantity'              => 2,
-            'order_ids'             => [$otherOrder->id],
+            'shared_order_ids'             => [$otherOrder->id],
             'preparing_start_at'    => now(),
         ]);
 
@@ -700,7 +897,7 @@ class TableCartTest extends TestCase
             'table_scan_session_id' => $otherSession->id,
             'menu_item_id'          => $pizza->id,
             'quantity'              => 1,
-            'order_ids'             => [$order->id],
+            'shared_order_ids'             => [$order->id],
         ]);
 
         $response = $this->withHeaders($this->headers)

@@ -36,6 +36,7 @@ class CartController extends Controller
     private function tableSessionIds(TableScanSession $session): array
     {
         return TableScanSession::where('restaurant_table_id', $session->restaurant_table_id)
+            ->where('vendor_id', $session->vendor_id)
             ->where('status', 'active')
             ->pluck('id')
             ->all();
@@ -58,7 +59,7 @@ class CartController extends Controller
 
         $sessions = TableScanSession::with([
             'customer:id,first_name,last_name',
-            'cartItems.menuItem:id,name,price,image_url,vat_rate,tax_category',
+            'cartItems.menuItem:id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category',
             'restaurantTable:id,number,name',
             'vendor:id,vendor_public_id,restaurant_name',
         ])
@@ -67,21 +68,13 @@ class CartController extends Controller
 
         $orderedStatuses = ['confirmed', 'preparing', 'ready', 'delivered', 'completed'];
 
-        $latestOrderAt = Order::whereIn('table_scan_session_id', $sessionIds)
-            ->whereIn('status', $orderedStatuses)
-            ->selectRaw('table_scan_session_id, MAX(created_at) as latest_order_at')
-            ->groupBy('table_scan_session_id')
-            ->pluck('latest_order_at', 'table_scan_session_id');
-
         $orderedOrderIds = Order::whereIn('table_scan_session_id', $sessionIds)
             ->whereIn('status', $orderedStatuses)
             ->pluck('id')
             ->map(fn ($id) => (int) $id)
             ->all();
 
-        $people = $sessions->map(function (TableScanSession $s) use ($mySession, $latestOrderAt, $orderedOrderIds) {
-            $orderCutoff = $latestOrderAt->get($s->id);
-
+        $people = $sessions->map(function (TableScanSession $s) use ($mySession, $orderedOrderIds) {
             return [
                 'session_id'  => $s->id,
                 'customer_id' => $s->customer_id,
@@ -90,8 +83,8 @@ class CartController extends Controller
                     ? trim($s->customer->first_name . ' ' . $s->customer->last_name)
                     : 'Guest',
                 'personal_items' => $s->cartItems
-                    ->filter(fn(CartItem $item) => ! $this->cartItemBelongsToOrderedOrder($item, $orderedOrderIds)
-                        && (! $orderCutoff || $item->created_at > $orderCutoff))
+                    ->filter(fn(CartItem $item) => $item->order_id === null
+                        && ! $this->cartItemBelongsToOrderedOrder($item, $orderedOrderIds))
                     ->values()
                     ->map(fn(CartItem $item) => $this->itemPayload($item)),
             ];
@@ -120,7 +113,7 @@ class CartController extends Controller
             return false;
         }
 
-        $itemOrderIds = array_map('intval', is_array($item->order_ids) ? $item->order_ids : []);
+        $itemOrderIds = array_map('intval', is_array($item->shared_order_ids) ? $item->shared_order_ids : []);
 
         return ! empty(array_intersect($itemOrderIds, $orderedOrderIds));
     }
@@ -145,6 +138,20 @@ class CartController extends Controller
             'removed_items.*'        => ['string', 'max:255'],
             'removable_items'        => ['sometimes', 'array'],
             'removable_items.*'      => ['string', 'max:255'],
+            'selected_modifiers'                         => ['sometimes', 'array'],
+            'selected_modifiers.*.modifier_group_id'     => ['sometimes', 'integer'],
+            'selected_modifiers.*.group_id'              => ['sometimes', 'integer'],
+            'selected_modifiers.*.id'                    => ['sometimes', 'integer'],
+            'selected_modifiers.*.option_ids'            => ['sometimes', 'array'],
+            'selected_modifiers.*.option_ids.*'          => ['integer'],
+            'selected_modifiers.*.options'               => ['sometimes', 'array'],
+            'modifiers'                                  => ['sometimes', 'array'],
+            'modifiers.*.modifier_group_id'              => ['sometimes', 'integer'],
+            'modifiers.*.group_id'                       => ['sometimes', 'integer'],
+            'modifiers.*.id'                             => ['sometimes', 'integer'],
+            'modifiers.*.option_ids'                     => ['sometimes', 'array'],
+            'modifiers.*.option_ids.*'                   => ['integer'],
+            'modifiers.*.options'                        => ['sometimes', 'array'],
         ])->validate();
 
         $mySession = $this->activeSession($request);
@@ -152,11 +159,26 @@ class CartController extends Controller
             return response()->json(['message' => 'No active table session found.'], 422);
         }
 
-        $menuItem = MenuItem::findOrFail($data['menu_item_id']);
+        $menuItem = MenuItem::where('id', $data['menu_item_id'])
+            ->where('vendor_id', $mySession->vendor_id)
+            ->where('is_active', true)
+            ->where('available', true)
+            ->with(['modifierGroups' => fn ($q) => $q->where('is_active', true)
+                ->orderByPivot('sort_order')
+                ->with(['options' => fn ($o) => $o->where('is_active', true)->orderBy('sort_order')])])
+            ->first();
+
+        if (! $menuItem) {
+            throw ValidationException::withMessages([
+                'menu_item_id' => ['The selected menu item is not available for this table.'],
+            ]);
+        }
+
         $customizations = $this->normalizeCustomizations($menuItem, $data);
 
         $existing = CartItem::where('table_scan_session_id', $mySession->id)
             ->where('menu_item_id', $data['menu_item_id'])
+            ->whereNull('order_id')
             ->get()
             ->first(fn (CartItem $cartItem) => $this->cartCustomizationsMatch($cartItem, $customizations));
 
@@ -169,15 +191,17 @@ class CartController extends Controller
             $item = CartItem::create([
                 'table_scan_session_id' => $mySession->id,
                 'menu_item_id'          => $data['menu_item_id'],
+                'order_id'              => null,
                 'quantity'              => $data['quantity'] ?? 1,
                 'notes'                 => $data['notes'] ?? null,
                 'paid_addons'           => $customizations['paid_addons'],
                 'free_addons'           => $customizations['free_addons'],
                 'removed_items'         => $customizations['removed_items'],
+                'selected_modifiers'    => $customizations['selected_modifiers'],
             ]);
         }
 
-        $item->load('menuItem:id,name,price,image_url,vat_rate,tax_category');
+        $item->load('menuItem:id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category');
 
         return response()->json($this->itemPayload($item), 201);
     }
@@ -201,6 +225,20 @@ class CartController extends Controller
             'removed_items.*'        => ['string', 'max:255'],
             'removable_items'        => ['sometimes', 'array'],
             'removable_items.*'      => ['string', 'max:255'],
+            'selected_modifiers'                         => ['sometimes', 'array'],
+            'selected_modifiers.*.modifier_group_id'     => ['sometimes', 'integer'],
+            'selected_modifiers.*.group_id'              => ['sometimes', 'integer'],
+            'selected_modifiers.*.id'                    => ['sometimes', 'integer'],
+            'selected_modifiers.*.option_ids'            => ['sometimes', 'array'],
+            'selected_modifiers.*.option_ids.*'          => ['integer'],
+            'selected_modifiers.*.options'               => ['sometimes', 'array'],
+            'modifiers'                                  => ['sometimes', 'array'],
+            'modifiers.*.modifier_group_id'              => ['sometimes', 'integer'],
+            'modifiers.*.group_id'                       => ['sometimes', 'integer'],
+            'modifiers.*.id'                             => ['sometimes', 'integer'],
+            'modifiers.*.option_ids'                     => ['sometimes', 'array'],
+            'modifiers.*.option_ids.*'                   => ['integer'],
+            'modifiers.*.options'                        => ['sometimes', 'array'],
         ])->validate();
 
         $mySession = $this->activeSession($request);
@@ -225,13 +263,18 @@ class CartController extends Controller
             || array_key_exists('free_addons', $data)
             || array_key_exists('removed_items', $data)
             || array_key_exists('removable_items', $data)
+            || array_key_exists('selected_modifiers', $data)
+            || array_key_exists('modifiers', $data)
         ) {
-            $item->load('menuItem:id,paid_addons,free_addons,removable_items');
+            $item->load(['menuItem' => fn ($q) => $q->select('id', 'paid_addons', 'free_addons', 'removable_items')
+                ->with(['modifierGroups' => fn ($g) => $g->where('is_active', true)
+                    ->orderByPivot('sort_order')
+                    ->with(['options' => fn ($o) => $o->where('is_active', true)->orderBy('sort_order')])])]);
             $updates = array_merge($updates, $this->normalizeCustomizations($item->menuItem, $data, $item));
         }
 
         $item->update($updates);
-        $item->load('menuItem:id,name,price,image_url,vat_rate,tax_category');
+        $item->load('menuItem:id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category');
 
         return response()->json($this->itemPayload($item));
     }
@@ -282,7 +325,7 @@ class CartController extends Controller
         $sessions = TableScanSession::with([
             'customer:id,first_name,last_name',
             'restaurantTable:id,number,name',
-            'cartItems.menuItem:id,name,price,image_url',
+            'cartItems.menuItem:id,name,price,has_discount,discounted_price,image_url',
         ])
             ->whereIn('id', $sessionIds)
             ->get();
@@ -295,7 +338,9 @@ class CartController extends Controller
             $personalCount = 0;
             $isMe = $s->id === $mySession->id;
 
-            $items = $s->cartItems->map(function (CartItem $item) use ($isMe, &$personalTotal, &$personalCount, &$tableTotal, &$tableItemCount) {
+            $items = $s->cartItems
+                ->filter(fn (CartItem $item) => $item->order_id === null)
+                ->map(function (CartItem $item) use ($isMe, &$personalTotal, &$personalCount, &$tableTotal, &$tableItemCount) {
                 $unitPrice = $this->cartItemUnitPrice($item);
                 $lineTotal = $this->cartItemLineTotal($item);
 
@@ -314,6 +359,7 @@ class CartController extends Controller
                     'paid_addons'  => $item->paid_addons ?? [],
                     'free_addons'  => $item->free_addons ?? [],
                     'removed_items' => $item->removed_items ?? [],
+                    'selected_modifiers' => $item->selected_modifiers ?? [],
                     'total_price'  => $lineTotal,
                     'is_mine'      => $isMe,
                 ];
@@ -362,20 +408,33 @@ class CartController extends Controller
             return response()->json(['message' => 'No active table session found.'], 422);
         }
 
-        $myCartItems = CartItem::with('menuItem:id,name,price')
+        $existingOrder = $this->currentOpenOrder($request->user()->id, $mySession->id);
+
+        if ($existingOrder && $existingOrder->status === 'confirmed') {
+            return response()->json($this->buildTableHistoryResponse($mySession));
+        }
+
+        $myCartItems = CartItem::with('menuItem:id,name,price,has_discount,discounted_price')
             ->where('table_scan_session_id', $mySession->id)
+            ->whereNull('order_id')
             ->get();
 
         $myTotal = 0.0;
         foreach ($myCartItems as $item) {
             $lineTotal  = $this->cartItemLineTotal($item);
-            $shareCount = 1 + count($item->order_ids ?? []);
+            $shareCount = 1 + count($item->shared_order_ids ?? []);
             $myTotal   += $lineTotal / $shareCount;
         }
         $myTotal = round($myTotal, 2);
 
+        if ($existingOrder) {
+            $existingOrder->update(['amount' => $myTotal]);
+
+            return response()->json($this->buildTableHistoryResponse($mySession));
+        }
+
         DB::transaction(function () use ($request, $mySession, $myTotal) {
-            return Order::create([
+            Order::create([
                 'order_public_id'       => 'ord-' . Str::random(12),
                 'customer_id'           => $request->user()->id,
                 'vendor_id'             => $mySession->vendor_id,
@@ -396,8 +455,8 @@ class CartController extends Controller
      * PUT /api/customer/table/order/update/{order_id}
      *
      * Share or unshare a cart_item for the caller's order.
-     * - shared_item:   append caller's order_id to that cart_item's order_ids
-     * - unshared_item: remove  caller's order_id from that cart_item's order_ids (no-op if not present)
+     * - shared_item:   append caller's order_id to that cart_item's shared_order_ids
+     * - unshared_item: remove  caller's order_id from that cart_item's shared_order_ids (no-op if not present)
      * At least one field must be provided.
      */
     public function updateOrder(Request $request, int $order_id): JsonResponse
@@ -445,9 +504,9 @@ class CartController extends Controller
                 ], 422);
             }
 
-            $existing = is_array($cartItem->order_ids) ? $cartItem->order_ids : [];
+            $existing = is_array($cartItem->shared_order_ids) ? $cartItem->shared_order_ids : [];
             $existing = array_values(array_unique(array_map('intval', array_merge($existing, [$order->id]))));
-            $cartItem->update(['order_ids' => $existing]);
+            $cartItem->update(['shared_order_ids' => $existing]);
         }
 
         if (! empty($data['unshared_item'])) {
@@ -461,12 +520,12 @@ class CartController extends Controller
                 ], 422);
             }
 
-            $existing = is_array($cartItem->order_ids) ? $cartItem->order_ids : [];
+            $existing = is_array($cartItem->shared_order_ids) ? $cartItem->shared_order_ids : [];
             $filtered = array_values(array_filter(
                 array_map('intval', $existing),
                 fn(int $id) => $id !== $order->id
             ));
-            $cartItem->update(['order_ids' => $filtered]);
+            $cartItem->update(['shared_order_ids' => $filtered]);
         }
 
         return response()->json($this->buildTableHistoryResponse($mySession));
@@ -476,33 +535,36 @@ class CartController extends Controller
      * POST /api/customer/table/order/confirmed
      *
      * Confirm the customer's latest draft order. Recomputes the final amount
-     * from cart_items: owned items split by (1 + count(order_ids)), plus a
-     * share of every cart_item whose order_ids contains this order's id.
+     * from cart_items: owned items split by (1 + count(shared_order_ids)), plus a
+     * share of every cart_item whose shared_order_ids contains this order's id.
      */
     public function createOrderConfirmed(Request $request): JsonResponse
     {
         $customerId = $request->user()->id;
-
-        $order = Order::where('customer_id', $customerId)
-            ->where('status', 'draft')
-            ->latest('id')
-            ->first();
-
-        if (! $order) {
-            return response()->json(['message' => 'No draft order found.'], 404);
-        }
 
         $mySession = $this->activeSession($request);
         if (! $mySession) {
             return response()->json(['message' => 'No active table session found.'], 422);
         }
 
-        $total = $this->computeOrderAmount($order, $mySession->id);
+        $order = $this->currentOpenOrder($customerId, $mySession->id);
 
-        $order->update([
-            'status' => 'confirmed',
-            'amount' => $total,
-        ]);
+        if (! $order) {
+            return response()->json(['message' => 'No open draft order found.'], 404);
+        }
+
+        $total = $this->computeOrderAmount($order, $mySession->id, includeOpenOwnedItems: true);
+
+        DB::transaction(function () use ($order, $mySession, $total) {
+            CartItem::where('table_scan_session_id', $mySession->id)
+                ->whereNull('order_id')
+                ->update(['order_id' => $order->id]);
+
+            $order->update([
+                'status' => 'confirmed',
+                'amount' => $total,
+            ]);
+        });
 
         return response()->json($this->buildTableHistoryResponse($mySession));
     }
@@ -524,17 +586,26 @@ class CartController extends Controller
 
     /**
      * Compute the bill-split amount an order owes:
-     *   - For each cart_item owned by the order's session: line_total / (1 + count(order_ids))
-     *   - For each cart_item where this order's id is in order_ids: same per-share amount
+     *   - For each cart_item owned by the order's session: line_total / (1 + count(shared_order_ids))
+     *   - For each cart_item where this order's id is in shared_order_ids: same per-share amount
      */
-    private function computeOrderAmount(Order $order, int $ownerSessionId): float
+    private function computeOrderAmount(Order $order, int $ownerSessionId, bool $includeOpenOwnedItems = false): float
     {
-        $owned = CartItem::with('menuItem:id,price')
-            ->where('table_scan_session_id', $ownerSessionId)
+        $owned = CartItem::with('menuItem:id,price,has_discount,discounted_price')
+            ->where(function ($query) use ($order, $ownerSessionId, $includeOpenOwnedItems) {
+                $query->where('order_id', $order->id);
+
+                if ($includeOpenOwnedItems) {
+                    $query->orWhere(function ($open) use ($ownerSessionId) {
+                        $open->where('table_scan_session_id', $ownerSessionId)
+                            ->whereNull('order_id');
+                    });
+                }
+            })
             ->get();
 
-        $sharedInto = CartItem::with('menuItem:id,price')
-            ->whereJsonContains('order_ids', $order->id)
+        $sharedInto = CartItem::with('menuItem:id,price,has_discount,discounted_price')
+            ->whereJsonContains('shared_order_ids', $order->id)
             ->where('table_scan_session_id', '!=', $ownerSessionId)
             ->get();
 
@@ -542,13 +613,13 @@ class CartController extends Controller
 
         foreach ($owned as $item) {
             $lineTotal  = $this->cartItemLineTotal($item);
-            $shareCount = 1 + count($item->order_ids ?? []);
+            $shareCount = 1 + count($item->shared_order_ids ?? []);
             $total     += $lineTotal / $shareCount;
         }
 
         foreach ($sharedInto as $item) {
             $lineTotal  = $this->cartItemLineTotal($item);
-            $shareCount = 1 + count($item->order_ids ?? []);
+            $shareCount = 1 + count($item->shared_order_ids ?? []);
             $total     += $lineTotal / $shareCount;
         }
 
@@ -578,7 +649,7 @@ class CartController extends Controller
             ->get()
             ->groupBy('table_scan_session_id');
 
-        $allCartItems = CartItem::with('menuItem:id,name,price,image_url,vat_rate,tax_category')
+        $allCartItems = CartItem::with('menuItem:id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category')
             ->whereIn('table_scan_session_id', $sessionIds)
             ->get();
 
@@ -600,17 +671,24 @@ class CartController extends Controller
             $tableTotal      += $personTotal;
             $tableOrderCount += $personOrders->count();
 
-            $ownedCartItems = $allCartItems->where('table_scan_session_id', $s->id);
-
             $latestOrder = $personOrders->last();
             $orderPayload = null;
 
             if ($latestOrder) {
+                $ownedCartItems = $allCartItems->filter(function (CartItem $ci) use ($s, $latestOrder) {
+                    if ($latestOrder->status === 'draft') {
+                        return (int) $ci->table_scan_session_id === (int) $s->id
+                            && $ci->order_id === null;
+                    }
+
+                    return (int) $ci->order_id === (int) $latestOrder->id;
+                });
+
                 $sharedIntoItems = $allCartItems->filter(function (CartItem $ci) use ($latestOrder, $ownedCartItems) {
                     if ($ownedCartItems->contains('id', $ci->id)) {
                         return false;
                     }
-                    $ids = is_array($ci->order_ids) ? $ci->order_ids : [];
+                    $ids = is_array($ci->shared_order_ids) ? $ci->shared_order_ids : [];
                     return in_array($latestOrder->id, array_map('intval', $ids), true);
                 });
 
@@ -672,7 +750,7 @@ class CartController extends Controller
         $lineTotal = $this->cartItemLineTotal($ci);
         $vatRate = $ci->menuItem ? (float) $ci->menuItem->vat_rate : 0.0;
         $vatAmount = round($lineTotal * ($vatRate / 100), 2);
-        $orderIds  = array_values(array_map('intval', is_array($ci->order_ids) ? $ci->order_ids : []));
+        $orderIds  = array_values(array_map('intval', is_array($ci->shared_order_ids) ? $ci->shared_order_ids : []));
         $sharedBetween = 1 + count($orderIds);
         $myShare   = round($lineTotal / $sharedBetween, 2);
 
@@ -701,6 +779,7 @@ class CartController extends Controller
             'paid_addons'        => $ci->paid_addons ?? [],
             'free_addons'        => $ci->free_addons ?? [],
             'removed_items'      => $ci->removed_items ?? [],
+            'selected_modifiers' => $ci->selected_modifiers ?? [],
             'vat_rate'           => $vatRate,
             'tax_category'       => $ci->menuItem?->tax_category,
             'vat_amount'         => $vatAmount,
@@ -770,6 +849,16 @@ class CartController extends Controller
         ];
     }
 
+    private function currentOpenOrder(int $customerId, int $sessionId): ?Order
+    {
+        return Order::where('customer_id', $customerId)
+            ->where('table_scan_session_id', $sessionId)
+            ->whereIn('status', ['draft', 'confirmed'])
+            ->where('payment_received', false)
+            ->latest('id')
+            ->first();
+    }
+
     private function normalizeCustomizations(MenuItem $menuItem, array $data, ?CartItem $existing = null): array
     {
         return [
@@ -786,6 +875,9 @@ class CartController extends Controller
                     $data['removed_items'] ?? $data['removable_items'] ?? []
                 )
                 : ($existing?->removed_items ?? []),
+            'selected_modifiers' => (array_key_exists('selected_modifiers', $data) || array_key_exists('modifiers', $data))
+                ? $this->normalizeSelectedModifiers($menuItem, $data['selected_modifiers'] ?? $data['modifiers'] ?? [])
+                : ($existing?->selected_modifiers ?? []),
         ];
     }
 
@@ -846,11 +938,116 @@ class CartController extends Controller
             ->all();
     }
 
+    private function normalizeSelectedModifiers(MenuItem $menuItem, array $selected): array
+    {
+        if (! $menuItem->relationLoaded('modifierGroups')) {
+            $menuItem->load(['modifierGroups' => fn ($q) => $q->where('is_active', true)
+                ->orderByPivot('sort_order')
+                ->with(['options' => fn ($o) => $o->where('is_active', true)->orderBy('sort_order')])]);
+        }
+
+        $groups = $menuItem->modifierGroups->keyBy('id');
+        $submitted = collect($selected)
+            ->filter(fn ($entry) => is_array($entry))
+            ->mapWithKeys(function (array $entry) {
+                $groupId = (int) ($entry['modifier_group_id'] ?? $entry['group_id'] ?? $entry['id'] ?? 0);
+                $optionIds = $entry['option_ids'] ?? $entry['options'] ?? [];
+
+                if (! is_array($optionIds)) {
+                    $optionIds = [$optionIds];
+                }
+
+                return $groupId > 0 ? [$groupId => $optionIds] : [];
+            });
+
+        $normalized = [];
+
+        foreach ($groups as $groupId => $group) {
+            $rawOptionIds = collect($submitted->get($groupId, []))
+                ->map(fn ($id) => is_array($id) ? ($id['id'] ?? $id['option_id'] ?? null) : $id)
+                ->map(fn ($id) => (int) $id)
+                ->filter(fn (int $id) => $id > 0)
+                ->unique()
+                ->values();
+
+            $count = $rawOptionIds->count();
+
+            if ($group->is_required && $count < (int) $group->min_selection) {
+                throw ValidationException::withMessages([
+                    'selected_modifiers' => ["Please choose at least {$group->min_selection} option(s) for {$group->name}."],
+                ]);
+            }
+
+            if ($count === 0) {
+                continue;
+            }
+
+            $maxSelection = max(1, (int) $group->max_selection);
+            if ($group->type === 'single' && $count > 1) {
+                throw ValidationException::withMessages([
+                    'selected_modifiers' => ["Only one option can be selected for {$group->name}."],
+                ]);
+            }
+
+            if ($count > $maxSelection) {
+                throw ValidationException::withMessages([
+                    'selected_modifiers' => ["You can choose at most {$maxSelection} option(s) for {$group->name}."],
+                ]);
+            }
+
+            if ($count < (int) $group->min_selection) {
+                throw ValidationException::withMessages([
+                    'selected_modifiers' => ["Please choose at least {$group->min_selection} option(s) for {$group->name}."],
+                ]);
+            }
+
+            $optionsById = $group->options->keyBy('id');
+            $options = $rawOptionIds->map(function (int $optionId) use ($optionsById, $group) {
+                $option = $optionsById->get($optionId);
+
+                if (! $option) {
+                    throw ValidationException::withMessages([
+                        'selected_modifiers' => ["The selected option is not available for {$group->name}."],
+                    ]);
+                }
+
+                return [
+                    'id' => $option->id,
+                    'name' => $option->name,
+                    'price_adjustment' => round((float) $option->price_adjustment, 2),
+                ];
+            })->values()->all();
+
+            $normalized[] = [
+                'modifier_group_id' => $group->id,
+                'name' => $group->name,
+                'type' => $group->type,
+                'is_required' => (bool) $group->is_required,
+                'min_selection' => (int) $group->min_selection,
+                'max_selection' => (int) $group->max_selection,
+                'options' => $options,
+            ];
+        }
+
+        $unknownGroupIds = $submitted->keys()
+            ->map(fn ($id) => (int) $id)
+            ->diff($groups->keys()->map(fn ($id) => (int) $id));
+
+        if ($unknownGroupIds->isNotEmpty()) {
+            throw ValidationException::withMessages([
+                'selected_modifiers' => ['One or more selected modifier groups are not available for this menu item.'],
+            ]);
+        }
+
+        return $normalized;
+    }
+
     private function cartCustomizationsMatch(CartItem $item, array $customizations): bool
     {
         return ($item->paid_addons ?? []) === $customizations['paid_addons']
             && ($item->free_addons ?? []) === $customizations['free_addons']
-            && ($item->removed_items ?? []) === $customizations['removed_items'];
+            && ($item->removed_items ?? []) === $customizations['removed_items']
+            && ($item->selected_modifiers ?? []) === $customizations['selected_modifiers'];
     }
 
     private function selectedPaidAddonsTotal(CartItem $item): float
@@ -858,11 +1055,33 @@ class CartController extends Controller
         return round(collect($item->paid_addons ?? [])->sum(fn ($addon) => (float) ($addon['price'] ?? 0)), 2);
     }
 
+    private function selectedModifiersTotal(CartItem $item): float
+    {
+        return round(collect($item->selected_modifiers ?? [])
+            ->flatMap(fn ($group) => is_array($group) ? ($group['options'] ?? []) : [])
+            ->sum(fn ($option) => (float) ($option['price_adjustment'] ?? 0)), 2);
+    }
+
     private function cartItemUnitPrice(CartItem $item): float
     {
-        $basePrice = $item->menuItem ? (float) $item->menuItem->price : 0.0;
+        $basePrice = $this->cartItemBasePrice($item);
 
-        return round($basePrice + $this->selectedPaidAddonsTotal($item), 2);
+        return round($basePrice + $this->selectedPaidAddonsTotal($item) + $this->selectedModifiersTotal($item), 2);
+    }
+
+    private function cartItemBasePrice(CartItem $item): float
+    {
+        $menuItem = $item->menuItem;
+
+        if (! $menuItem) {
+            return 0.0;
+        }
+
+        if ($menuItem->has_discount && $menuItem->discounted_price !== null) {
+            return (float) $menuItem->discounted_price;
+        }
+
+        return (float) $menuItem->price;
     }
 
     private function cartItemLineTotal(CartItem $item): float
@@ -873,7 +1092,7 @@ class CartController extends Controller
     private function itemPayload(CartItem $item): array
     {
         $menuItem = $item->relationLoaded('menuItem') ? $item->menuItem : null;
-        $basePrice = $menuItem ? (float) $menuItem->price : 0.0;
+        $basePrice = $this->cartItemBasePrice($item);
         $price = $this->cartItemUnitPrice($item);
         $vatRate = $menuItem ? (float) $menuItem->vat_rate : 0.0;
         $lineTotal = $this->cartItemLineTotal($item);
@@ -887,6 +1106,7 @@ class CartController extends Controller
             'paid_addons' => $item->paid_addons ?? [],
             'free_addons' => $item->free_addons ?? [],
             'removed_items' => $item->removed_items ?? [],
+            'selected_modifiers' => $item->selected_modifiers ?? [],
             'vat_amount' => $vatAmount,
             'line_total' => $lineTotal,
             'menu_item'  => $menuItem ? [

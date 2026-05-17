@@ -80,6 +80,11 @@ class Vendor extends Authenticatable
         return $this->hasMany(MenuItem::class);
     }
 
+    public function modifierGroups(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(ModifierGroup::class);
+    }
+
     public function inventoryItems(): \Illuminate\Database\Eloquent\Relations\HasMany
     {
         return $this->hasMany(InventoryItem::class);

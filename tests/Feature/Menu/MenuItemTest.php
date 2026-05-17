@@ -458,10 +458,82 @@ class MenuItemTest extends TestCase
     // Modifier groups on items
     // ----------------------------------------------------------------
 
-    // NOTE: Modifier groups are managed via the ModifierGroupController and
-    // are no longer attached directly to menu items in the simplified
-    // JSON-column based menu item shape. Use paidAddons / freeAddons /
-    // removableItems instead. See ModifierGroupTest for that surface.
+    public function test_store_and_update_sync_modifier_groups(): void
+    {
+        $sideGroup = ModifierGroup::create([
+            'vendor_id' => $this->vendor->id,
+            'name' => 'Choose your side',
+            'type' => 'single',
+            'min_selection' => 1,
+            'max_selection' => 1,
+            'is_required' => true,
+            'is_active' => true,
+        ]);
+        ModifierOption::create([
+            'modifier_group_id' => $sideGroup->id,
+            'name' => 'Fries',
+            'price_adjustment' => 0,
+            'is_active' => true,
+        ]);
+
+        $sauceGroup = ModifierGroup::create([
+            'vendor_id' => $this->vendor->id,
+            'name' => 'Sauce',
+            'type' => 'multiple',
+            'min_selection' => 0,
+            'max_selection' => 2,
+            'is_required' => false,
+            'is_active' => true,
+        ]);
+
+        $response = $this->postJson('/api/vendor/menu/items', $this->baseItemPayload([
+            'modifierGroupIds' => [$sideGroup->id],
+        ]), $this->authHeaders());
+
+        $response->assertCreated()
+            ->assertJsonPath('data.modifierGroupIds.0', $sideGroup->id)
+            ->assertJsonPath('data.modifierGroups.0.name', 'Choose your side')
+            ->assertJsonPath('data.modifierGroups.0.options.0.name', 'Fries');
+
+        $itemId = $response->json('data.id');
+        $this->assertDatabaseHas('menu_item_modifier_groups', [
+            'menu_item_id' => $itemId,
+            'modifier_group_id' => $sideGroup->id,
+        ]);
+
+        $this->patchJson("/api/vendor/menu/items/{$itemId}", [
+            'modifierGroupIds' => [$sauceGroup->id],
+        ], $this->authHeaders())
+            ->assertOk()
+            ->assertJsonPath('data.modifierGroupIds.0', $sauceGroup->id)
+            ->assertJsonMissingPath('data.modifierGroupIds.1');
+
+        $this->assertDatabaseMissing('menu_item_modifier_groups', [
+            'menu_item_id' => $itemId,
+            'modifier_group_id' => $sideGroup->id,
+        ]);
+        $this->assertDatabaseHas('menu_item_modifier_groups', [
+            'menu_item_id' => $itemId,
+            'modifier_group_id' => $sauceGroup->id,
+        ]);
+    }
+
+    public function test_store_rejects_modifier_group_from_another_vendor(): void
+    {
+        $other = Vendor::factory()->create(['country' => 'Austria']);
+        $otherGroup = ModifierGroup::create([
+            'vendor_id' => $other->id,
+            'name' => 'Private group',
+            'type' => 'single',
+            'is_active' => true,
+        ]);
+
+        $this->postJson('/api/vendor/menu/items', $this->baseItemPayload([
+            'modifierGroupIds' => [$otherGroup->id],
+        ]), $this->authHeaders())
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['modifierGroupIds']);
+    }
 
     // ----------------------------------------------------------------
     // Authentication guard

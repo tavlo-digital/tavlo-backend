@@ -169,7 +169,7 @@ class OrderController extends Controller
      * PATCH /api/orders/{orderId}/ready
      *
      * Marks the order as ready and stamps every linked cart_item with ready_at = now().
-     * Linked = owned by the order's session OR order's id is in cart_item.order_ids.
+     * Linked = owned by the order's session OR order's id is in cart_item.shared_order_ids.
      */
     public function markReady(Request $request, string $orderId): JsonResponse
     {
@@ -183,7 +183,7 @@ class OrderController extends Controller
                 ->update(['ready_at' => $now]);
         }
 
-        CartItem::whereJsonContains('order_ids', $order->id)
+        CartItem::whereJsonContains('shared_order_ids', $order->id)
             ->update(['ready_at' => $now]);
 
         $order->update(['status' => 'ready']);
@@ -511,11 +511,12 @@ class OrderController extends Controller
         }
 
         $items = $linkedItems->map(function (CartItem $ci) use ($order) {
-            $unitPrice  = $ci->menuItem ? (float) $ci->menuItem->price : 0.0;
+            $unitPrice  = $this->cartItemUnitPrice($ci);
             $lineTotal  = round($unitPrice * $ci->quantity, 2);
-            $orderIds   = array_values(array_map('intval', is_array($ci->order_ids) ? $ci->order_ids : []));
+            $orderIds   = array_values(array_map('intval', is_array($ci->shared_order_ids) ? $ci->shared_order_ids : []));
             $sharedBetween = 1 + count($orderIds);
             $itemStatus = $this->cartItemStatus($ci);
+            $modifiers = $this->cartItemModifiers($ci);
 
             return [
                 'cartItemId'         => $ci->id,
@@ -534,6 +535,15 @@ class OrderController extends Controller
                 'price'              => $unitPrice,
                 'lineTotal'          => $lineTotal,
                 'line_total'         => $lineTotal,
+                'paidAddons'         => $ci->paid_addons ?? [],
+                'paid_addons'        => $ci->paid_addons ?? [],
+                'freeAddons'         => $ci->free_addons ?? [],
+                'free_addons'        => $ci->free_addons ?? [],
+                'removedItems'       => $ci->removed_items ?? [],
+                'removed_items'      => $ci->removed_items ?? [],
+                'selectedModifiers'  => $ci->selected_modifiers ?? [],
+                'selected_modifiers' => $ci->selected_modifiers ?? [],
+                'modifiers'          => $modifiers,
                 'status'             => $itemStatus,
                 'sharedBetween'      => $sharedBetween,
                 'sharedWithOrderIds' => $orderIds,
@@ -600,18 +610,79 @@ class OrderController extends Controller
 
     /**
      * Load every cart_item linked to an order: owned by the order's session
-     * (if any) plus any cart_item whose order_ids JSON contains the order id.
+     * (if any) plus any cart_item whose shared_order_ids JSON contains the order id.
      */
     private function loadLinkedCartItems(Order $order)
     {
-        return CartItem::with('menuItem:id,name,price,image_url,menu_category_id', 'menuItem.category:id,name')
+        return CartItem::with('menuItem:id,name,price,has_discount,discounted_price,image_url,menu_category_id', 'menuItem.category:id,name')
             ->where(function ($q) use ($order) {
-                if ($order->table_scan_session_id) {
-                    $q->where('table_scan_session_id', $order->table_scan_session_id);
+                if ($order->status === 'draft' && $order->table_scan_session_id) {
+                    $q->where(function ($owned) use ($order) {
+                        $owned->where('table_scan_session_id', $order->table_scan_session_id)
+                            ->whereNull('order_id');
+                    });
+                } else {
+                    $q->where('order_id', $order->id);
                 }
-                $q->orWhereJsonContains('order_ids', $order->id);
+
+                $q->orWhereJsonContains('shared_order_ids', $order->id);
             })
             ->get();
+    }
+
+    private function cartItemUnitPrice(CartItem $item): float
+    {
+        $menuItem = $item->menuItem;
+        $basePrice = 0.0;
+
+        if ($menuItem) {
+            $basePrice = $menuItem->has_discount && $menuItem->discounted_price !== null
+                ? (float) $menuItem->discounted_price
+                : (float) $menuItem->price;
+        }
+
+        $addonsTotal = collect($item->paid_addons ?? [])->sum(fn ($addon) => (float) ($addon['price'] ?? 0));
+        $modifiersTotal = collect($item->selected_modifiers ?? [])
+            ->flatMap(fn ($group) => is_array($group) ? ($group['options'] ?? []) : [])
+            ->sum(fn ($option) => (float) ($option['price_adjustment'] ?? 0));
+
+        return round($basePrice + $addonsTotal + $modifiersTotal, 2);
+    }
+
+    private function cartItemModifiers(CartItem $item): array
+    {
+        $paidAddons = collect($item->paid_addons ?? [])
+            ->map(fn ($addon) => [
+                'name' => (string) ($addon['name'] ?? ''),
+                'price' => (float) ($addon['price'] ?? 0),
+            ]);
+
+        $freeAddons = collect($item->free_addons ?? [])
+            ->map(fn ($name) => [
+                'name' => (string) $name,
+                'price' => 0.0,
+            ]);
+
+        $removedItems = collect($item->removed_items ?? [])
+            ->map(fn ($name) => [
+                'name' => 'No ' . (string) $name,
+                'price' => 0.0,
+            ]);
+
+        $selectedModifiers = collect($item->selected_modifiers ?? [])
+            ->flatMap(fn ($group) => is_array($group) ? ($group['options'] ?? []) : [])
+            ->map(fn ($option) => [
+                'name' => (string) ($option['name'] ?? ''),
+                'price' => (float) ($option['price_adjustment'] ?? 0),
+            ]);
+
+        return $paidAddons
+            ->merge($freeAddons)
+            ->merge($removedItems)
+            ->merge($selectedModifiers)
+            ->filter(fn (array $modifier) => $modifier['name'] !== '')
+            ->values()
+            ->all();
     }
 
     private function resolveVendor(string $vendorId): Vendor

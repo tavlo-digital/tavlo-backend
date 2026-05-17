@@ -138,14 +138,14 @@ class TableSessionFlowSeeder extends Seeder
         $maxOrder   = $this->makeDraftOrder($max->id,   $vendor->id, $sessionMax->id);
         $guestOrder = $this->makeDraftOrder($guest->id, $vendor->id, $sessionGuest->id);
 
-        // ── Step 6: Wire share relationships via cart_items.order_ids ───────
+        // ── Step 6: Wire share relationships via cart_items.shared_order_ids ───────
         //
         // Sharing scenario
         //  • Anna's Prosecco DOC  →  split between Anna + Max (2 people)
         //  • Max's Tiramisu       →  split between Anna + Max + Guest (3 people)
 
-        $annaCartProsecco->update(['order_ids' => [$maxOrder->id]]);
-        $maxCartTiramisu->update(['order_ids' => [$annaOrder->id, $guestOrder->id]]);
+        $annaCartProsecco->update(['shared_order_ids' => [$maxOrder->id]]);
+        $maxCartTiramisu->update(['shared_order_ids' => [$annaOrder->id, $guestOrder->id]]);
 
         // ── Step 7: Confirm each order ──────────────────────────────────────
 
@@ -177,7 +177,7 @@ class TableSessionFlowSeeder extends Seeder
             ->get();
 
         $sharedInto = CartItem::with('menuItem:id,price')
-            ->whereJsonContains('order_ids', $orderId)
+            ->whereJsonContains('shared_order_ids', $orderId)
             ->where('table_scan_session_id', '!=', $ownerSessionId)
             ->get();
 
@@ -185,7 +185,7 @@ class TableSessionFlowSeeder extends Seeder
         foreach ($owned->merge($sharedInto) as $ci) {
             $unit       = $ci->menuItem ? (float) $ci->menuItem->price : 0.0;
             $lineTotal  = $unit * $ci->quantity;
-            $shareCount = 1 + count($ci->order_ids ?? []);
+            $shareCount = 1 + count($ci->shared_order_ids ?? []);
             $total     += $lineTotal / $shareCount;
         }
 

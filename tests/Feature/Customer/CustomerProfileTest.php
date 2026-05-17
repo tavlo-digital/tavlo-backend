@@ -49,10 +49,23 @@ class CustomerProfileTest extends TestCase
         Order::factory()->count(2)->create([
             'customer_id' => $this->customer->id,
             'created_at' => now(),
+            'payment_received' => true,
+            'payment_pending' => false,
+            'status' => 'completed',
         ]);
         Order::factory()->create([
             'customer_id' => $this->customer->id,
             'created_at' => now()->subMonthNoOverflow(),
+            'payment_received' => true,
+            'payment_pending' => false,
+            'status' => 'completed',
+        ]);
+        Order::factory()->create([
+            'customer_id' => $this->customer->id,
+            'created_at' => now(),
+            'payment_received' => false,
+            'payment_pending' => true,
+            'status' => 'draft',
         ]);
 
         $response = $this->getJson('/api/customer/profile', $this->headers);
@@ -69,6 +82,9 @@ class CustomerProfileTest extends TestCase
         Order::factory()->create([
             'customer_id' => $this->customer->id,
             'vendor_id'   => $vendor->id,
+            'payment_received' => true,
+            'payment_pending' => false,
+            'status' => 'completed',
         ]);
 
         $response = $this->getJson('/api/customer/profile', $this->headers);

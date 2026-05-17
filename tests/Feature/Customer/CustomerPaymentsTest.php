@@ -237,7 +237,21 @@ class CustomerPaymentsTest extends TestCase
         CartItem::create([
             'table_scan_session_id' => $this->session->id,
             'menu_item_id' => $this->menuItem->id,
+            'order_id' => $order->id,
             'quantity' => 2,
+            'selected_modifiers' => [
+                [
+                    'modifier_group_id' => 1,
+                    'name' => 'Choose your side',
+                    'type' => 'single',
+                    'is_required' => true,
+                    'min_selection' => 1,
+                    'max_selection' => 1,
+                    'options' => [
+                        ['id' => 1, 'name' => 'Onion Rings', 'price_adjustment' => 1.50],
+                    ],
+                ],
+            ],
         ]);
 
         $response = $this->withHeaders($this->headers)
@@ -250,7 +264,7 @@ class CustomerPaymentsTest extends TestCase
             ->assertJsonPath('clientSecret', 'pi_fake_1_secret_test')
             ->assertJsonPath('paymentIntentId', 'pi_fake_1');
 
-        $this->assertSame(1200, $this->stripe->created[0]['amountMinor']);
+        $this->assertSame(1500, $this->stripe->created[0]['amountMinor']);
         $this->assertSame('acct_test_123', $this->stripe->created[0]['stripeAccountId']);
         $this->assertSame('dine_in', $this->stripe->created[0]['metadata']['payment_for']);
         $this->assertSame((string) $this->session->id, $this->stripe->created[0]['metadata']['table_session_id']);
@@ -259,14 +273,14 @@ class CustomerPaymentsTest extends TestCase
             'order_id' => $order->id,
             'customer_id' => $this->customer->id,
             'stripe_payment_intent_id' => 'pi_fake_1',
-            'amount' => 12,
+            'amount' => 15,
             'currency' => 'EUR',
             'status' => 'requires_payment_method',
         ]);
 
         $this->assertDatabaseHas('orders', [
             'id' => $order->id,
-            'amount' => 12,
+            'amount' => 15,
             'payment_method' => 'stripe',
             'transaction_id' => 'pi_fake_1',
             'payment_pending' => true,
@@ -293,6 +307,7 @@ class CustomerPaymentsTest extends TestCase
         CartItem::create([
             'table_scan_session_id' => $this->session->id,
             'menu_item_id' => $this->menuItem->id,
+            'order_id' => $order->id,
             'quantity' => 2,
         ]);
 

@@ -6,6 +6,8 @@ use App\Models\CartItem;
 use App\Models\Customer;
 use App\Models\MenuCategory;
 use App\Models\MenuItem;
+use App\Models\ModifierGroup;
+use App\Models\ModifierOption;
 use App\Models\Order;
 use App\Models\RestaurantTable;
 use App\Models\Review;
@@ -82,6 +84,39 @@ class RestaurantBrowsingTest extends TestCase
             ->assertJsonCount(1, 'data'); // only the discoverable one
     }
 
+    public function test_hidden_restaurant_public_child_endpoints_return_404(): void
+    {
+        $hidden = Vendor::factory()->create();
+        VendorSetting::create([
+            'vendor_id' => $hidden->id,
+            'is_live_and_discoverable' => false,
+        ]);
+        $category = MenuCategory::create([
+            'vendor_id' => $hidden->id,
+            'name' => 'Hidden Mains',
+            'slug' => 'hidden-mains-' . $hidden->id,
+        ]);
+        $item = MenuItem::create([
+            'vendor_id' => $hidden->id,
+            'menu_category_id' => $category->id,
+            'name' => 'Hidden Burger',
+            'price' => 9,
+            'is_active' => true,
+            'available' => true,
+        ]);
+
+        foreach ([
+            "/api/customer/restaurants/{$hidden->vendor_public_id}/categories",
+            "/api/customer/restaurants/{$hidden->vendor_public_id}/menu",
+            "/api/customer/restaurants/{$hidden->vendor_public_id}/menu/{$item->id}",
+            "/api/customer/restaurants/{$hidden->vendor_public_id}/tables",
+            "/api/customer/restaurants/{$hidden->vendor_public_id}/reviews",
+            "/api/customer/restaurants/{$hidden->vendor_public_id}/about",
+        ] as $url) {
+            $this->getJson($url)->assertNotFound();
+        }
+    }
+
     // ----------------------------------------------------------------
     // GET /api/customer/restaurants/{vendorPublicId}
     // ----------------------------------------------------------------
@@ -153,7 +188,7 @@ class RestaurantBrowsingTest extends TestCase
             'sort_order' => 1,
         ]);
 
-        MenuItem::create([
+        $item = MenuItem::create([
             'vendor_id'        => $this->vendor->id,
             'menu_category_id' => $category->id,
             'name'             => 'Schnitzel',
@@ -169,6 +204,22 @@ class RestaurantBrowsingTest extends TestCase
             'available'        => true,
             'sort_order'       => 1,
         ]);
+        $group = ModifierGroup::create([
+            'vendor_id' => $this->vendor->id,
+            'name' => 'Choose your side',
+            'type' => 'single',
+            'min_selection' => 1,
+            'max_selection' => 1,
+            'is_required' => true,
+            'is_active' => true,
+        ]);
+        ModifierOption::create([
+            'modifier_group_id' => $group->id,
+            'name' => 'Onion Rings',
+            'price_adjustment' => 1.50,
+            'is_active' => true,
+        ]);
+        $item->modifierGroups()->sync([$group->id => ['sort_order' => 0]]);
 
         $response = $this->getJson("/api/customer/restaurants/{$this->vendor->vendor_public_id}/menu");
 
@@ -181,7 +232,10 @@ class RestaurantBrowsingTest extends TestCase
             ->assertJsonPath('0.paid_addons.0.name', 'Extra cheese')
             ->assertJsonPath('0.paid_addons.0.price', 1.5)
             ->assertJsonPath('0.free_addons.0', 'Ketchup')
-            ->assertJsonPath('0.removable_items.0', 'Onions');
+            ->assertJsonPath('0.removable_items.0', 'Onions')
+            ->assertJsonPath('0.modifier_groups.0.name', 'Choose your side')
+            ->assertJsonPath('0.modifier_groups.0.options.0.name', 'Onion Rings')
+            ->assertJsonPath('0.modifier_groups.0.options.0.price_adjustment', 1.5);
     }
 
     public function test_restaurant_menu_vat_amount_uses_discounted_price(): void
@@ -214,6 +268,29 @@ class RestaurantBrowsingTest extends TestCase
         $response->assertOk()
             ->assertJsonPath('0.discounted_price', 15)
             ->assertJsonPath('0.vat_amount', 1.5);
+    }
+
+    public function test_unavailable_menu_items_are_not_browsable(): void
+    {
+        $category = MenuCategory::create([
+            'vendor_id' => $this->vendor->id,
+            'name' => 'Unavailable',
+            'slug' => 'unavailable-' . $this->vendor->id,
+        ]);
+        $item = MenuItem::create([
+            'vendor_id' => $this->vendor->id,
+            'menu_category_id' => $category->id,
+            'name' => 'Sold Out Soup',
+            'price' => 5,
+            'is_active' => true,
+            'available' => false,
+        ]);
+        $this->getJson("/api/customer/restaurants/{$this->vendor->vendor_public_id}/menu")
+            ->assertOk()
+            ->assertJsonCount(0);
+
+        $this->getJson("/api/customer/restaurants/{$this->vendor->vendor_public_id}/menu/{$item->id}")
+            ->assertNotFound();
     }
 
     public function test_can_filter_menu_by_category(): void
@@ -287,6 +364,22 @@ class RestaurantBrowsingTest extends TestCase
             'available'        => true,
             'sort_order'       => 1,
         ]);
+        $group = ModifierGroup::create([
+            'vendor_id' => $this->vendor->id,
+            'name' => 'Choose your protein',
+            'type' => 'multiple',
+            'min_selection' => 0,
+            'max_selection' => 2,
+            'is_required' => false,
+            'is_active' => true,
+        ]);
+        ModifierOption::create([
+            'modifier_group_id' => $group->id,
+            'name' => 'Grilled chicken',
+            'price_adjustment' => 3.00,
+            'is_active' => true,
+        ]);
+        $item->modifierGroups()->sync([$group->id => ['sort_order' => 0]]);
 
         $response = $this->getJson("/api/customer/restaurants/{$this->vendor->vendor_public_id}/menu/{$item->id}");
 
@@ -298,7 +391,9 @@ class RestaurantBrowsingTest extends TestCase
             ->assertJsonPath('paid_addons.0.name', 'Grilled chicken')
             ->assertJsonPath('paid_addons.0.price', 3)
             ->assertJsonPath('free_addons.0', 'Croutons')
-            ->assertJsonPath('removable_items.0', 'Parmesan');
+            ->assertJsonPath('removable_items.0', 'Parmesan')
+            ->assertJsonPath('modifier_groups.0.name', 'Choose your protein')
+            ->assertJsonPath('modifier_groups.0.options.0.price_adjustment', 3);
     }
 
     // ----------------------------------------------------------------
@@ -374,11 +469,15 @@ class RestaurantBrowsingTest extends TestCase
             'customer_id' => $customer->id,
             'vendor_id' => $this->vendor->id,
             'table_scan_session_id' => $session->id,
+            'payment_received' => true,
+            'payment_pending' => false,
+            'status' => 'completed',
         ]);
 
         CartItem::create([
             'table_scan_session_id' => $session->id,
             'menu_item_id' => $menuItem->id,
+            'order_id' => $order->id,
             'quantity' => 2,
         ]);
 

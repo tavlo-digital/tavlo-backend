@@ -223,6 +223,7 @@ class OrderHistoryController extends Controller
             'paid_addons' => $item->paid_addons ?? [],
             'free_addons' => $item->free_addons ?? [],
             'removed_items' => $item->removed_items ?? [],
+            'selected_modifiers' => $item->selected_modifiers ?? [],
         ];
     }
 
@@ -270,7 +271,7 @@ class OrderHistoryController extends Controller
         $ownedItems = $this->ownedCartItems($order);
         $sharedIntoItems = $this->sharedIntoCartItems($order);
         $ownedSharedItems = $ownedItems
-            ->filter(fn (CartItem $item) => ! empty($item->order_ids))
+            ->filter(fn (CartItem $item) => ! empty($item->shared_order_ids))
             ->values();
         $sharedItems = $ownedSharedItems->merge($sharedIntoItems)->values();
         $ordersById = $this->sharingOrdersById($sharedItems);
@@ -318,21 +319,40 @@ class OrderHistoryController extends Controller
             'paid_addons' => $item->paid_addons ?? [],
             'free_addons' => $item->free_addons ?? [],
             'removed_items' => $item->removed_items ?? [],
+            'selected_modifiers' => $item->selected_modifiers ?? [],
         ];
     }
 
     private function cartItemUnitPrice(CartItem $item): float
     {
-        $basePrice = (float) ($item->menuItem?->price ?? 0);
+        $basePrice = $this->cartItemBasePrice($item);
         $addonsTotal = collect($item->paid_addons ?? [])->sum(fn ($addon) => (float) ($addon['price'] ?? 0));
+        $modifiersTotal = collect($item->selected_modifiers ?? [])
+            ->flatMap(fn ($group) => is_array($group) ? ($group['options'] ?? []) : [])
+            ->sum(fn ($option) => (float) ($option['price_adjustment'] ?? 0));
 
-        return round($basePrice + $addonsTotal, 2);
+        return round($basePrice + $addonsTotal + $modifiersTotal, 2);
+    }
+
+    private function cartItemBasePrice(CartItem $item): float
+    {
+        $menuItem = $item->menuItem;
+
+        if (! $menuItem) {
+            return 0.0;
+        }
+
+        if ($menuItem->has_discount && $menuItem->discounted_price !== null) {
+            return (float) $menuItem->discounted_price;
+        }
+
+        return (float) $menuItem->price;
     }
 
     private function formatTrackingSharedItem(CartItem $item, Collection $ordersById, Collection $sessionCustomerNames): array
     {
         $payload = $this->formatTrackingItem($item);
-        $orderIds = array_values(array_map('intval', is_array($item->order_ids) ? $item->order_ids : []));
+        $orderIds = array_values(array_map('intval', is_array($item->shared_order_ids) ? $item->shared_order_ids : []));
         $sharedBetween = 1 + count($orderIds);
 
         $payload['shared_between'] = $sharedBetween;
@@ -363,8 +383,17 @@ class OrderHistoryController extends Controller
             return collect();
         }
 
-        return CartItem::with('menuItem:id,name,price,image_url')
-            ->where('table_scan_session_id', $order->table_scan_session_id)
+        return CartItem::with('menuItem:id,name,price,has_discount,discounted_price,image_url')
+            ->where(function (Builder $query) use ($order) {
+                if ($order->status === 'draft') {
+                    $query->where('table_scan_session_id', $order->table_scan_session_id)
+                        ->whereNull('order_id');
+
+                    return;
+                }
+
+                $query->where('order_id', $order->id);
+            })
             ->orderBy('id')
             ->get();
     }
@@ -375,8 +404,8 @@ class OrderHistoryController extends Controller
             return collect();
         }
 
-        return CartItem::with('menuItem:id,name,price,image_url')
-            ->whereJsonContains('order_ids', $order->id)
+        return CartItem::with('menuItem:id,name,price,has_discount,discounted_price,image_url')
+            ->whereJsonContains('shared_order_ids', $order->id)
             ->where('table_scan_session_id', '!=', $order->table_scan_session_id)
             ->orderBy('id')
             ->get();
@@ -385,7 +414,7 @@ class OrderHistoryController extends Controller
     private function sharingOrdersById(Collection $items): Collection
     {
         $orderIds = $items
-            ->flatMap(fn (CartItem $item) => is_array($item->order_ids) ? $item->order_ids : [])
+            ->flatMap(fn (CartItem $item) => is_array($item->shared_order_ids) ? $item->shared_order_ids : [])
             ->map(fn ($id) => (int) $id)
             ->filter()
             ->unique()
@@ -430,13 +459,16 @@ class OrderHistoryController extends Controller
 
     private function linkedCartItems(Order $order): Collection
     {
-        return CartItem::with('menuItem:id,name,price,image_url')
+        return CartItem::with('menuItem:id,name,price,has_discount,discounted_price,image_url')
             ->where(function (Builder $query) use ($order) {
-                if ($order->table_scan_session_id) {
+                if ($order->status === 'draft' && $order->table_scan_session_id) {
                     $query->where('table_scan_session_id', $order->table_scan_session_id);
+                    $query->whereNull('order_id');
+                } else {
+                    $query->where('order_id', $order->id);
                 }
 
-                $query->orWhereJsonContains('order_ids', $order->id);
+                $query->orWhereJsonContains('shared_order_ids', $order->id);
             })
             ->orderBy('id')
             ->get();

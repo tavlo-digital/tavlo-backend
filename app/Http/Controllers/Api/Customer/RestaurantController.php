@@ -306,7 +306,7 @@ class RestaurantController extends Controller
      */
     public function categories(string $vendorPublicId): JsonResponse
     {
-        $vendor = Vendor::where('vendor_public_id', $vendorPublicId)->firstOrFail();
+        $vendor = $this->discoverableVendor($vendorPublicId);
 
         $categories = MenuCategory::where('vendor_id', $vendor->id)
             ->where('is_active', true)
@@ -321,15 +321,18 @@ class RestaurantController extends Controller
      */
     public function menu(Request $request, string $vendorPublicId): JsonResponse
     {
-        $vendor = Vendor::where('vendor_public_id', $vendorPublicId)->firstOrFail();
+        $vendor = $this->discoverableVendor($vendorPublicId);
 
         $query = MenuItem::where('vendor_id', $vendor->id)
             ->where('is_active', true)
+            ->where('available', true)
             ->with([
                 'category:id,name,slug',
                 'allergens:id,name',
                 'tags:id,label',
-                'modifierGroups' => fn ($q) => $q->with('options'),
+                'modifierGroups' => fn ($q) => $q->where('is_active', true)
+                    ->orderByPivot('sort_order')
+                    ->with(['options' => fn ($o) => $o->where('is_active', true)->orderBy('sort_order')]),
             ]);
 
         if ($request->filled('category_id')) {
@@ -376,7 +379,7 @@ class RestaurantController extends Controller
                 ] : null,
                 'allergens'         => $item->allergens->pluck('name'),
                 'tags'              => $item->tags->pluck('label'),
-                'modifier_groups'   => $item->modifierGroups,
+                'modifier_groups'   => $item->modifierGroups->map(fn ($g) => $this->formatModifierGroup($g))->values(),
             ];
         });
 
@@ -388,17 +391,18 @@ class RestaurantController extends Controller
      */
     public function menuItem(string $vendorPublicId, int $itemId): JsonResponse
     {
-        $vendor = Vendor::where('vendor_public_id', $vendorPublicId)->firstOrFail();
+        $vendor = $this->discoverableVendor($vendorPublicId);
 
         $item = MenuItem::where('vendor_id', $vendor->id)
             ->where('id', $itemId)
             ->where('is_active', true)
+            ->where('available', true)
             ->with([
                 'category:id,name,slug',
                 'allergens:id,name,icon',
                 'tags:id,label,icon',
                 'modifierGroups' => fn ($q) => $q->where('is_active', true)
-                    ->orderBy('sort_order')
+                    ->orderByPivot('sort_order')
                     ->with(['options' => fn ($o) => $o->where('is_active', true)->orderBy('sort_order')]),
             ])
             ->firstOrFail();
@@ -443,20 +447,25 @@ class RestaurantController extends Controller
                 'label' => $t->label,
                 'icon'  => $t->icon,
             ]),
-            'modifier_groups' => $item->modifierGroups->map(fn ($g) => [
-                'id'            => $g->id,
-                'name'          => $g->name,
-                'type'          => $g->type,
-                'is_required'   => (bool) $g->is_required,
-                'min_selection' => $g->min_selection,
-                'max_selection' => $g->max_selection,
-                'options'       => $g->options->map(fn ($o) => [
-                    'id'               => $o->id,
-                    'name'             => $o->name,
-                    'price_adjustment' => (float) $o->price_adjustment,
-                ]),
-            ]),
+            'modifier_groups' => $item->modifierGroups->map(fn ($g) => $this->formatModifierGroup($g))->values(),
         ]);
+    }
+
+    private function formatModifierGroup($group): array
+    {
+        return [
+            'id'            => $group->id,
+            'name'          => $group->name,
+            'type'          => $group->type,
+            'is_required'   => (bool) $group->is_required,
+            'min_selection' => (int) $group->min_selection,
+            'max_selection' => (int) $group->max_selection,
+            'options'       => $group->options->map(fn ($option) => [
+                'id'               => $option->id,
+                'name'             => $option->name,
+                'price_adjustment' => (float) $option->price_adjustment,
+            ])->values(),
+        ];
     }
 
     private function menuItemVatAmount(MenuItem $item): float
@@ -473,7 +482,7 @@ class RestaurantController extends Controller
      */
     public function tables(string $vendorPublicId): JsonResponse
     {
-        $vendor = Vendor::where('vendor_public_id', $vendorPublicId)->firstOrFail();
+        $vendor = $this->discoverableVendor($vendorPublicId);
 
         $tables = RestaurantTable::where('vendor_id', $vendor->id)
             ->where('is_active', true)
@@ -487,7 +496,7 @@ class RestaurantController extends Controller
      */
     public function reviews(Request $request, string $vendorPublicId): JsonResponse
     {
-        $vendor = Vendor::where('vendor_public_id', $vendorPublicId)->firstOrFail();
+        $vendor = $this->discoverableVendor($vendorPublicId);
 
         $query = \App\Models\Review::where('vendor_id', $vendor->id)
             ->where('flagged', false)
@@ -610,11 +619,13 @@ class RestaurantController extends Controller
         $cartItems = CartItem::with('menuItem:id,name,image_url')
             ->where(function ($query) use ($orderIds, $sessionIds) {
                 if ($sessionIds->isNotEmpty()) {
-                    $query->whereIn('table_scan_session_id', $sessionIds->all());
+                    $query->whereIn('table_scan_session_id', $sessionIds->all())
+                        ->whereNull('order_id');
                 }
 
                 foreach ($orderIds as $orderId) {
-                    $query->orWhereJsonContains('order_ids', $orderId);
+                    $query->orWhere('order_id', $orderId);
+                    $query->orWhereJsonContains('shared_order_ids', $orderId);
                 }
             })
             ->orderBy('id')
@@ -623,9 +634,9 @@ class RestaurantController extends Controller
         return $orders->mapWithKeys(function ($order, int $orderId) use ($cartItems) {
             $items = $cartItems
                 ->filter(function (CartItem $item) use ($order, $orderId) {
-                    $orderIds = array_map('intval', is_array($item->order_ids) ? $item->order_ids : []);
+                    $orderIds = array_map('intval', is_array($item->shared_order_ids) ? $item->shared_order_ids : []);
 
-                    return (int) $item->table_scan_session_id === (int) $order->table_scan_session_id
+                    return (int) $item->order_id === (int) $orderId
                         || in_array($orderId, $orderIds, true);
                 })
                 ->unique('id')
@@ -641,6 +652,7 @@ class RestaurantController extends Controller
     public function about(Request $request, string $vendorPublicId): JsonResponse
     {
         $vendor = Vendor::where('vendor_public_id', $vendorPublicId)
+            ->whereHas('vendorSetting', fn ($q) => $q->where('is_live_and_discoverable', true))
             ->with([
                 'vendorSetting',
                 'takeawayQr:id,vendor_id',
@@ -722,6 +734,13 @@ class RestaurantController extends Controller
             return false;
         }
         return $customer->favorites()->where('vendors.id', $vendorId)->exists();
+    }
+
+    private function discoverableVendor(string $vendorPublicId): Vendor
+    {
+        return Vendor::where('vendor_public_id', $vendorPublicId)
+            ->whereHas('vendorSetting', fn ($q) => $q->where('is_live_and_discoverable', true))
+            ->firstOrFail();
     }
 
     private function paymentMethods(?VendorSetting $setting): array

@@ -392,19 +392,19 @@ class PaymentController extends Controller
 
     private function computeTableOrderAmount(Order $order): float
     {
-        $owned = CartItem::with('menuItem:id,price')
-            ->where('table_scan_session_id', $order->table_scan_session_id)
+        $owned = CartItem::with('menuItem:id,price,has_discount,discounted_price')
+            ->where('order_id', $order->id)
             ->get();
 
-        $sharedInto = CartItem::with('menuItem:id,price')
-            ->whereJsonContains('order_ids', $order->id)
+        $sharedInto = CartItem::with('menuItem:id,price,has_discount,discounted_price')
+            ->whereJsonContains('shared_order_ids', $order->id)
             ->where('table_scan_session_id', '!=', $order->table_scan_session_id)
             ->get();
 
         return round($owned->merge($sharedInto)->sum(function (CartItem $item) {
             $unitPrice = $this->cartItemUnitPrice($item);
             $lineTotal = $unitPrice * $item->quantity;
-            $shareCount = 1 + count($item->order_ids ?? []);
+            $shareCount = 1 + count($item->shared_order_ids ?? []);
 
             return $lineTotal / $shareCount;
         }), 2);
@@ -412,10 +412,28 @@ class PaymentController extends Controller
 
     private function cartItemUnitPrice(CartItem $item): float
     {
-        $basePrice = $item->menuItem ? (float) $item->menuItem->price : 0.0;
+        $basePrice = $this->cartItemBasePrice($item);
         $addonsTotal = collect($item->paid_addons ?? [])->sum(fn ($addon) => (float) ($addon['price'] ?? 0));
+        $modifiersTotal = collect($item->selected_modifiers ?? [])
+            ->flatMap(fn ($group) => is_array($group) ? ($group['options'] ?? []) : [])
+            ->sum(fn ($option) => (float) ($option['price_adjustment'] ?? 0));
 
-        return round($basePrice + $addonsTotal, 2);
+        return round($basePrice + $addonsTotal + $modifiersTotal, 2);
+    }
+
+    private function cartItemBasePrice(CartItem $item): float
+    {
+        $menuItem = $item->menuItem;
+
+        if (! $menuItem) {
+            return 0.0;
+        }
+
+        if ($menuItem->has_discount && $menuItem->discounted_price !== null) {
+            return (float) $menuItem->discounted_price;
+        }
+
+        return (float) $menuItem->price;
     }
 
     private function stripeAmountMinor(float $amount, string $currency): int

@@ -5,6 +5,8 @@ namespace App\Http\Controllers\Api\Vendor;
 use App\Http\Controllers\Controller;
 use App\Models\MenuCategory;
 use App\Models\MenuItem;
+use App\Models\ModifierGroup;
+use App\Models\ModifierOption;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
@@ -36,7 +38,7 @@ class MenuController extends Controller
             ]);
 
         $items = $vendor->menuItems()
-            ->with('category')
+            ->with(['category', 'modifierGroups.options'])
             ->orderBy('sort_order')
             ->get()
             ->map(fn (MenuItem $item) => $this->formatItem($item));
@@ -160,12 +162,16 @@ class MenuController extends Controller
 
                 if ($existingItem) {
                     $existingItem->update($attributes);
+                    if (array_key_exists('modifierGroupIds', $itemData)) {
+                        $this->syncModifierGroups($existingItem, $vendor, $itemData['modifierGroupIds'] ?? []);
+                    }
                     $existingItemIds[] = $existingItem->id;
                 } else {
                     $newItem = $vendor->menuItems()->create(array_merge(
                         $attributes,
                         ['vendor_id' => $vendor->id]
                     ));
+                    $this->syncModifierGroups($newItem, $vendor, $itemData['modifierGroupIds'] ?? []);
                     $existingItemIds[] = $newItem->id;
                 }
             }
@@ -214,6 +220,10 @@ class MenuController extends Controller
 
     private function formatItem(MenuItem $item): array
     {
+        if (! $item->relationLoaded('modifierGroups')) {
+            $item->load('modifierGroups.options');
+        }
+
         return [
             'id' => (string) $item->id,
             'category' => $item->category?->name ?? '',
@@ -237,11 +247,66 @@ class MenuController extends Controller
             'paidAddons' => $item->paid_addons ?? [],
             'freeAddons' => $item->free_addons ?? [],
             'removableItems' => $item->removable_items ?? [],
+            'modifierGroupIds' => $item->modifierGroups->pluck('id')->values()->all(),
+            'modifierGroups' => $item->modifierGroups
+                ->map(fn (ModifierGroup $group) => $this->formatModifierGroup($group))
+                ->values()
+                ->all(),
             'translations' => $item->translations ?? (object) [],
             'ingredients' => $item->ingredients ?? [],
             'rating' => (float) $item->rating,
             'reviewCount' => $item->review_count,
             'orderedCount' => $item->ordered_count,
+        ];
+    }
+
+    private function syncModifierGroups(MenuItem $item, \App\Models\Vendor $vendor, array $ids): void
+    {
+        $ids = collect($ids)
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn (int $id) => $id > 0)
+            ->unique()
+            ->values();
+
+        if ($ids->isEmpty()) {
+            $item->modifierGroups()->sync([]);
+            return;
+        }
+
+        $validIds = $vendor->modifierGroups()
+            ->where('is_active', true)
+            ->whereIn('id', $ids->all())
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        if (count($validIds) !== $ids->count()) {
+            abort(422, 'One or more selected modifier groups are invalid for this vendor.');
+        }
+
+        $item->modifierGroups()->sync(
+            $ids->mapWithKeys(fn (int $id, int $index) => [$id => ['sort_order' => $index]])->all()
+        );
+    }
+
+    private function formatModifierGroup(ModifierGroup $group): array
+    {
+        return [
+            'id' => $group->id,
+            'name' => $group->name,
+            'type' => $group->type,
+            'minSelection' => (int) $group->min_selection,
+            'maxSelection' => (int) $group->max_selection,
+            'isRequired' => (bool) $group->is_required,
+            'sortOrder' => (int) ($group->pivot?->sort_order ?? $group->sort_order),
+            'isActive' => (bool) $group->is_active,
+            'options' => $group->options->map(fn (ModifierOption $option) => [
+                'id' => $option->id,
+                'name' => $option->name,
+                'priceAdjustment' => (float) $option->price_adjustment,
+                'sortOrder' => (int) $option->sort_order,
+                'isActive' => (bool) $option->is_active,
+            ])->values()->all(),
         ];
     }
 

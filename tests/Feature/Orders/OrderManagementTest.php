@@ -150,7 +150,7 @@ class OrderManagementTest extends TestCase
     {
         $session = $this->scanSession();
         $order = $this->order($session);
-        $item = $this->cartItem($session);
+        $item = $this->cartItem($session, ['order_id' => $order->id]);
 
         $this->patchJson(
             "/api/vendor/orders/{$order->id}/items/{$item->id}",
@@ -177,7 +177,7 @@ class OrderManagementTest extends TestCase
     {
         $session = $this->scanSession();
         $order = $this->order($session);
-        $item = $this->cartItem($session, ['ready_at' => now()]);
+        $item = $this->cartItem($session, ['order_id' => $order->id, 'ready_at' => now()]);
 
         $this->patchJson(
             "/api/vendor/orders/{$order->id}/items/{$item->id}",

@@ -10,12 +10,14 @@ class CartItem extends Model
     protected $fillable = [
         'table_scan_session_id',
         'menu_item_id',
+        'order_id',
         'quantity',
         'notes',
         'paid_addons',
         'free_addons',
         'removed_items',
-        'order_ids',
+        'selected_modifiers',
+        'shared_order_ids',
         'preparing_start_at',
         'ready_at',
         'served_at',
@@ -28,7 +30,8 @@ class CartItem extends Model
             'paid_addons'        => 'array',
             'free_addons'        => 'array',
             'removed_items'      => 'array',
-            'order_ids'          => 'array',
+            'selected_modifiers' => 'array',
+            'shared_order_ids'          => 'array',
             'preparing_start_at' => 'datetime',
             'ready_at'           => 'datetime',
             'served_at'          => 'datetime',
@@ -43,5 +46,10 @@ class CartItem extends Model
     public function menuItem(): BelongsTo
     {
         return $this->belongsTo(MenuItem::class);
+    }
+
+    public function order(): BelongsTo
+    {
+        return $this->belongsTo(Order::class);
     }
 }

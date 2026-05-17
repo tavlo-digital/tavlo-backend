@@ -116,7 +116,7 @@ class CustomerFeaturesTest extends TestCase
         ]);
 
         $session = $this->tableScanSession();
-        CartItem::create([
+        $cartItem = CartItem::create([
             'table_scan_session_id' => $session->id,
             'menu_item_id' => $menuItem->id,
             'quantity' => 1,
@@ -139,6 +139,7 @@ class CustomerFeaturesTest extends TestCase
             'currency' => 'USD',
             'created_at' => now()->subDay(),
         ]);
+        $cartItem->update(['order_id' => $first->id]);
 
         Order::factory()->create([
             'customer_id' => $this->customer->id,
@@ -235,13 +236,13 @@ class CustomerFeaturesTest extends TestCase
         ]);
 
         $session = $this->tableScanSession();
-        CartItem::create([
+        $ramenCartItem = CartItem::create([
             'table_scan_session_id' => $session->id,
             'menu_item_id' => $ramen->id,
             'quantity' => 1,
             'notes' => null,
         ]);
-        CartItem::create([
+        $latteCartItem = CartItem::create([
             'table_scan_session_id' => $session->id,
             'menu_item_id' => $latte->id,
             'quantity' => 1,
@@ -263,6 +264,8 @@ class CustomerFeaturesTest extends TestCase
             'amount' => 24.24,
             'currency' => 'USD',
         ]);
+        CartItem::whereIn('id', [$ramenCartItem->id, $latteCartItem->id])
+            ->update(['order_id' => $order->id]);
 
         $response = $this->getJson(
             "/api/customer/orders/{$order->order_public_id}",
@@ -464,6 +467,9 @@ class CustomerFeaturesTest extends TestCase
         $order = Order::factory()->create([
             'customer_id' => $this->customer->id,
             'vendor_id'   => $this->vendor->id,
+            'payment_received' => true,
+            'payment_pending' => false,
+            'status' => 'completed',
         ]);
 
         $response = $this->postJson('/api/customer/reviews', [
@@ -491,11 +497,33 @@ class CustomerFeaturesTest extends TestCase
             ->assertJsonValidationErrors(['vendor_public_id']);
     }
 
+    public function test_cannot_review_vendor_with_unpaid_order(): void
+    {
+        Order::factory()->create([
+            'customer_id' => $this->customer->id,
+            'vendor_id' => $this->vendor->id,
+            'payment_received' => false,
+            'payment_pending' => true,
+            'status' => 'confirmed',
+        ]);
+
+        $this->postJson('/api/customer/reviews', [
+            'vendor_public_id' => $this->vendor->vendor_public_id,
+            'rating' => 5,
+            'review' => 'Not yet paid.',
+        ], $this->headers)
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['vendor_public_id']);
+    }
+
     public function test_cannot_review_same_order_twice(): void
     {
         $order = Order::factory()->create([
             'customer_id' => $this->customer->id,
             'vendor_id'   => $this->vendor->id,
+            'payment_received' => true,
+            'payment_pending' => false,
+            'status' => 'completed',
         ]);
 
         Review::create([
