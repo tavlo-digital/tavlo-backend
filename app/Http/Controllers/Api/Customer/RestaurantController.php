@@ -3,10 +3,12 @@
 namespace App\Http\Controllers\Api\Customer;
 
 use App\Http\Controllers\Controller;
+use App\Models\Allergen;
 use App\Models\CartItem;
 use App\Models\MenuCategory;
 use App\Models\MenuItem;
 use App\Models\RestaurantTable;
+use App\Models\SpecialTag;
 use App\Models\Vendor;
 use App\Models\VendorSetting;
 use Illuminate\Http\JsonResponse;
@@ -329,7 +331,7 @@ class RestaurantController extends Controller
             ->with([
                 'category:id,name,slug',
                 'allergens:id,name',
-                'tags:id,label',
+                'tags:id,slug,label',
                 'modifierGroups' => fn ($q) => $q->where('is_active', true)
                     ->orderByPivot('sort_order')
                     ->with(['options' => fn ($o) => $o->where('is_active', true)->orderBy('sort_order')]),
@@ -380,8 +382,8 @@ class RestaurantController extends Controller
                     'name' => $item->category->name,
                     'slug' => $item->category->slug,
                 ] : null,
-                'allergens'         => $item->allergens->pluck('name'),
-                'tags'              => $item->tags->pluck('label'),
+                'allergens'         => $this->menuItemAllergenNames($item),
+                'tags'              => $this->menuItemTagLabels($item),
                 'modifier_groups'   => $item->modifierGroups->map(fn ($g) => $this->formatModifierGroup($g))->values(),
             ];
         });
@@ -403,7 +405,7 @@ class RestaurantController extends Controller
             ->with([
                 'category:id,name,slug',
                 'allergens:id,name,icon',
-                'tags:id,label,icon',
+                'tags:id,slug,label,icon',
                 'modifierGroups' => fn ($q) => $q->where('is_active', true)
                     ->orderByPivot('sort_order')
                     ->with(['options' => fn ($o) => $o->where('is_active', true)->orderBy('sort_order')]),
@@ -440,16 +442,8 @@ class RestaurantController extends Controller
                 'name' => $item->category->name,
                 'slug' => $item->category->slug,
             ] : null,
-            'allergens' => $item->allergens->map(fn ($a) => [
-                'id'   => $a->id,
-                'name' => $a->name,
-                'icon' => $a->icon,
-            ]),
-            'tags' => $item->tags->map(fn ($t) => [
-                'id'    => $t->id,
-                'label' => $t->label,
-                'icon'  => $t->icon,
-            ]),
+            'allergens' => $this->formatMenuItemAllergens($item),
+            'tags' => $this->formatMenuItemTags($item),
             'modifier_groups' => $item->modifierGroups->map(fn ($g) => $this->formatModifierGroup($g))->values(),
         ]);
     }
@@ -469,6 +463,127 @@ class RestaurantController extends Controller
                 'price_adjustment' => (float) $option->price_adjustment,
             ])->values(),
         ];
+    }
+
+    private function menuItemAllergenNames(MenuItem $item): Collection
+    {
+        return $item->allergens
+            ->pluck('name')
+            ->merge($this->stringValues($item->allergies))
+            ->filter()
+            ->unique(fn ($value) => Str::lower($value))
+            ->values();
+    }
+
+    private function menuItemTagLabels(MenuItem $item): Collection
+    {
+        return $item->tags
+            ->pluck('label')
+            ->merge($this->stringValues($item->special_tags))
+            ->filter()
+            ->unique(fn ($value) => Str::lower($value))
+            ->values();
+    }
+
+    private function formatMenuItemAllergens(MenuItem $item): Collection
+    {
+        $formatted = $item->allergens
+            ->map(fn ($allergen) => [
+                'id'   => $allergen->id,
+                'name' => $allergen->name,
+                'icon' => $allergen->icon,
+            ])
+            ->keyBy(fn ($allergen) => Str::lower($allergen['name']));
+
+        $jsonNames = $this->stringValues($item->allergies);
+        $missingNames = $jsonNames
+            ->reject(fn ($name) => $formatted->has(Str::lower($name)))
+            ->values();
+
+        if ($missingNames->isNotEmpty()) {
+            Allergen::where('is_active', true)
+                ->whereIn('name', $missingNames->all())
+                ->get(['id', 'name', 'icon'])
+                ->each(function (Allergen $allergen) use ($formatted) {
+                    $formatted->put(Str::lower($allergen->name), [
+                        'id'   => $allergen->id,
+                        'name' => $allergen->name,
+                        'icon' => $allergen->icon,
+                    ]);
+                });
+
+            $missingNames
+                ->reject(fn ($name) => $formatted->has(Str::lower($name)))
+                ->each(fn ($name) => $formatted->put(Str::lower($name), [
+                    'id'   => null,
+                    'name' => $name,
+                    'icon' => null,
+                ]));
+        }
+
+        return $formatted->values();
+    }
+
+    private function formatMenuItemTags(MenuItem $item): Collection
+    {
+        $formatted = $item->tags
+            ->map(fn ($tag) => [
+                'id'    => $tag->id,
+                'slug'  => $tag->slug,
+                'label' => $tag->label,
+                'icon'  => $tag->icon,
+            ])
+            ->keyBy(fn ($tag) => Str::lower($tag['slug'] ?? $tag['label']));
+
+        $jsonValues = $this->stringValues($item->special_tags);
+        $missingValues = $jsonValues
+            ->reject(fn ($value) => $formatted->has(Str::lower($value)))
+            ->values();
+
+        if ($missingValues->isNotEmpty()) {
+            SpecialTag::where('is_active', true)
+                ->where(function ($query) use ($missingValues) {
+                    $query->whereIn('slug', $missingValues->all())
+                        ->orWhereIn('label', $missingValues->all());
+                })
+                ->get(['id', 'slug', 'label', 'icon'])
+                ->each(function (SpecialTag $tag) use ($formatted) {
+                    $value = [
+                        'id'    => $tag->id,
+                        'slug'  => $tag->slug,
+                        'label' => $tag->label,
+                        'icon'  => $tag->icon,
+                    ];
+                    $formatted->put(Str::lower($tag->slug), $value);
+                    $formatted->put(Str::lower($tag->label), $value);
+                });
+
+            $missingValues
+                ->reject(fn ($value) => $formatted->has(Str::lower($value)))
+                ->each(fn ($value) => $formatted->put(Str::lower($value), [
+                    'id'    => null,
+                    'slug'  => $value,
+                    'label' => $value,
+                    'icon'  => null,
+                ]));
+        }
+
+        return $formatted
+            ->unique(fn ($tag) => $tag['id'] ?? $tag['slug'])
+            ->map(fn ($tag) => [
+                'id'    => $tag['id'],
+                'label' => $tag['label'],
+                'icon'  => $tag['icon'],
+            ])
+            ->values();
+    }
+
+    private function stringValues(?array $values): Collection
+    {
+        return collect($values)
+            ->filter(fn ($value) => is_string($value) && trim($value) !== '')
+            ->map(fn ($value) => trim($value))
+            ->values();
     }
 
     private function menuItemVatAmount(MenuItem $item): float

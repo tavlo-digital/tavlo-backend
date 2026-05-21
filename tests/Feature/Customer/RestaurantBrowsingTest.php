@@ -4,6 +4,7 @@ namespace Tests\Feature\Customer;
 
 use App\Models\CartItem;
 use App\Models\Customer;
+use App\Models\Allergen;
 use App\Models\MenuCategory;
 use App\Models\MenuItem;
 use App\Models\ModifierGroup;
@@ -11,6 +12,7 @@ use App\Models\ModifierOption;
 use App\Models\Order;
 use App\Models\RestaurantTable;
 use App\Models\Review;
+use App\Models\SpecialTag;
 use App\Models\TableScanSession;
 use App\Models\Vendor;
 use App\Models\VendorSetting;
@@ -402,6 +404,50 @@ class RestaurantBrowsingTest extends TestCase
             ->assertJsonPath('removable_items.0', 'Parmesan')
             ->assertJsonPath('modifier_groups.0.name', 'Choose your protein')
             ->assertJsonPath('modifier_groups.0.options.0.price_adjustment', 3);
+    }
+
+    public function test_menu_item_detail_returns_json_allergies_and_tags_without_pivot_rows(): void
+    {
+        $category = MenuCategory::create([
+            'vendor_id' => $this->vendor->id,
+            'name'      => 'Tagged',
+            'slug'      => 'tagged',
+            'is_active' => true,
+            'sort_order' => 1,
+        ]);
+
+        Allergen::create([
+            'name' => 'Gluten',
+            'icon' => 'G',
+            'is_active' => true,
+        ]);
+
+        SpecialTag::create([
+            'slug' => 'chefs-pick',
+            'label' => "Chef's Pick",
+            'icon' => 'C',
+            'is_active' => true,
+        ]);
+
+        $item = MenuItem::create([
+            'vendor_id'        => $this->vendor->id,
+            'menu_category_id' => $category->id,
+            'name'             => 'Tagged Pasta',
+            'price'            => 11.50,
+            'allergies'        => ['Gluten'],
+            'special_tags'     => ['chefs-pick'],
+            'is_active'        => true,
+            'available'        => true,
+            'sort_order'       => 1,
+        ]);
+
+        $response = $this->getJson("/api/customer/restaurants/{$this->vendor->vendor_public_id}/menu/{$item->id}");
+
+        $response->assertOk()
+            ->assertJsonPath('allergens.0.name', 'Gluten')
+            ->assertJsonPath('allergens.0.icon', 'G')
+            ->assertJsonPath('tags.0.label', "Chef's Pick")
+            ->assertJsonPath('tags.0.icon', 'C');
     }
 
     // ----------------------------------------------------------------
