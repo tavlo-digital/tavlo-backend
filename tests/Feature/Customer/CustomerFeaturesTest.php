@@ -114,6 +114,14 @@ class CustomerFeaturesTest extends TestCase
             'is_active' => true,
             'available' => true,
         ]);
+        $legacyMenuItem = MenuItem::create([
+            'vendor_id' => $this->vendor->id,
+            'menu_category_id' => $category->id,
+            'name' => 'Matcha Latte',
+            'price' => 5.00,
+            'is_active' => true,
+            'available' => true,
+        ]);
 
         $session = $this->tableScanSession();
         $cartItem = CartItem::create([
@@ -141,7 +149,14 @@ class CustomerFeaturesTest extends TestCase
         ]);
         $cartItem->update(['order_id' => $first->id]);
 
-        Order::factory()->create([
+        CartItem::create([
+            'table_scan_session_id' => $session->id,
+            'menu_item_id' => $legacyMenuItem->id,
+            'quantity' => 2,
+            'notes' => null,
+        ]);
+
+        $second = Order::factory()->create([
             'customer_id' => $this->customer->id,
             'vendor_id' => $this->vendor->id,
             'table_scan_session_id' => $session->id,
@@ -151,6 +166,13 @@ class CustomerFeaturesTest extends TestCase
             'currency' => 'USD',
             'created_at' => now(),
         ]);
+
+        $this->getJson('/api/customer/orders/history?per_page=1&page=1', $this->headers)
+            ->assertOk()
+            ->assertJsonPath('history.0.orders.0.order_public_id', $second->order_public_id)
+            ->assertJsonPath('history.0.orders.0.items_count', 2)
+            ->assertJsonPath('history.0.orders.0.items.0.name', 'Matcha Latte')
+            ->assertJsonPath('history.0.orders.0.items.0.quantity', 2);
 
         $response = $this->getJson('/api/customer/orders/history?per_page=1&page=2', $this->headers);
 

@@ -459,7 +459,7 @@ class OrderHistoryController extends Controller
 
     private function linkedCartItems(Order $order): Collection
     {
-        return CartItem::with('menuItem:id,name,price,has_discount,discounted_price,image_url')
+        $items = CartItem::with('menuItem:id,name,price,has_discount,discounted_price,image_url')
             ->where(function (Builder $query) use ($order) {
                 if ($order->status === 'draft' && $order->table_scan_session_id) {
                     $query->where('table_scan_session_id', $order->table_scan_session_id);
@@ -470,6 +470,19 @@ class OrderHistoryController extends Controller
 
                 $query->orWhereJsonContains('shared_order_ids', $order->id);
             })
+            ->orderBy('id')
+            ->get();
+
+        if ($items->isNotEmpty() || ! $order->table_scan_session_id || $order->status === 'draft') {
+            return $items;
+        }
+
+        $orderedAt = $order->updated_at ?? $order->created_at;
+
+        return CartItem::with('menuItem:id,name,price,has_discount,discounted_price,image_url')
+            ->where('table_scan_session_id', $order->table_scan_session_id)
+            ->whereNull('order_id')
+            ->when($orderedAt, fn (Builder $query) => $query->where('created_at', '<=', $orderedAt))
             ->orderBy('id')
             ->get();
     }
