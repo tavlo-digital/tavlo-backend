@@ -195,6 +195,10 @@ class RestaurantBrowsingTest extends TestCase
             'price'            => 14.90,
             'vat_rate'         => 10,
             'tax_category'     => 'food',
+            'calories'         => 640,
+            'fat'              => 28.5,
+            'carbs'            => 42.25,
+            'protein'          => 36,
             'paid_addons'      => [
                 ['name' => 'Extra cheese', 'price' => 1.50],
             ],
@@ -229,6 +233,10 @@ class RestaurantBrowsingTest extends TestCase
             ->assertJsonPath('0.vat_rate', 10)
             ->assertJsonPath('0.tax_category', 'food')
             ->assertJsonPath('0.vat_amount', 1.49)
+            ->assertJsonPath('0.calories', 640)
+            ->assertJsonPath('0.fat', 28.5)
+            ->assertJsonPath('0.carbs', 42.25)
+            ->assertJsonPath('0.protein', 36)
             ->assertJsonPath('0.paid_addons.0.name', 'Extra cheese')
             ->assertJsonPath('0.paid_addons.0.price', 1.5)
             ->assertJsonPath('0.free_addons.0', 'Ketchup')
