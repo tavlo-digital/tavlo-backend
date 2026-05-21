@@ -8,6 +8,8 @@ use App\Models\Order;
 use App\Models\Vendor;
 use App\Models\VendorSetting;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 class CustomerProfileTest extends TestCase
@@ -42,6 +44,17 @@ class CustomerProfileTest extends TestCase
                 'recent_restaurants',
                 'loyalty_overview',
             ]);
+    }
+
+    public function test_profile_returns_absolute_profile_picture_url(): void
+    {
+        $path = "customers/{$this->customer->id}/avatar/avatar.jpg";
+        $this->customer->update(['profile_picture' => $path]);
+
+        $response = $this->getJson('/api/customer/profile', $this->headers);
+
+        $response->assertOk()
+            ->assertJsonPath('profile.profile_picture', url("media/{$path}"));
     }
 
     public function test_profile_includes_computed_order_counts(): void
@@ -138,6 +151,60 @@ class CustomerProfileTest extends TestCase
             ->assertJsonPath('message', 'Profile updated.')
             ->assertJsonPath('user.first_name', 'Amina')
             ->assertJsonPath('user.last_name', 'Hassan');
+    }
+
+    public function test_customer_can_upload_profile_picture_file(): void
+    {
+        Storage::fake('public');
+
+        $response = $this
+            ->withHeaders($this->headers)
+            ->patch('/api/customer/profile', [
+                'profile_picture' => UploadedFile::fake()->image('avatar.jpg'),
+            ]);
+
+        $response->assertOk()
+            ->assertJsonPath('message', 'Profile updated.');
+
+        $this->customer->refresh();
+        $this->assertNotNull($this->customer->profile_picture);
+        $this->assertStringStartsWith("customers/{$this->customer->id}/avatar/", $this->customer->profile_picture);
+        Storage::disk('public')->assertExists($this->customer->profile_picture);
+
+        $responseProfilePicture = $response->json('user.profile_picture');
+        $this->assertIsString($responseProfilePicture);
+        $this->assertStringContainsString("/media/customers/{$this->customer->id}/avatar/", $responseProfilePicture);
+    }
+
+    public function test_customer_can_clear_profile_picture(): void
+    {
+        $this->customer->update([
+            'profile_picture' => "customers/{$this->customer->id}/avatar/avatar.jpg",
+        ]);
+
+        $response = $this->patchJson('/api/customer/profile', [
+            'profile_picture' => null,
+        ], $this->headers);
+
+        $response->assertOk()
+            ->assertJsonPath('user.profile_picture', null);
+
+        $this->customer->refresh();
+        $this->assertNull($this->customer->profile_picture);
+    }
+
+    public function test_profile_picture_upload_rejects_invalid_file_type(): void
+    {
+        Storage::fake('public');
+
+        $response = $this
+            ->withHeaders($this->headers)
+            ->patch('/api/customer/profile', [
+                'profile_picture' => UploadedFile::fake()->create('avatar.pdf', 10, 'application/pdf'),
+            ]);
+
+        $response->assertUnprocessable()
+            ->assertJsonValidationErrors(['profile_picture']);
     }
 
     public function test_profile_update_rejects_invalid_gender(): void

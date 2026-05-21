@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Api\Customer;
 
 use App\Http\Controllers\Controller;
+use App\Models\Customer;
+use App\Services\MediaService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -11,13 +13,17 @@ use Illuminate\Validation\ValidationException;
 
 class ProfileController extends Controller
 {
+    public function __construct(private readonly MediaService $media)
+    {
+    }
+
     /**
      * Get profile overview with recent activity.
      */
     public function show(Request $request): JsonResponse
     {
         $customer = $request->user();
-        $profile = $customer->toArray();
+        $profile = $this->serializeCustomer($customer);
         $profile['monthly_orders'] = $customer->orders()
             ->where('payment_received', true)
             ->where('status', '!=', 'draft')
@@ -57,21 +63,44 @@ class ProfileController extends Controller
      */
     public function update(Request $request): JsonResponse
     {
+        $profilePictureRules = $request->hasFile('profile_picture')
+            ? ['nullable', 'file', 'image', 'mimes:jpg,jpeg,png,webp', 'max:4096']
+            : ['nullable', 'string', 'max:500'];
+
         $validated = $request->validate([
             'first_name'      => ['nullable', 'string', 'max:255'],
             'last_name'       => ['nullable', 'string', 'max:255'],
             'gender'          => ['nullable', 'string', 'in:male,female,other,prefer_not_to_say'],
             'date_of_birth'   => ['nullable', 'date', 'before:today'],
             'address'         => ['nullable', 'string', 'max:500'],
-            'profile_picture' => ['nullable', 'string', 'max:500'],
+            'profile_picture' => $profilePictureRules,
         ]);
 
-        $request->user()->update($validated);
+        $customer = $request->user();
+
+        if ($request->hasFile('profile_picture')) {
+            $validated['profile_picture'] = $this->media->replaceInDirectory(
+                $request->file('profile_picture'),
+                "customers/{$customer->id}/avatar"
+            );
+        } elseif ($request->exists('profile_picture') && $request->input('profile_picture') === null) {
+            $validated['profile_picture'] = null;
+        }
+
+        $customer->update($validated);
 
         return response()->json([
             'message' => 'Profile updated.',
-            'user'    => $request->user()->fresh(),
+            'user'    => $this->serializeCustomer($customer->fresh()),
         ]);
+    }
+
+    private function serializeCustomer(Customer $customer): array
+    {
+        $data = $customer->toArray();
+        $data['profile_picture'] = $this->media->url($customer->profile_picture);
+
+        return $data;
     }
 
     /**
