@@ -722,7 +722,7 @@ class TableCartTest extends TestCase
 
         $response->assertOk();
 
-        $items = collect($response->json('people.0.order.0.items'))->keyBy('cart_item_id');
+        $items = collect($response->json('people.0.orders.0.items'))->keyBy('cart_item_id');
 
         $this->assertNull($items[$new->id]['status']);
         $this->assertSame('Preparing', $items[$preparing->id]['status']);
@@ -776,13 +776,13 @@ class TableCartTest extends TestCase
             ->getJson('/api/customer/table/history');
 
         $response->assertOk()
-            ->assertJsonCount(2, 'people.0.order')
+            ->assertJsonCount(2, 'people.0.orders')
             ->assertJsonPath('people.0.orders_count', 2)
             ->assertJsonPath('people.0.total_amount', 10.5)
-            ->assertJsonPath('people.0.order.0.order_public_id', 'ord-history-first')
-            ->assertJsonPath('people.0.order.0.items.0.cart_item_id', $firstItem->id)
-            ->assertJsonPath('people.0.order.1.order_public_id', 'ord-history-second')
-            ->assertJsonPath('people.0.order.1.items.0.cart_item_id', $secondItem->id)
+            ->assertJsonPath('people.0.orders.0.order_public_id', 'ord-history-first')
+            ->assertJsonPath('people.0.orders.0.items.0.cart_item_id', $firstItem->id)
+            ->assertJsonPath('people.0.orders.1.order_public_id', 'ord-history-second')
+            ->assertJsonPath('people.0.orders.1.items.0.cart_item_id', $secondItem->id)
             ->assertJsonPath('summary.orders_count', 2)
             ->assertJsonPath('summary.total_amount', 10.5);
     }
@@ -830,7 +830,7 @@ class TableCartTest extends TestCase
 
         $response->assertOk();
 
-        $payload = collect($response->json('people.0.order.0.items'))->keyBy('cart_item_id')[$item->id];
+        $payload = collect($response->json('people.0.orders.0.items'))->keyBy('cart_item_id')[$item->id];
 
         $this->assertSame(6.5, $payload['unit_price']);
         $this->assertSame(13, $payload['line_total']);

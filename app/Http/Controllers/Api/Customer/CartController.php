@@ -709,7 +709,7 @@ class CartController extends Controller
                 'status'       => $s->status,
                 'orders_count' => $personOrders->count(),
                 'total_amount' => round($personTotal, 2),
-                'order'        => $orderPayloads,
+                'orders'       => $orderPayloads,
             ];
         })->values();
 
