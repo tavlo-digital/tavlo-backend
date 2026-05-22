@@ -280,7 +280,7 @@ class TableScanController extends Controller
 
     private function findActiveTableByToken(string $token): ?RestaurantTable
     {
-        return RestaurantTable::with('vendor')
+        return RestaurantTable::with('vendor.vendorSetting')
             ->where('qr_token', $token)
             ->first();
     }
@@ -322,8 +322,9 @@ class TableScanController extends Controller
     private function vendorPayload(mixed $vendor): array
     {
         return [
-            'id'   => $vendor->vendor_public_id ?? (string) $vendor->id,
-            'name' => $vendor->name,
+            'id'       => $vendor->vendor_public_id ?? (string) $vendor->id,
+            'name'     => $vendor->name,
+            'currency' => $vendor->vendorSetting?->currency ?? 'EUR',
         ];
     }
 }
