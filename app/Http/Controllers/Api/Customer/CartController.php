@@ -646,6 +646,7 @@ class CartController extends Controller
 
         $orders = Order::whereIn('table_scan_session_id', $sessionIds)
             ->orderBy('created_at')
+            ->orderBy('id')
             ->get()
             ->groupBy('table_scan_session_id');
 
@@ -671,34 +672,31 @@ class CartController extends Controller
             $tableTotal      += $personTotal;
             $tableOrderCount += $personOrders->count();
 
-            $latestOrder = $personOrders->last();
-            $orderPayload = null;
-
-            if ($latestOrder) {
-                $ownedCartItems = $allCartItems->filter(function (CartItem $ci) use ($s, $latestOrder) {
-                    if ($latestOrder->status === 'draft') {
+            $orderPayloads = $personOrders->map(function (Order $order) use ($s, $allCartItems, $mySession, $ordersById, $sessionCustomerNames) {
+                $ownedCartItems = $allCartItems->filter(function (CartItem $ci) use ($s, $order) {
+                    if ($order->status === 'draft') {
                         return (int) $ci->table_scan_session_id === (int) $s->id
                             && $ci->order_id === null;
                     }
 
-                    return (int) $ci->order_id === (int) $latestOrder->id;
+                    return (int) $ci->order_id === (int) $order->id;
                 });
 
-                $sharedIntoItems = $allCartItems->filter(function (CartItem $ci) use ($latestOrder, $ownedCartItems) {
+                $sharedIntoItems = $allCartItems->filter(function (CartItem $ci) use ($order, $ownedCartItems) {
                     if ($ownedCartItems->contains('id', $ci->id)) {
                         return false;
                     }
                     $ids = is_array($ci->shared_order_ids) ? $ci->shared_order_ids : [];
-                    return in_array($latestOrder->id, array_map('intval', $ids), true);
+                    return in_array($order->id, array_map('intval', $ids), true);
                 });
 
                 $itemRows = $ownedCartItems->merge($sharedIntoItems)
-                    ->map(fn(CartItem $ci) => $this->cartItemPayload($ci, $latestOrder, $mySession, $ordersById, $sessionCustomerNames))
+                    ->map(fn(CartItem $ci) => $this->cartItemPayload($ci, $order, $mySession, $ordersById, $sessionCustomerNames))
                     ->values()
                     ->all();
 
-                $orderPayload = $this->orderPayload($latestOrder, $itemRows);
-            }
+                return $this->orderPayload($order, $itemRows);
+            })->values();
 
             return [
                 'session_id'   => $s->id,
@@ -711,7 +709,7 @@ class CartController extends Controller
                 'status'       => $s->status,
                 'orders_count' => $personOrders->count(),
                 'total_amount' => round($personTotal, 2),
-                'order'        => $orderPayload,
+                'order'        => $orderPayloads,
             ];
         })->values();
 

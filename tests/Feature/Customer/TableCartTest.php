@@ -722,13 +722,69 @@ class TableCartTest extends TestCase
 
         $response->assertOk();
 
-        $items = collect($response->json('people.0.order.items'))->keyBy('cart_item_id');
+        $items = collect($response->json('people.0.order.0.items'))->keyBy('cart_item_id');
 
         $this->assertNull($items[$new->id]['status']);
         $this->assertSame('Preparing', $items[$preparing->id]['status']);
         $this->assertSame('Ready', $items[$ready->id]['status']);
         $this->assertSame('Served', $items[$served->id]['status']);
         $this->assertSame($served->fresh()->served_at->toIso8601String(), $items[$served->id]['served_at']);
+    }
+
+    public function test_table_history_returns_all_orders_for_active_table_session(): void
+    {
+        $firstItem = CartItem::create([
+            'table_scan_session_id' => $this->session->id,
+            'menu_item_id'          => $this->menuItem->id,
+            'quantity'              => 1,
+        ]);
+        $secondItem = CartItem::create([
+            'table_scan_session_id' => $this->session->id,
+            'menu_item_id'          => $this->menuItem->id,
+            'quantity'              => 2,
+        ]);
+
+        $firstOrder = Order::create([
+            'order_public_id'       => 'ord-history-first',
+            'customer_id'           => $this->customer->id,
+            'vendor_id'             => $this->vendor->id,
+            'table_scan_session_id' => $this->session->id,
+            'status'                => 'completed',
+            'amount'                => 3.50,
+            'currency'              => 'EUR',
+            'order_type'            => 'dine-in',
+            'created_at'            => now()->subMinute(),
+            'updated_at'            => now()->subMinute(),
+        ]);
+        $secondOrder = Order::create([
+            'order_public_id'       => 'ord-history-second',
+            'customer_id'           => $this->customer->id,
+            'vendor_id'             => $this->vendor->id,
+            'table_scan_session_id' => $this->session->id,
+            'status'                => 'confirmed',
+            'amount'                => 7,
+            'currency'              => 'EUR',
+            'order_type'            => 'dine-in',
+            'created_at'            => now(),
+            'updated_at'            => now(),
+        ]);
+
+        $firstItem->update(['order_id' => $firstOrder->id]);
+        $secondItem->update(['order_id' => $secondOrder->id]);
+
+        $response = $this->withHeaders($this->headers)
+            ->getJson('/api/customer/table/history');
+
+        $response->assertOk()
+            ->assertJsonCount(2, 'people.0.order')
+            ->assertJsonPath('people.0.orders_count', 2)
+            ->assertJsonPath('people.0.total_amount', 10.5)
+            ->assertJsonPath('people.0.order.0.order_public_id', 'ord-history-first')
+            ->assertJsonPath('people.0.order.0.items.0.cart_item_id', $firstItem->id)
+            ->assertJsonPath('people.0.order.1.order_public_id', 'ord-history-second')
+            ->assertJsonPath('people.0.order.1.items.0.cart_item_id', $secondItem->id)
+            ->assertJsonPath('summary.orders_count', 2)
+            ->assertJsonPath('summary.total_amount', 10.5);
     }
 
     public function test_table_history_items_include_vat_and_customizations(): void
@@ -774,7 +830,7 @@ class TableCartTest extends TestCase
 
         $response->assertOk();
 
-        $payload = collect($response->json('people.0.order.items'))->keyBy('cart_item_id')[$item->id];
+        $payload = collect($response->json('people.0.order.0.items'))->keyBy('cart_item_id')[$item->id];
 
         $this->assertSame(6.5, $payload['unit_price']);
         $this->assertSame(13, $payload['line_total']);
