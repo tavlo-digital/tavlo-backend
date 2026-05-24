@@ -74,6 +74,7 @@ Route::middleware('auth:customer')->group(function () {
     Route::post('profile/password',    [ProfileController::class, 'changePassword'])->name('profile.password');
 
     // Table session flow
+    Route::get('table/status', [TableScanController::class, 'status'])->name('table.status');
     Route::post('table/scan', [TableScanController::class, 'scan'])->name('table.scan');
     Route::post('table/pin', [TableScanController::class, 'pin'])->name('table.pin');
     Route::post('table/close', [TableScanController::class, 'close'])->name('table.close');

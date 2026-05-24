@@ -3,6 +3,9 @@
 namespace Tests\Feature\Customer;
 
 use App\Models\Customer;
+use App\Models\CartItem;
+use App\Models\MenuCategory;
+use App\Models\MenuItem;
 use App\Models\RestaurantTable;
 use App\Models\TableScanSession;
 use App\Models\Vendor;
@@ -72,6 +75,134 @@ class TableScanTest extends TestCase
                 'token' => $token,
                 'pin'   => $pin,
             ]);
+    }
+
+    private function getStatus(?string $token, ?array $headers = null)
+    {
+        return $this->withHeaders($headers ?? $this->headers)
+            ->getJson('/api/customer/table/status'.($token !== null ? '?token='.$token : ''));
+    }
+
+    private function activeSession(RestaurantTable $table, ?Customer $customer = null): TableScanSession
+    {
+        return TableScanSession::create([
+            'vendor_id'           => $this->vendor->id,
+            'restaurant_table_id' => $table->id,
+            'customer_id'         => ($customer ?? $this->customer)->id,
+            'pin'                 => '1234',
+            'status'              => 'active',
+            'scanned_at'          => now(),
+        ]);
+    }
+
+    private function cartItem(TableScanSession $session): CartItem
+    {
+        $category = MenuCategory::create([
+            'vendor_id' => $this->vendor->id,
+            'name'      => 'Mains',
+            'slug'      => 'mains',
+            'is_active' => true,
+        ]);
+
+        $item = MenuItem::create([
+            'vendor_id'         => $this->vendor->id,
+            'menu_category_id'  => $category->id,
+            'name'              => 'Margherita',
+            'price'             => 12.50,
+            'available'         => true,
+        ]);
+
+        return CartItem::create([
+            'table_scan_session_id' => $session->id,
+            'menu_item_id'          => $item->id,
+            'quantity'              => 1,
+        ]);
+    }
+
+    // ----------------------------------------------------------------
+    // GET /api/customer/table/status
+    // ----------------------------------------------------------------
+
+    public function test_status_requires_authentication(): void
+    {
+        $table = $this->makeTable();
+
+        $this->getStatus($table->qr_token, ['Accept' => 'application/json'])
+            ->assertUnauthorized();
+    }
+
+    public function test_status_token_is_required(): void
+    {
+        $this->getStatus(null)
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['token']);
+    }
+
+    public function test_status_returns_410_for_invalid_token(): void
+    {
+        $this->getStatus('does-not-exist')
+            ->assertStatus(410)
+            ->assertJson(['message' => 'This QR code is no longer valid']);
+    }
+
+    public function test_status_returns_available_when_table_has_no_active_session(): void
+    {
+        $table = $this->makeTable(['number' => 3, 'name' => 'T3']);
+        $this->vendor->update([
+            'vendor_public_id' => 'VID-8492',
+            'name'             => 'Bella Italia',
+        ]);
+
+        $this->getStatus($table->qr_token)
+            ->assertOk()
+            ->assertJson([
+                'table' => [
+                    'id'     => (string) $table->id,
+                    'number' => 3,
+                    'name'   => 'T3',
+                ],
+                'vendor' => [
+                    'id'   => 'VID-8492',
+                    'name' => 'Bella Italia',
+                ],
+                'status' => 'available',
+            ]);
+    }
+
+    public function test_status_returns_draft_when_active_session_has_no_cart_items(): void
+    {
+        $table = $this->makeTable();
+        $this->activeSession($table);
+
+        $this->getStatus($table->qr_token)
+            ->assertOk()
+            ->assertJsonPath('status', 'draft');
+    }
+
+    public function test_status_returns_active_when_active_session_has_cart_items(): void
+    {
+        $table = $this->makeTable();
+        $session = $this->activeSession($table);
+        $this->cartItem($session);
+
+        $this->getStatus($table->qr_token)
+            ->assertOk()
+            ->assertJsonPath('status', 'active');
+    }
+
+    public function test_status_ignores_closed_sessions(): void
+    {
+        $table = $this->makeTable();
+        $session = $this->activeSession($table);
+        $session->update([
+            'status'    => 'closed',
+            'closed_at' => now(),
+        ]);
+        $this->cartItem($session);
+
+        $this->getStatus($table->qr_token)
+            ->assertOk()
+            ->assertJsonPath('status', 'available');
     }
 
     // ----------------------------------------------------------------

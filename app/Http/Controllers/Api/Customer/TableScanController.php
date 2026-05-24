@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\Customer;
 
 use App\Http\Controllers\Controller;
+use App\Models\CartItem;
 use App\Models\RestaurantTable;
 use App\Models\TableScanSession;
 use App\Models\Vendor;
@@ -13,6 +14,47 @@ use Illuminate\Support\Facades\Validator;
 
 class TableScanController extends Controller
 {
+    /**
+     * GET /api/customer/table/status?token={qr_token}
+     * Authenticated customer endpoint. Checks table availability before the customer starts/join a scan session.
+     */
+    public function status(Request $request): JsonResponse
+    {
+        $data = Validator::make($request->query(), [
+            'token' => ['required', 'string'],
+        ])->validate();
+
+        $token = (string) $data['token'];
+        $table = $this->findActiveTableByToken($token);
+
+        if (! $table || ! $table->is_active) {
+            return response()->json([
+                'message' => 'This QR code is no longer valid',
+            ], 410);
+        }
+
+        $activeSessionIds = TableScanSession::query()
+            ->where('restaurant_table_id', $table->id)
+            ->where('status', 'active')
+            ->pluck('id');
+
+        $status = 'available';
+
+        if ($activeSessionIds->isNotEmpty()) {
+            $status = CartItem::query()
+                ->whereIn('table_scan_session_id', $activeSessionIds)
+                ->exists()
+                    ? 'active'
+                    : 'draft';
+        }
+
+        return response()->json([
+            'table'  => $this->tablePayload($table),
+            'vendor' => $this->statusVendorPayload($table->vendor),
+            'status' => $status,
+        ]);
+    }
+
     /**
     * POST /api/customer/table/scan
      * Authenticated customer endpoint. Customer's app posts the QR token after scanning.
@@ -325,6 +367,14 @@ class TableScanController extends Controller
             'id'       => $vendor->vendor_public_id ?? (string) $vendor->id,
             'name'     => $vendor->name,
             'currency' => $vendor->vendorSetting?->currency ?? 'EUR',
+        ];
+    }
+
+    private function statusVendorPayload(mixed $vendor): array
+    {
+        return [
+            'id'   => $vendor->vendor_public_id ?? (string) $vendor->id,
+            'name' => $vendor->name,
         ];
     }
 }
