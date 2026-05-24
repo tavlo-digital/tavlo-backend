@@ -466,6 +466,44 @@ class TableScanTest extends TestCase
         ]);
     }
 
+    public function test_pin_route_stores_entered_pin_on_existing_customer_session(): void
+    {
+        $table = $this->makeTable();
+        $secondCustomer = Customer::factory()->create();
+
+        TableScanSession::create([
+            'vendor_id'           => $this->vendor->id,
+            'restaurant_table_id' => $table->id,
+            'customer_id'         => $this->customer->id,
+            'pin'                 => '2468',
+            'status'              => 'active',
+            'scanned_at'          => now(),
+        ]);
+
+        $secondSession = TableScanSession::create([
+            'vendor_id'           => $this->vendor->id,
+            'restaurant_table_id' => $table->id,
+            'customer_id'         => $secondCustomer->id,
+            'pin'                 => '',
+            'status'              => 'active',
+            'scanned_at'          => now(),
+        ]);
+
+        $this->actingAs($secondCustomer, 'customer')
+            ->postJson('/api/customer/table/pin', [
+                'token' => $table->qr_token,
+                'pin'   => '2468',
+            ], ['Accept' => 'application/json'])
+            ->assertOk()
+            ->assertJsonPath('pin', '2468')
+            ->assertJsonPath('session.id', (string) $secondSession->id);
+
+        $this->assertDatabaseHas('table_scan_sessions', [
+            'id'  => $secondSession->id,
+            'pin' => '2468',
+        ]);
+    }
+
     public function test_pin_route_is_idempotent_for_customer_already_joined_to_active_table(): void
     {
         $table = $this->makeTable();
@@ -489,7 +527,7 @@ class TableScanTest extends TestCase
                 'pin'   => $ownerPin,
             ], ['Accept' => 'application/json'])
             ->assertOk()
-            ->assertJsonPath('pin', null);
+            ->assertJsonPath('pin', $ownerPin);
 
         $this->assertSame(1, TableScanSession::where('restaurant_table_id', $table->id)
             ->where('customer_id', $secondCustomer->id)

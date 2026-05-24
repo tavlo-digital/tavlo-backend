@@ -198,6 +198,11 @@ class TableScanController extends Controller
                 ->first();
 
             if ($existingCustomerSession) {
+                if ($existingCustomerSession->pin !== $data['pin']) {
+                    $existingCustomerSession->update(['pin' => $data['pin']]);
+                    $existingCustomerSession->refresh();
+                }
+
                 return ['existing_customer_session' => $existingCustomerSession];
             }
 
@@ -229,7 +234,6 @@ class TableScanController extends Controller
                 'message'     => 'Already joined this table session',
                 'status'      => 'active',
                 'requiresPin' => false,
-                'pin'         => null,
             ]), 200);
         }
 
