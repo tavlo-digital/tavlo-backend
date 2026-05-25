@@ -1,7 +1,7 @@
 <?php
 
-use App\Http\Controllers\Api\Customer\CartController;
 use App\Http\Controllers\Api\Customer\AuthController;
+use App\Http\Controllers\Api\Customer\CartController;
 use App\Http\Controllers\Api\Customer\FavoriteController;
 use App\Http\Controllers\Api\Customer\LoyaltyController;
 use App\Http\Controllers\Api\Customer\OrderHistoryController;
@@ -58,7 +58,11 @@ Route::prefix('restaurants')->name('restaurants.')->group(function () {
     Route::get('{vendorPublicId}/tables',            [RestaurantController::class, 'tables'])->name('tables');
     Route::get('{vendorPublicId}/reviews',           [RestaurantController::class, 'reviews'])->name('reviews');
     Route::get('{vendorPublicId}/about',             [RestaurantController::class, 'about'])->name('about');
+    Route::get('{vendorPublicId}/languages',         [RestaurantController::class, 'languages'])->name('languages');
 });
+
+// Public table QR status lookup
+Route::get('table/status', [TableScanController::class, 'status'])->name('table.status');
 
 // Authenticated customer routes
 Route::middleware('auth:customer')->group(function () {
@@ -74,7 +78,6 @@ Route::middleware('auth:customer')->group(function () {
     Route::post('profile/password',    [ProfileController::class, 'changePassword'])->name('profile.password');
 
     // Table session flow
-    Route::get('table/status', [TableScanController::class, 'status'])->name('table.status');
     Route::post('table/scan', [TableScanController::class, 'scan'])->name('table.scan');
     Route::post('table/pin', [TableScanController::class, 'pin'])->name('table.pin');
     Route::post('table/close', [TableScanController::class, 'close'])->name('table.close');

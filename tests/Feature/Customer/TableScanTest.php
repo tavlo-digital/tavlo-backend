@@ -149,12 +149,14 @@ class TableScanTest extends TestCase
     // GET /api/customer/table/status
     // ----------------------------------------------------------------
 
-    public function test_status_requires_authentication(): void
+    public function test_status_does_not_require_authentication(): void
     {
         $table = $this->makeTable();
 
         $this->getStatus($table->qr_token, ['Accept' => 'application/json'])
-            ->assertUnauthorized();
+            ->assertOk()
+            ->assertJsonPath('status', 'available')
+            ->assertJsonPath('table.id', (string) $table->id);
     }
 
     public function test_status_token_is_required(): void
@@ -479,7 +481,7 @@ class TableScanTest extends TestCase
             ], ['Accept' => 'application/json']);
 
         $response->assertCreated()
-            ->assertJsonPath('pin', null)
+            ->assertJsonPath('pin', $ownerPin)
             ->assertJsonPath('session.status', 'active')
             ->assertJsonPath('table.id', (string) $table->id)
             ->assertJsonPath('vendor.currency', 'CHF');

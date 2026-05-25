@@ -112,6 +112,7 @@ class RestaurantBrowsingTest extends TestCase
             "/api/customer/restaurants/{$hidden->vendor_public_id}/menu",
             "/api/customer/restaurants/{$hidden->vendor_public_id}/menu/{$item->id}",
             "/api/customer/restaurants/{$hidden->vendor_public_id}/tables",
+            "/api/customer/restaurants/{$hidden->vendor_public_id}/languages",
             "/api/customer/restaurants/{$hidden->vendor_public_id}/reviews",
             "/api/customer/restaurants/{$hidden->vendor_public_id}/about",
         ] as $url) {
@@ -469,6 +470,47 @@ class RestaurantBrowsingTest extends TestCase
         $response->assertOk()
             ->assertJsonCount(1)
             ->assertJsonPath('0.name', 'Table 1');
+    }
+
+    // ----------------------------------------------------------------
+    // GET /api/customer/restaurants/{vendorPublicId}/languages
+    // ----------------------------------------------------------------
+
+    public function test_can_get_restaurant_languages_without_authentication(): void
+    {
+        $this->vendor->vendorSetting->update([
+            'default_language'    => 'de',
+            'supported_languages' => ['en', 'de', 'it'],
+            'date_format'         => 'MM/DD/YYYY',
+            'time_format'         => '12h',
+        ]);
+
+        $response = $this->getJson("/api/customer/restaurants/{$this->vendor->vendor_public_id}/languages");
+
+        $response->assertOk()
+            ->assertJsonPath('vendor.id', $this->vendor->vendor_public_id)
+            ->assertJsonPath('vendor.name', 'Test Restaurant')
+            ->assertJsonPath('default_language', 'de')
+            ->assertJsonPath('available_languages', ['de', 'en', 'it'])
+            ->assertJsonPath('date_format', 'MM/DD/YYYY')
+            ->assertJsonPath('time_format', '12h')
+            ->assertJsonPath('languages.0.code', 'de')
+            ->assertJsonPath('languages.0.name', 'Deutsch (German)')
+            ->assertJsonPath('languages.0.is_default', true);
+    }
+
+    public function test_restaurant_languages_include_default_when_supported_languages_are_empty(): void
+    {
+        $this->vendor->vendorSetting->update([
+            'default_language'    => 'fr',
+            'supported_languages' => null,
+        ]);
+
+        $this->getJson("/api/customer/restaurants/{$this->vendor->vendor_public_id}/languages")
+            ->assertOk()
+            ->assertJsonPath('default_language', 'fr')
+            ->assertJsonPath('available_languages', ['fr'])
+            ->assertJsonPath('languages.0.is_default', true);
     }
 
     // ----------------------------------------------------------------

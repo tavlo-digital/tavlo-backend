@@ -245,7 +245,6 @@ class TableScanController extends Controller
             'message'     => 'Joined table session',
             'status'      => 'active',
             'requiresPin' => false,
-            'pin'         => null,
         ]), 201);
     }
 

@@ -610,6 +610,45 @@ class RestaurantController extends Controller
     }
 
     /**
+     * Get public menu language settings for a restaurant.
+     */
+    public function languages(string $vendorPublicId): JsonResponse
+    {
+        $vendor = Vendor::where('vendor_public_id', $vendorPublicId)
+            ->whereHas('vendorSetting', fn ($q) => $q->where('is_live_and_discoverable', true))
+            ->with('vendorSetting:id,vendor_id,default_language,supported_languages,date_format,time_format')
+            ->firstOrFail();
+
+        $setting = $vendor->vendorSetting;
+        $defaultLanguage = $this->normalizeLanguageCode($setting?->default_language) ?? 'en';
+        $availableLanguages = collect($setting?->supported_languages ?? [])
+            ->map(fn ($language) => $this->normalizeLanguageCode($language))
+            ->filter()
+            ->prepend($defaultLanguage)
+            ->unique()
+            ->values();
+
+        return response()->json([
+            'vendor' => [
+                'id'   => $vendor->vendor_public_id,
+                'name' => $vendor->restaurant_name ?? $vendor->name,
+            ],
+            'default_language'    => $defaultLanguage,
+            'available_languages' => $availableLanguages->all(),
+            'date_format'         => $setting?->date_format ?? 'DD.MM.YYYY',
+            'time_format'         => $setting?->time_format ?? '24h',
+            'languages'           => $availableLanguages
+                ->map(fn (string $code) => [
+                    'code'       => $code,
+                    'name'       => $this->languageName($code),
+                    'is_default' => $code === $defaultLanguage,
+                ])
+                ->values()
+                ->all(),
+        ]);
+    }
+
+    /**
      * Get reviews for a restaurant (public).
      */
     public function reviews(Request $request, string $vendorPublicId): JsonResponse
@@ -859,6 +898,34 @@ class RestaurantController extends Controller
         return Vendor::where('vendor_public_id', $vendorPublicId)
             ->whereHas('vendorSetting', fn ($q) => $q->where('is_live_and_discoverable', true))
             ->firstOrFail();
+    }
+
+    private function normalizeLanguageCode(mixed $language): ?string
+    {
+        if (! is_string($language)) {
+            return null;
+        }
+
+        $language = Str::lower(trim($language));
+
+        return $language !== '' ? $language : null;
+    }
+
+    private function languageName(string $code): string
+    {
+        return [
+            'en' => 'English',
+            'de' => 'Deutsch (German)',
+            'it' => 'Italiano (Italian)',
+            'fr' => 'Français (French)',
+            'ar' => 'العربية (Arabic)',
+            'tr' => 'Türkçe (Turkish)',
+            'zh' => '中文 (Chinese)',
+            'ja' => '日本語 (Japanese)',
+            'sr' => 'Српски (Serbian)',
+            'cs' => 'Čeština (Czech)',
+            'es' => 'Español (Spanish)',
+        ][$code] ?? Str::upper($code);
     }
 
     private function paymentMethods(?VendorSetting $setting): array
