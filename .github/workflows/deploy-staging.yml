@@ -19,19 +19,8 @@ jobs:
           php-version: '8.4'
           tools: composer:v2
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '25.3.0'
-
-      - name: Install Node dependencies
-        run: npm ci
-
       - name: Install Composer dependencies
         run: composer install --no-interaction --prefer-dist --optimize-autoloader --no-dev
-
-      - name: Build frontend assets
-        run: npm run build
 
       - name: Write .env file
         env:
@@ -45,7 +34,8 @@ jobs:
             --exclude='.git/'
             --exclude='node_modules/'
             --exclude='vendor/'
-            --exclude='public/'
+            --exclude='public/build/'
+            --exclude='public/storage/'
             --exclude='storage/'
 
           path: ./
@@ -68,6 +58,10 @@ jobs:
 
             # Set permissions
             chmod -R 775 storage bootstrap/cache
+
+            # Install Node dependencies and build frontend
+            npm ci
+            npm run build
 
             # Run database migrations
             php artisan migrate --force
