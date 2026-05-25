@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\Customer;
 
 use App\Http\Controllers\Controller;
 use App\Models\CartItem;
+use App\Models\Order;
 use App\Models\RestaurantTable;
 use App\Models\TableScanSession;
 use App\Models\Vendor;
@@ -256,28 +257,22 @@ class TableScanController extends Controller
     public function close(Request $request): JsonResponse
     {
         $data = Validator::make($request->all(), [
-            'vendor_public_id' => ['required', 'string'],
+            'vendor_public_id' => ['sometimes', 'string'],
             'table_id'         => ['required', 'integer'],
         ])->validate();
 
         $customer = $request->user();
 
-        $vendor = Vendor::query()
-            ->where('vendor_public_id', $data['vendor_public_id'])
-            ->first();
-
-        if (! $vendor) {
-            return response()->json([
-                'message' => 'No active table session found.',
-            ], 422);
-        }
-
         $session = TableScanSession::query()
             ->with(['restaurantTable.vendor'])
             ->where('customer_id', $customer->id)
-            ->where('vendor_id', $vendor->id)
             ->where('restaurant_table_id', $data['table_id'])
             ->where('status', 'active')
+            ->when(isset($data['vendor_public_id']), function ($query) use ($data) {
+                $query->whereHas('vendor', function ($vendorQuery) use ($data) {
+                    $vendorQuery->where('vendor_public_id', $data['vendor_public_id']);
+                });
+            })
             ->latest('id')
             ->first();
 
@@ -287,13 +282,36 @@ class TableScanController extends Controller
             ], 422);
         }
 
+        $orders = Order::query()
+            ->where('customer_id', $customer->id)
+            ->where('table_scan_session_id', $session->id)
+            ->whereNotIn('status', ['cancelled', 'draft'])
+            ->get();
+
+        if ($orders->contains(fn (Order $order) => ! $order->payment_received)) {
+            return response()->json([
+                'message' => 'You have an active order for this table',
+            ], 422);
+        }
+
+        $paidOrderIds = $orders
+            ->where('payment_received', true)
+            ->pluck('id')
+            ->values();
+
+        if ($paidOrderIds->isNotEmpty() && $this->hasUnservedCartItemsForOrders($paidOrderIds->all())) {
+            return response()->json([
+                'message' => 'All the items on table are not served.',
+            ], 422);
+        }
+
         $session->update([
             'status'    => 'closed',
             'closed_at' => now(),
         ]);
 
         $table        = $session->restaurantTable;
-        $vendorLoaded = $table?->vendor ?? $vendor;
+        $vendorLoaded = $table?->vendor;
 
         return response()->json([
             'message' => 'Table session closed',
@@ -307,6 +325,20 @@ class TableScanController extends Controller
             'table'  => $table        ? $this->tablePayload($table)         : null,
             'vendor' => $vendorLoaded ? $this->vendorPayload($vendorLoaded) : null,
         ], 200);
+    }
+
+    private function hasUnservedCartItemsForOrders(array $orderIds): bool
+    {
+        return CartItem::query()
+            ->where(function ($query) use ($orderIds) {
+                $query->whereIn('order_id', $orderIds);
+
+                foreach ($orderIds as $orderId) {
+                    $query->orWhereJsonContains('shared_order_ids', $orderId);
+                }
+            })
+            ->whereNull('served_at')
+            ->exists();
     }
 
     private function extractToken(Request $request): string

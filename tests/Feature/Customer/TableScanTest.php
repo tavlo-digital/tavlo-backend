@@ -6,6 +6,7 @@ use App\Models\Customer;
 use App\Models\CartItem;
 use App\Models\MenuCategory;
 use App\Models\MenuItem;
+use App\Models\Order;
 use App\Models\RestaurantTable;
 use App\Models\TableScanSession;
 use App\Models\Vendor;
@@ -77,6 +78,12 @@ class TableScanTest extends TestCase
             ]);
     }
 
+    private function postClose(array $payload, ?array $headers = null)
+    {
+        return $this->withHeaders($headers ?? $this->headers)
+            ->postJson('/api/customer/table/close', $payload);
+    }
+
     private function getStatus(?string $token, ?array $headers = null)
     {
         return $this->withHeaders($headers ?? $this->headers)
@@ -97,7 +104,10 @@ class TableScanTest extends TestCase
 
     private function cartItem(TableScanSession $session): CartItem
     {
-        $category = MenuCategory::create([
+        $category = MenuCategory::firstOrCreate([
+            'vendor_id' => $this->vendor->id,
+            'slug'      => 'mains',
+        ], [
             'vendor_id' => $this->vendor->id,
             'name'      => 'Mains',
             'slug'      => 'mains',
@@ -117,6 +127,22 @@ class TableScanTest extends TestCase
             'menu_item_id'          => $item->id,
             'quantity'              => 1,
         ]);
+    }
+
+    private function order(TableScanSession $session, array $extra = []): Order
+    {
+        return Order::create(array_merge([
+            'order_public_id'       => 'ord-' . uniqid(),
+            'customer_id'           => $session->customer_id,
+            'vendor_id'             => $session->vendor_id,
+            'table_scan_session_id' => $session->id,
+            'status'                => 'confirmed',
+            'amount'                => 10,
+            'currency'              => 'EUR',
+            'order_type'            => 'dine-in',
+            'payment_pending'       => false,
+            'payment_received'      => false,
+        ], $extra));
     }
 
     // ----------------------------------------------------------------
@@ -533,5 +559,143 @@ class TableScanTest extends TestCase
             ->where('customer_id', $secondCustomer->id)
             ->where('status', 'active')
             ->count());
+    }
+
+    // ----------------------------------------------------------------
+    // POST /api/customer/table/close
+    // ----------------------------------------------------------------
+
+    public function test_close_route_requires_authentication(): void
+    {
+        $table = $this->makeTable();
+
+        $this->postJson('/api/customer/table/close', [
+            'table_id' => $table->id,
+        ])->assertUnauthorized();
+    }
+
+    public function test_close_route_requires_table_id(): void
+    {
+        $this->postClose([])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['table_id']);
+    }
+
+    public function test_close_route_closes_only_requesting_customers_active_session(): void
+    {
+        $table = $this->makeTable();
+        $mySession = $this->activeSession($table);
+        $otherCustomer = Customer::factory()->create();
+        $otherSession = $this->activeSession($table, $otherCustomer);
+
+        $this->postClose(['table_id' => $table->id])
+            ->assertOk()
+            ->assertJsonPath('message', 'Table session closed')
+            ->assertJsonPath('status', 'closed')
+            ->assertJsonPath('session.id', (string) $mySession->id);
+
+        $this->assertDatabaseHas('table_scan_sessions', [
+            'id'     => $mySession->id,
+            'status' => 'closed',
+        ]);
+        $this->assertDatabaseHas('table_scan_sessions', [
+            'id'     => $otherSession->id,
+            'status' => 'active',
+        ]);
+    }
+
+    public function test_close_route_accepts_legacy_vendor_public_id_when_supplied(): void
+    {
+        $table = $this->makeTable();
+        $session = $this->activeSession($table);
+
+        $this->postClose([
+            'vendor_public_id' => $this->vendor->vendor_public_id,
+            'table_id'         => $table->id,
+        ])
+            ->assertOk()
+            ->assertJsonPath('session.id', (string) $session->id);
+    }
+
+    public function test_close_route_blocks_when_customer_has_unpaid_order_for_session(): void
+    {
+        $table = $this->makeTable();
+        $session = $this->activeSession($table);
+        $this->order($session, ['payment_received' => false]);
+
+        $this->postClose(['table_id' => $table->id])
+            ->assertStatus(422)
+            ->assertJsonPath('message', 'You have an active order for this table');
+
+        $this->assertDatabaseHas('table_scan_sessions', [
+            'id'     => $session->id,
+            'status' => 'active',
+        ]);
+    }
+
+    public function test_close_route_allows_draft_order_for_session(): void
+    {
+        $table = $this->makeTable();
+        $session = $this->activeSession($table);
+        $this->order($session, [
+            'status'           => 'draft',
+            'payment_received' => false,
+        ]);
+
+        $this->postClose(['table_id' => $table->id])
+            ->assertOk()
+            ->assertJsonPath('message', 'Table session closed')
+            ->assertJsonPath('status', 'closed');
+
+        $this->assertDatabaseHas('table_scan_sessions', [
+            'id'     => $session->id,
+            'status' => 'closed',
+        ]);
+    }
+
+    public function test_close_route_blocks_when_paid_order_has_unserved_items(): void
+    {
+        $table = $this->makeTable();
+        $session = $this->activeSession($table);
+        $order = $this->order($session, [
+            'payment_received'      => true,
+            'payment_confirmed_at'  => now(),
+        ]);
+        $item = $this->cartItem($session);
+        $item->update(['order_id' => $order->id]);
+
+        $this->postClose(['table_id' => $table->id])
+            ->assertStatus(422)
+            ->assertJsonPath('message', 'All the items on table are not served.');
+
+        $this->assertDatabaseHas('table_scan_sessions', [
+            'id'     => $session->id,
+            'status' => 'active',
+        ]);
+    }
+
+    public function test_close_route_allows_paid_order_when_items_are_served(): void
+    {
+        $table = $this->makeTable();
+        $session = $this->activeSession($table);
+        $order = $this->order($session, [
+            'payment_received'      => true,
+            'payment_confirmed_at'  => now(),
+        ]);
+        $item = $this->cartItem($session);
+        $item->update([
+            'order_id'  => $order->id,
+            'served_at' => now(),
+        ]);
+
+        $this->postClose(['table_id' => $table->id])
+            ->assertOk()
+            ->assertJsonPath('message', 'Table session closed')
+            ->assertJsonPath('status', 'closed');
+
+        $this->assertDatabaseHas('table_scan_sessions', [
+            'id'     => $session->id,
+            'status' => 'closed',
+        ]);
     }
 }
