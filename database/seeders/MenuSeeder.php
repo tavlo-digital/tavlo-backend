@@ -2,10 +2,8 @@
 
 namespace Database\Seeders;
 
-use App\Models\InventoryItem;
 use App\Models\InventorySettings;
-use App\Models\MenuCategory;
-use App\Models\MenuItem;
+use App\Models\MasterMenuCategory;
 use App\Models\Vendor;
 use Illuminate\Database\Seeder;
 
@@ -17,6 +15,7 @@ class MenuSeeder extends Seeder
 
         if (! $vendor) {
             $this->command->warn('Bella Italia vendor not found. Run VendorSeeder first.');
+
             return;
         }
 
@@ -28,19 +27,34 @@ class MenuSeeder extends Seeder
 
         // ---- Categories ----
         $categories = [
-            ['name' => 'Antipasti', 'slug' => 'antipasti', 'default_tax_category' => 'food', 'sort_order' => 0],
-            ['name' => 'Pasta', 'slug' => 'pasta', 'default_tax_category' => 'food', 'sort_order' => 1],
-            ['name' => 'Risotto', 'slug' => 'risotto', 'default_tax_category' => 'food', 'sort_order' => 2],
-            ['name' => 'Pesce', 'slug' => 'pesce', 'default_tax_category' => 'food', 'sort_order' => 3],
-            ['name' => 'Pizza', 'slug' => 'pizza', 'default_tax_category' => 'food', 'sort_order' => 4],
-            ['name' => 'Dolci', 'slug' => 'dolci', 'default_tax_category' => 'food', 'sort_order' => 5],
-            ['name' => 'Bevande', 'slug' => 'bevande', 'default_tax_category' => 'drinks_non_alcoholic', 'sort_order' => 6],
-            ['name' => 'Vino & Cocktails', 'slug' => 'vino-cocktails', 'default_tax_category' => 'drinks_alcoholic', 'sort_order' => 7],
+            ['name' => 'Antipasti', 'slug' => 'antipasti', 'icon' => '🍽️', 'default_tax_category' => 'food', 'sort_order' => 0],
+            ['name' => 'Pasta', 'slug' => 'pasta', 'icon' => '🍝', 'default_tax_category' => 'food', 'sort_order' => 1],
+            ['name' => 'Risotto', 'slug' => 'risotto', 'icon' => '🍚', 'default_tax_category' => 'food', 'sort_order' => 2],
+            ['name' => 'Pesce', 'slug' => 'pesce', 'icon' => '🐟', 'default_tax_category' => 'food', 'sort_order' => 3],
+            ['name' => 'Pizza', 'slug' => 'pizza', 'icon' => '🍕', 'default_tax_category' => 'food', 'sort_order' => 4],
+            ['name' => 'Dolci', 'slug' => 'dolci', 'icon' => '🍰', 'default_tax_category' => 'food', 'sort_order' => 5],
+            ['name' => 'Bevande', 'slug' => 'bevande', 'icon' => '🥤', 'default_tax_category' => 'drinks_non_alcoholic', 'sort_order' => 6],
+            ['name' => 'Vino & Cocktails', 'slug' => 'vino-cocktails', 'icon' => '🍷', 'default_tax_category' => 'drinks_alcoholic', 'sort_order' => 7],
         ];
 
         $categoryMap = [];
         foreach ($categories as $cat) {
-            $created = $vendor->menuCategories()->create($cat);
+            $master = MasterMenuCategory::firstOrCreate(
+                ['slug' => $cat['slug']],
+                [
+                    'name' => $cat['name'],
+                    'icon' => $cat['icon'],
+                    'sort_order' => $cat['sort_order'],
+                    'is_active' => true,
+                ]
+            );
+
+            $created = $vendor->menuCategories()->create([
+                'master_menu_category_id' => $master->id,
+                'default_tax_category' => $cat['default_tax_category'],
+                'sort_order' => $cat['sort_order'],
+                'is_active' => true,
+            ]);
             $categoryMap[$cat['slug']] = $created->id;
         }
 
@@ -346,6 +360,6 @@ class MenuSeeder extends Seeder
             'link_menu_items' => true,
         ]);
 
-        $this->command->info('Menu seeded for Bella Italia with ' . count($items) . ' items in ' . count($categories) . ' categories.');
+        $this->command->info('Menu seeded for Bella Italia with '.count($items).' items in '.count($categories).' categories.');
     }
 }

@@ -25,10 +25,15 @@ class RestaurantController extends Controller
     {
         $categories = MenuCategory::where('is_active', true)
             ->whereHas('vendor', fn ($q) => $q->whereHas('vendorSetting', fn ($s) => $s->where('is_live_and_discoverable', true)))
-            ->select('id', 'name', 'slug')
-            ->distinct('name')
-            ->orderBy('name')
+            ->with('masterCategory')
+            ->orderBy('sort_order')
             ->get()
+            ->map(fn (MenuCategory $category) => [
+                'id' => $category->id,
+                'name' => $category->display_name,
+                'slug' => $category->display_slug,
+                'icon' => $category->display_icon,
+            ])
             ->unique('name')
             ->values();
 
@@ -43,7 +48,7 @@ class RestaurantController extends Controller
         $query = Vendor::whereHas('vendorSetting', fn ($q) => $q->where('is_live_and_discoverable', true))
             ->with([
                 'vendorSetting:id,vendor_id,logo_url,cover_photo_url,business_hours,currency,enable_reservations,loyalty_enabled,points_per_euro,accept_on_site,stripe_enabled,stripe_account_id,stripe_onboarding_complete',
-                'menuCategories' => fn ($q) => $q->where('is_active', true)->select('id', 'vendor_id', 'name', 'slug'),
+                'menuCategories' => fn ($q) => $q->where('is_active', true)->with('masterCategory'),
                 'takeawayQr:id,vendor_id',
             ])
             ->withCount('restaurantTables')
@@ -58,15 +63,16 @@ class RestaurantController extends Controller
         if ($request->filled('search')) {
             $search = trim((string) $request->search);
             if ($search !== '') {
-                $like = '%' . $search . '%';
+                $like = '%'.$search.'%';
                 $query->where(function ($q) use ($like) {
                     $q->where('restaurant_name', 'like', $like)
-                      ->orWhere('city', 'like', $like)
-                      ->orWhere('address', 'like', $like)
-                      ->orWhere('slug', 'like', $like)
-                      ->orWhereHas('menuCategories', function ($mc) use ($like) {
-                          $mc->where('is_active', true)->where('name', 'like', $like);
-                      });
+                        ->orWhere('city', 'like', $like)
+                        ->orWhere('address', 'like', $like)
+                        ->orWhere('slug', 'like', $like)
+                        ->orWhereHas('menuCategories', function ($mc) use ($like) {
+                            $mc->where('is_active', true)
+                                ->whereHas('masterCategory', fn ($master) => $master->where('name', 'like', $like));
+                        });
                 });
             }
         }
@@ -80,7 +86,7 @@ class RestaurantController extends Controller
             $cuisineId = (int) $request->cuisine;
             $query->whereHas('menuCategories', function ($q) use ($cuisineId) {
                 $q->where('is_active', true)
-                  ->where('id', $cuisineId);
+                    ->where('id', $cuisineId);
             });
         }
 
@@ -108,9 +114,9 @@ class RestaurantController extends Controller
             $type = $request->service_type;
             match ($type) {
                 'reservation' => $query->whereHas('vendorSetting', fn ($q) => $q->where('enable_reservations', true)),
-                'takeaway'    => $query->whereHas('takeawayQr'),
-                'dine_in'     => $query->whereHas('restaurantTables'),
-                default       => null,
+                'takeaway' => $query->whereHas('takeawayQr'),
+                'dine_in' => $query->whereHas('restaurantTables'),
+                default => null,
             };
         }
 
@@ -153,14 +159,17 @@ class RestaurantController extends Controller
 
         // Append computed fields to each restaurant
         $restaurants->getCollection()->transform(function ($vendor) use ($favoriteVendorIds) {
-            $cuisines = $vendor->menuCategories->pluck('name')->unique()->values();
+            $cuisines = $vendor->menuCategories
+                ->map(fn (MenuCategory $category) => $category->display_name)
+                ->unique()
+                ->values();
             $avgPrice = $vendor->menuItems()->where('is_active', true)->avg('price');
             $priceLabel = match (true) {
                 $avgPrice === null => null,
-                $avgPrice <= 10    => 'Budget-friendly',
-                $avgPrice <= 25    => 'Mid-range',
-                $avgPrice <= 50    => 'Fine dining',
-                default            => 'Premium',
+                $avgPrice <= 10 => 'Budget-friendly',
+                $avgPrice <= 25 => 'Mid-range',
+                $avgPrice <= 50 => 'Fine dining',
+                default => 'Premium',
             };
 
             $setting = $vendor->vendorSetting;
@@ -173,46 +182,46 @@ class RestaurantController extends Controller
                 $businessHours = json_decode($businessHours, true) ?: [];
             }
             $dayKey = strtolower(now()->format('l'));
-            if (isset($businessHours[$dayKey]) && !($businessHours[$dayKey]['closed'] ?? false)) {
-                $open  = $businessHours[$dayKey]['open']  ?? null;
+            if (isset($businessHours[$dayKey]) && ! ($businessHours[$dayKey]['closed'] ?? false)) {
+                $open = $businessHours[$dayKey]['open'] ?? null;
                 $close = $businessHours[$dayKey]['close'] ?? null;
                 if ($open && $close) {
-                    $todayHours = $open . ' – ' . $close;
+                    $todayHours = $open.' – '.$close;
                     $now = now()->format('H:i');
                     $isOpen = $now >= $open && $now <= $close;
                 }
             }
 
             return [
-                'vendor_public_id'    => $vendor->vendor_public_id,
-                'slug'                => $vendor->slug,
-                'restaurant_name'     => $vendor->restaurant_name,
-                'city'                => $vendor->city,
-                'address'             => $vendor->address,
-                'latitude'            => $vendor->latitude !== null ? (float) $vendor->latitude : null,
-                'longitude'           => $vendor->longitude !== null ? (float) $vendor->longitude : null,
-                'logo_url'            => $setting?->logo_url,
-                'cover_photo_url'     => $setting?->cover_photo_url,
-                'currency'            => $setting?->currency,
-                'cuisines'            => $cuisines,
-                'price_label'         => $priceLabel,
-                'avg_rating'          => round($vendor->reviews_avg_rating ?? 0, 1),
-                'review_count'        => $vendor->reviews_count ?? 0,
-                'is_open'             => $isOpen,
-                'today_hours'         => $todayHours,
-                'business_hours'      => $businessHours ?: null,
-                'payment_methods'     => $this->paymentMethods($setting),
-                'loyalty'             => $setting?->loyalty_enabled ? [
-                    'enabled'        => true,
+                'vendor_public_id' => $vendor->vendor_public_id,
+                'slug' => $vendor->slug,
+                'restaurant_name' => $vendor->restaurant_name,
+                'city' => $vendor->city,
+                'address' => $vendor->address,
+                'latitude' => $vendor->latitude !== null ? (float) $vendor->latitude : null,
+                'longitude' => $vendor->longitude !== null ? (float) $vendor->longitude : null,
+                'logo_url' => $setting?->logo_url,
+                'cover_photo_url' => $setting?->cover_photo_url,
+                'currency' => $setting?->currency,
+                'cuisines' => $cuisines,
+                'price_label' => $priceLabel,
+                'avg_rating' => round($vendor->reviews_avg_rating ?? 0, 1),
+                'review_count' => $vendor->reviews_count ?? 0,
+                'is_open' => $isOpen,
+                'today_hours' => $todayHours,
+                'business_hours' => $businessHours ?: null,
+                'payment_methods' => $this->paymentMethods($setting),
+                'loyalty' => $setting?->loyalty_enabled ? [
+                    'enabled' => true,
                     'points_per_euro' => $setting->points_per_euro,
                 ] : ['enabled' => false],
-                'service_types'       => array_values(array_filter([
+                'service_types' => array_values(array_filter([
                     ($vendor->restaurant_tables_count ?? 0) > 0 ? 'dine_in' : null,
                     $vendor->takeawayQr ? 'takeaway' : null,
                     $setting?->enable_reservations ? 'reservation' : null,
                 ])),
-                'distance_km'         => isset($vendor->distance_km) ? round($vendor->distance_km, 1) : null,
-                'is_favorite'         => in_array($vendor->id, $favoriteVendorIds, true),
+                'distance_km' => isset($vendor->distance_km) ? round($vendor->distance_km, 1) : null,
+                'is_favorite' => in_array($vendor->id, $favoriteVendorIds, true),
             ];
         });
 
@@ -228,7 +237,7 @@ class RestaurantController extends Controller
             ->whereHas('vendorSetting', fn ($q) => $q->where('is_live_and_discoverable', true))
             ->with([
                 'vendorSetting:id,vendor_id,logo_url,cover_photo_url,business_hours,currency,accept_on_site,stripe_enabled,stripe_account_id,stripe_onboarding_complete,enable_reservations,loyalty_enabled,points_per_euro',
-                'menuCategories' => fn ($q) => $q->where('is_active', true)->select('id', 'vendor_id', 'name'),
+                'menuCategories' => fn ($q) => $q->where('is_active', true)->with('masterCategory'),
                 'takeawayQr:id,vendor_id',
             ])
             ->withCount('restaurantTables')
@@ -250,8 +259,8 @@ class RestaurantController extends Controller
             $businessHours = json_decode($businessHours, true) ?: [];
         }
         $dayKey = strtolower(now()->format('l')); // e.g. "thursday"
-        if (isset($businessHours[$dayKey]) && !($businessHours[$dayKey]['closed'] ?? false)) {
-            $todayHours = $businessHours[$dayKey]['open'] . ' – ' . $businessHours[$dayKey]['close'];
+        if (isset($businessHours[$dayKey]) && ! ($businessHours[$dayKey]['closed'] ?? false)) {
+            $todayHours = $businessHours[$dayKey]['open'].' – '.$businessHours[$dayKey]['close'];
             $now = now()->format('H:i');
             $isOpen = $now >= $businessHours[$dayKey]['open'] && $now <= $businessHours[$dayKey]['close'];
         }
@@ -273,25 +282,27 @@ class RestaurantController extends Controller
 
         return response()->json([
             'vendor_public_id' => $vendor->vendor_public_id,
-            'slug'             => $vendor->slug,
-            'restaurant_name'  => $vendor->restaurant_name,
-            'city'             => $vendor->city,
-            'address'          => $vendor->address,
-            'latitude'         => $vendor->latitude !== null ? (float) $vendor->latitude : null,
-            'longitude'        => $vendor->longitude !== null ? (float) $vendor->longitude : null,
-            'logo_url'         => $setting->logo_url,
-            'cover_photo_url'  => $setting->cover_photo_url,
-            'currency'         => $setting->currency,
-            'cuisines'         => $vendor->menuCategories->pluck('name')->values(),
-            'avg_rating'       => round($vendor->reviews_avg_rating ?? 0, 1),
-            'review_count'     => (int) $vendor->reviews_count,
-            'is_open'          => $isOpen,
-            'today_hours'      => $todayHours,
-            'business_hours'   => $businessHours ?: null,
-            'distance_km'      => $distanceKm,
-            'payment_methods'  => $this->paymentMethods($setting),
+            'slug' => $vendor->slug,
+            'restaurant_name' => $vendor->restaurant_name,
+            'city' => $vendor->city,
+            'address' => $vendor->address,
+            'latitude' => $vendor->latitude !== null ? (float) $vendor->latitude : null,
+            'longitude' => $vendor->longitude !== null ? (float) $vendor->longitude : null,
+            'logo_url' => $setting->logo_url,
+            'cover_photo_url' => $setting->cover_photo_url,
+            'currency' => $setting->currency,
+            'cuisines' => $vendor->menuCategories
+                ->map(fn (MenuCategory $category) => $category->display_name)
+                ->values(),
+            'avg_rating' => round($vendor->reviews_avg_rating ?? 0, 1),
+            'review_count' => (int) $vendor->reviews_count,
+            'is_open' => $isOpen,
+            'today_hours' => $todayHours,
+            'business_hours' => $businessHours ?: null,
+            'distance_km' => $distanceKm,
+            'payment_methods' => $this->paymentMethods($setting),
             'loyalty' => [
-                'enabled'        => (bool) $setting->loyalty_enabled,
+                'enabled' => (bool) $setting->loyalty_enabled,
                 'points_per_euro' => $setting->points_per_euro,
             ],
             'service_types' => array_values(array_filter([
@@ -312,8 +323,16 @@ class RestaurantController extends Controller
 
         $categories = MenuCategory::where('vendor_id', $vendor->id)
             ->where('is_active', true)
+            ->with('masterCategory')
             ->orderBy('sort_order')
-            ->get(['id', 'name', 'slug', 'sort_order']);
+            ->get()
+            ->map(fn (MenuCategory $category) => [
+                'id' => $category->id,
+                'name' => $category->display_name,
+                'slug' => $category->display_slug,
+                'icon' => $category->display_icon,
+                'sort_order' => $category->sort_order,
+            ]);
 
         return response()->json($categories);
     }
@@ -329,7 +348,7 @@ class RestaurantController extends Controller
             ->where('is_active', true)
             ->where('available', true)
             ->with([
-                'category:id,name,slug',
+                'category.masterCategory',
                 'allergens:id,name',
                 'tags:id,slug,label',
                 'modifierGroups' => fn ($q) => $q->where('is_active', true)
@@ -354,37 +373,38 @@ class RestaurantController extends Controller
             $rank = $ranked->search(fn ($r) => $r->id === $item->id);
 
             return [
-                'id'                => $item->id,
-                'name'              => $item->name,
-                'description'       => $item->description,
-                'image_url'         => $item->image_url,
-                'price'             => (float) $item->price,
-                'has_discount'      => (bool) $item->has_discount,
-                'discount_percent'  => $item->has_discount ? (float) $item->discount_percent : null,
-                'discounted_price'  => $item->has_discount ? (float) $item->discounted_price : null,
-                'vat_rate'          => (float) $item->vat_rate,
-                'tax_category'      => $item->tax_category,
-                'vat_amount'        => $this->menuItemVatAmount($item),
-                'rating'            => (float) ($item->rating ?? 0),
-                'review_count'      => (int) ($item->review_count ?? 0),
-                'ordered_count'     => (int) ($item->ordered_count ?? 0),
-                'popularity_rank'   => $rank !== false ? $rank + 1 : null,
-                'calories'          => $item->calories,
-                'fat'               => $item->fat ? (float) $item->fat : null,
-                'carbs'             => $item->carbs ? (float) $item->carbs : null,
-                'protein'           => $item->protein ? (float) $item->protein : null,
+                'id' => $item->id,
+                'name' => $item->name,
+                'description' => $item->description,
+                'image_url' => $item->image_url,
+                'price' => (float) $item->price,
+                'has_discount' => (bool) $item->has_discount,
+                'discount_percent' => $item->has_discount ? (float) $item->discount_percent : null,
+                'discounted_price' => $item->has_discount ? (float) $item->discounted_price : null,
+                'vat_rate' => (float) $item->vat_rate,
+                'tax_category' => $item->tax_category,
+                'vat_amount' => $this->menuItemVatAmount($item),
+                'rating' => (float) ($item->rating ?? 0),
+                'review_count' => (int) ($item->review_count ?? 0),
+                'ordered_count' => (int) ($item->ordered_count ?? 0),
+                'popularity_rank' => $rank !== false ? $rank + 1 : null,
+                'calories' => $item->calories,
+                'fat' => $item->fat ? (float) $item->fat : null,
+                'carbs' => $item->carbs ? (float) $item->carbs : null,
+                'protein' => $item->protein ? (float) $item->protein : null,
                 'dietary_preference' => $item->dietary_preference,
-                'paid_addons'       => $item->paid_addons ?? [],
-                'free_addons'       => $item->free_addons ?? [],
-                'removable_items'   => $item->removable_items ?? [],
-                'category'          => $item->category ? [
-                    'id'   => $item->category->id,
-                    'name' => $item->category->name,
-                    'slug' => $item->category->slug,
+                'paid_addons' => $item->paid_addons ?? [],
+                'free_addons' => $item->free_addons ?? [],
+                'removable_items' => $item->removable_items ?? [],
+                'category' => $item->category ? [
+                    'id' => $item->category->id,
+                    'name' => $item->category->display_name,
+                    'slug' => $item->category->display_slug,
+                    'icon' => $item->category->display_icon,
                 ] : null,
-                'allergens'         => $this->menuItemAllergenNames($item),
-                'tags'              => $this->menuItemTagLabels($item),
-                'modifier_groups'   => $item->modifierGroups->map(fn ($g) => $this->formatModifierGroup($g))->values(),
+                'allergens' => $this->menuItemAllergenNames($item),
+                'tags' => $this->menuItemTagLabels($item),
+                'modifier_groups' => $item->modifierGroups->map(fn ($g) => $this->formatModifierGroup($g))->values(),
             ];
         });
 
@@ -403,7 +423,7 @@ class RestaurantController extends Controller
             ->where('is_active', true)
             ->where('available', true)
             ->with([
-                'category:id,name,slug',
+                'category.masterCategory',
                 'allergens:id,name,icon',
                 'tags:id,slug,label,icon',
                 'modifierGroups' => fn ($q) => $q->where('is_active', true)
@@ -413,34 +433,35 @@ class RestaurantController extends Controller
             ->firstOrFail();
 
         return response()->json([
-            'id'                 => $item->id,
-            'name'               => $item->name,
-            'description'        => $item->description,
-            'image_url'          => $item->image_url,
-            'price'              => (float) $item->price,
-            'has_discount'       => (bool) $item->has_discount,
-            'discount_percent'   => $item->has_discount ? (float) $item->discount_percent : null,
-            'discounted_price'   => $item->has_discount ? (float) $item->discounted_price : null,
-            'vat_rate'           => (float) $item->vat_rate,
-            'tax_category'       => $item->tax_category,
-            'vat_amount'         => $this->menuItemVatAmount($item),
-            'available'          => (bool) $item->available,
-            'rating'             => (float) ($item->rating ?? 0),
-            'review_count'       => (int) ($item->review_count ?? 0),
-            'ordered_count'      => (int) ($item->ordered_count ?? 0),
-            'calories'           => $item->calories,
-            'fat'                => $item->fat ? (float) $item->fat : null,
-            'carbs'              => $item->carbs ? (float) $item->carbs : null,
-            'protein'            => $item->protein ? (float) $item->protein : null,
+            'id' => $item->id,
+            'name' => $item->name,
+            'description' => $item->description,
+            'image_url' => $item->image_url,
+            'price' => (float) $item->price,
+            'has_discount' => (bool) $item->has_discount,
+            'discount_percent' => $item->has_discount ? (float) $item->discount_percent : null,
+            'discounted_price' => $item->has_discount ? (float) $item->discounted_price : null,
+            'vat_rate' => (float) $item->vat_rate,
+            'tax_category' => $item->tax_category,
+            'vat_amount' => $this->menuItemVatAmount($item),
+            'available' => (bool) $item->available,
+            'rating' => (float) ($item->rating ?? 0),
+            'review_count' => (int) ($item->review_count ?? 0),
+            'ordered_count' => (int) ($item->ordered_count ?? 0),
+            'calories' => $item->calories,
+            'fat' => $item->fat ? (float) $item->fat : null,
+            'carbs' => $item->carbs ? (float) $item->carbs : null,
+            'protein' => $item->protein ? (float) $item->protein : null,
             'dietary_preference' => $item->dietary_preference,
-            'paid_addons'        => $item->paid_addons ?? [],
-            'free_addons'        => $item->free_addons ?? [],
-            'removable_items'    => $item->removable_items ?? [],
-            'ingredients'        => $item->ingredients,
-            'category'           => $item->category ? [
-                'id'   => $item->category->id,
-                'name' => $item->category->name,
-                'slug' => $item->category->slug,
+            'paid_addons' => $item->paid_addons ?? [],
+            'free_addons' => $item->free_addons ?? [],
+            'removable_items' => $item->removable_items ?? [],
+            'ingredients' => $item->ingredients,
+            'category' => $item->category ? [
+                'id' => $item->category->id,
+                'name' => $item->category->display_name,
+                'slug' => $item->category->display_slug,
+                'icon' => $item->category->display_icon,
             ] : null,
             'allergens' => $this->formatMenuItemAllergens($item),
             'tags' => $this->formatMenuItemTags($item),
@@ -451,15 +472,15 @@ class RestaurantController extends Controller
     private function formatModifierGroup($group): array
     {
         return [
-            'id'            => $group->id,
-            'name'          => $group->name,
-            'type'          => $group->type,
-            'is_required'   => (bool) $group->is_required,
+            'id' => $group->id,
+            'name' => $group->name,
+            'type' => $group->type,
+            'is_required' => (bool) $group->is_required,
             'min_selection' => (int) $group->min_selection,
             'max_selection' => (int) $group->max_selection,
-            'options'       => $group->options->map(fn ($option) => [
-                'id'               => $option->id,
-                'name'             => $option->name,
+            'options' => $group->options->map(fn ($option) => [
+                'id' => $option->id,
+                'name' => $option->name,
                 'price_adjustment' => (float) $option->price_adjustment,
             ])->values(),
         ];
@@ -489,7 +510,7 @@ class RestaurantController extends Controller
     {
         $formatted = $item->allergens
             ->map(fn ($allergen) => [
-                'id'   => $allergen->id,
+                'id' => $allergen->id,
                 'name' => $allergen->name,
                 'icon' => $allergen->icon,
             ])
@@ -506,7 +527,7 @@ class RestaurantController extends Controller
                 ->get(['id', 'name', 'icon'])
                 ->each(function (Allergen $allergen) use ($formatted) {
                     $formatted->put(Str::lower($allergen->name), [
-                        'id'   => $allergen->id,
+                        'id' => $allergen->id,
                         'name' => $allergen->name,
                         'icon' => $allergen->icon,
                     ]);
@@ -515,7 +536,7 @@ class RestaurantController extends Controller
             $missingNames
                 ->reject(fn ($name) => $formatted->has(Str::lower($name)))
                 ->each(fn ($name) => $formatted->put(Str::lower($name), [
-                    'id'   => null,
+                    'id' => null,
                     'name' => $name,
                     'icon' => null,
                 ]));
@@ -528,10 +549,10 @@ class RestaurantController extends Controller
     {
         $formatted = $item->tags
             ->map(fn ($tag) => [
-                'id'    => $tag->id,
-                'slug'  => $tag->slug,
+                'id' => $tag->id,
+                'slug' => $tag->slug,
                 'label' => $tag->label,
-                'icon'  => $tag->icon,
+                'icon' => $tag->icon,
             ])
             ->keyBy(fn ($tag) => Str::lower($tag['slug'] ?? $tag['label']));
 
@@ -549,10 +570,10 @@ class RestaurantController extends Controller
                 ->get(['id', 'slug', 'label', 'icon'])
                 ->each(function (SpecialTag $tag) use ($formatted) {
                     $value = [
-                        'id'    => $tag->id,
-                        'slug'  => $tag->slug,
+                        'id' => $tag->id,
+                        'slug' => $tag->slug,
                         'label' => $tag->label,
-                        'icon'  => $tag->icon,
+                        'icon' => $tag->icon,
                     ];
                     $formatted->put(Str::lower($tag->slug), $value);
                     $formatted->put(Str::lower($tag->label), $value);
@@ -561,19 +582,19 @@ class RestaurantController extends Controller
             $missingValues
                 ->reject(fn ($value) => $formatted->has(Str::lower($value)))
                 ->each(fn ($value) => $formatted->put(Str::lower($value), [
-                    'id'    => null,
-                    'slug'  => $value,
+                    'id' => null,
+                    'slug' => $value,
                     'label' => $value,
-                    'icon'  => null,
+                    'icon' => null,
                 ]));
         }
 
         return $formatted
             ->unique(fn ($tag) => $tag['id'] ?? $tag['slug'])
             ->map(fn ($tag) => [
-                'id'    => $tag['id'],
+                'id' => $tag['id'],
                 'label' => $tag['label'],
-                'icon'  => $tag['icon'],
+                'icon' => $tag['icon'],
             ])
             ->values();
     }
@@ -630,17 +651,17 @@ class RestaurantController extends Controller
 
         return response()->json([
             'vendor' => [
-                'id'   => $vendor->vendor_public_id,
+                'id' => $vendor->vendor_public_id,
                 'name' => $vendor->restaurant_name ?? $vendor->name,
             ],
-            'default_language'    => $defaultLanguage,
+            'default_language' => $defaultLanguage,
             'available_languages' => $availableLanguages->all(),
-            'date_format'         => $setting?->date_format ?? 'DD.MM.YYYY',
-            'time_format'         => $setting?->time_format ?? '24h',
-            'languages'           => $availableLanguages
+            'date_format' => $setting?->date_format ?? 'DD.MM.YYYY',
+            'time_format' => $setting?->time_format ?? '24h',
+            'languages' => $availableLanguages
                 ->map(fn (string $code) => [
-                    'code'       => $code,
-                    'name'       => $this->languageName($code),
+                    'code' => $code,
+                    'name' => $this->languageName($code),
                     'is_default' => $code === $defaultLanguage,
                 ])
                 ->values()
@@ -673,8 +694,8 @@ class RestaurantController extends Controller
         $sort = $request->get('sort_by', 'recent');
         match ($sort) {
             'highest' => $query->orderByDesc('rating')->orderByDesc('created_at'),
-            'lowest'  => $query->orderBy('rating')->orderByDesc('created_at'),
-            default   => $query->orderByDesc('created_at'),
+            'lowest' => $query->orderBy('rating')->orderByDesc('created_at'),
+            default => $query->orderByDesc('created_at'),
         };
 
         $reviews = $query->paginate($request->integer('per_page', 20));
@@ -686,7 +707,7 @@ class RestaurantController extends Controller
         $reviews->getCollection()->transform(function ($review) use ($cartItemsByOrderId) {
             $customer = $review->customer;
             $reviewerName = $customer
-                ? trim(($customer->first_name ?? '') . ' ' . ($customer->last_name ?? ''))
+                ? trim(($customer->first_name ?? '').' '.($customer->last_name ?? ''))
                 : 'Anonymous';
 
             $menuItems = $cartItemsByOrderId
@@ -696,11 +717,11 @@ class RestaurantController extends Controller
                     $name = $menuItem?->name;
 
                     return [
-                        'id'        => $menuItem?->id,
-                        'name'      => $name,
-                        'slug'      => $name ? Str::slug($name) : null,
+                        'id' => $menuItem?->id,
+                        'name' => $name,
+                        'slug' => $name ? Str::slug($name) : null,
                         'image_url' => $menuItem?->image_url,
-                        'quantity'  => (int) $item->quantity,
+                        'quantity' => (int) $item->quantity,
                     ];
                 })
                 ->values()
@@ -708,16 +729,16 @@ class RestaurantController extends Controller
 
             return [
                 'review_public_id' => $review->review_public_id,
-                'rating'           => $review->rating,
-                'text'             => $review->text,
-                'images'           => $review->images ?: [],
-                'created_at'       => $review->created_at?->toIso8601String(),
+                'rating' => $review->rating,
+                'text' => $review->text,
+                'images' => $review->images ?: [],
+                'created_at' => $review->created_at?->toIso8601String(),
                 'reviewer' => [
-                    'name'            => $reviewerName !== '' ? $reviewerName : 'Anonymous',
+                    'name' => $reviewerName !== '' ? $reviewerName : 'Anonymous',
                     'profile_picture' => $customer?->profile_picture,
                 ],
-                'menu_items'        => $menuItems,
-                'vendor_reply'      => $review->vendor_reply,
+                'menu_items' => $menuItems,
+                'vendor_reply' => $review->vendor_reply,
                 'vendor_replied_at' => $review->vendor_replied_at?->toIso8601String(),
             ];
         });
@@ -741,17 +762,17 @@ class RestaurantController extends Controller
         for ($star = 5; $star >= 1; $star--) {
             $count = (int) ($counts[$star] ?? 0);
             $breakdown[] = [
-                'star'    => $star,
-                'count'   => $count,
+                'star' => $star,
+                'count' => $count,
                 'percent' => $totalReviews > 0 ? round(($count / $totalReviews) * 100, 1) : 0,
             ];
         }
 
         $payload = $reviews->toArray();
         $payload['review_summary'] = [
-            'average_rating'    => $averageRating,
-            'total_reviews'     => $totalReviews,
-            'rating_breakdown'  => $breakdown,
+            'average_rating' => $averageRating,
+            'total_reviews' => $totalReviews,
+            'rating_breakdown' => $breakdown,
         ];
 
         return response()->json($payload);
@@ -790,7 +811,7 @@ class RestaurantController extends Controller
 
         return $orders->mapWithKeys(function ($order, int $orderId) use ($cartItems) {
             $items = $cartItems
-                ->filter(function (CartItem $item) use ($order, $orderId) {
+                ->filter(function (CartItem $item) use ($orderId) {
                     $orderIds = array_map('intval', is_array($item->shared_order_ids) ? $item->shared_order_ids : []);
 
                     return (int) $item->order_id === (int) $orderId
@@ -840,6 +861,7 @@ class RestaurantController extends Controller
         $features = array_values(array_filter(array_map(function ($item) {
             if (is_string($item)) {
                 $title = trim($item);
+
                 return $title === '' ? null : ['title' => $title, 'description' => null];
             }
             if (is_array($item)) {
@@ -850,34 +872,36 @@ class RestaurantController extends Controller
                 $description = isset($item['description']) && $item['description'] !== ''
                     ? (string) $item['description']
                     : null;
+
                 return ['title' => $title, 'description' => $description];
             }
+
             return null;
         }, (array) ($setting?->restaurant_features ?? []))));
 
         return response()->json([
-            'vendor_public_id'        => $vendor->vendor_public_id,
-            'restaurant_name'         => $vendor->restaurant_name,
-            'description'             => $setting?->description,
-            'years_of_experience'     => $setting?->years_of_experience !== null ? (int) $setting->years_of_experience : null,
+            'vendor_public_id' => $vendor->vendor_public_id,
+            'restaurant_name' => $vendor->restaurant_name,
+            'description' => $setting?->description,
+            'years_of_experience' => $setting?->years_of_experience !== null ? (int) $setting->years_of_experience : null,
             'signature_recipes_count' => $setting?->signature_recipes_count !== null ? (int) $setting->signature_recipes_count : null,
-            'happy_customers_count'   => $setting?->happy_customers_count !== null ? (int) $setting->happy_customers_count : null,
-            'restaurant_features'     => $features,
-            'payment_methods'         => $paymentMethods,
-            'vat_number'              => $vendor->vat_number,
-            'address'                 => $vendor->address,
-            'city'                    => $vendor->city,
-            'country'                 => $vendor->country,
-            'latitude'                => $vendor->latitude !== null ? (float) $vendor->latitude : null,
-            'longitude'               => $vendor->longitude !== null ? (float) $vendor->longitude : null,
-            'business_hours'          => $businessHours ?: null,
-            'service_types'           => array_values(array_filter([
+            'happy_customers_count' => $setting?->happy_customers_count !== null ? (int) $setting->happy_customers_count : null,
+            'restaurant_features' => $features,
+            'payment_methods' => $paymentMethods,
+            'vat_number' => $vendor->vat_number,
+            'address' => $vendor->address,
+            'city' => $vendor->city,
+            'country' => $vendor->country,
+            'latitude' => $vendor->latitude !== null ? (float) $vendor->latitude : null,
+            'longitude' => $vendor->longitude !== null ? (float) $vendor->longitude : null,
+            'business_hours' => $businessHours ?: null,
+            'service_types' => array_values(array_filter([
                 ($vendor->restaurant_tables_count ?? 0) > 0 ? 'dine_in' : null,
                 $vendor->takeawayQr ? 'takeaway' : null,
                 $setting?->enable_reservations ? 'reservation' : null,
             ])),
-            'contact'                 => $contact,
-            'is_favorite'             => $this->isFavoriteFor($request, $vendor->id),
+            'contact' => $contact,
+            'is_favorite' => $this->isFavoriteFor($request, $vendor->id),
         ]);
     }
 
@@ -890,6 +914,7 @@ class RestaurantController extends Controller
         if (! $customer) {
             return false;
         }
+
         return $customer->favorites()->where('vendors.id', $vendorId)->exists();
     }
 

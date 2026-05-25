@@ -8,14 +8,21 @@ export function AdminHeader() {
     const [dark, setDark] = useState(false);
 
     useEffect(() => {
-        setDark(document.documentElement.classList.contains('dark'));
+        const storedTheme = localStorage.getItem('theme') ?? localStorage.getItem('appearance');
+        const shouldUseDark = storedTheme === 'dark';
+
+        document.documentElement.classList.toggle('dark', shouldUseDark);
+        document.documentElement.style.colorScheme = shouldUseDark ? 'dark' : 'light';
+        setDark(shouldUseDark);
     }, []);
 
     const toggleTheme = () => {
         const next = !dark;
         setDark(next);
         document.documentElement.classList.toggle('dark', next);
+        document.documentElement.style.colorScheme = next ? 'dark' : 'light';
         localStorage.setItem('theme', next ? 'dark' : 'light');
+        localStorage.setItem('appearance', next ? 'dark' : 'light');
     };
 
     return (

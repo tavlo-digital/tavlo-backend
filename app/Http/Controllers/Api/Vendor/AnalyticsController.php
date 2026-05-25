@@ -3,7 +3,6 @@
 namespace App\Http\Controllers\Api\Vendor;
 
 use App\Http\Controllers\Controller;
-use App\Models\Order;
 use App\Models\Vendor;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -22,27 +21,27 @@ class AnalyticsController extends Controller
         $period = $request->query('period', 'weekly');
 
         [$start, $end, $labels] = match ($period) {
-            'daily'   => $this->dailyRange(),
+            'daily' => $this->dailyRange(),
             'monthly' => $this->monthlyRange(),
-            default   => $this->weeklyRange(),
+            default => $this->weeklyRange(),
         };
 
         // ---- Revenue chart ---
         $revenueData = $this->aggregateRevenue($vendor, $start, $end, $period);
-        $ordersData  = $this->aggregateOrderCount($vendor, $start, $end, $period);
+        $ordersData = $this->aggregateOrderCount($vendor, $start, $end, $period);
 
         // ---- Summary stats ---
         $allOrders = $vendor->orders()
             ->whereBetween('created_at', [$start, $end])
             ->get();
 
-        $totalRevenue   = $allOrders->where('payment_received', true)->sum('amount');
-        $totalOrders    = $allOrders->count();
-        $avgOrderValue  = $totalOrders > 0 ? round($totalRevenue / $totalOrders, 2) : 0;
+        $totalRevenue = $allOrders->where('payment_received', true)->sum('amount');
+        $totalOrders = $allOrders->count();
+        $avgOrderValue = $totalOrders > 0 ? round($totalRevenue / $totalOrders, 2) : 0;
 
         $reviewsInPeriod = $vendor->reviews()->whereBetween('created_at', [$start, $end]);
-        $avgRating       = round($reviewsInPeriod->avg('rating') ?? 0, 1);
-        $reviewCount     = $reviewsInPeriod->count();
+        $avgRating = round($reviewsInPeriod->avg('rating') ?? 0, 1);
+        $reviewCount = $reviewsInPeriod->count();
 
         // ---- Top items ---
         $topItems = $vendor->menuItems()
@@ -51,18 +50,18 @@ class AnalyticsController extends Controller
             ->limit(5)
             ->get(['id', 'name', 'price', 'ordered_count'])
             ->map(fn ($i) => [
-                'id'      => (string) $i->id,
-                'name'    => $i->name,
+                'id' => (string) $i->id,
+                'name' => $i->name,
                 'revenue' => round($i->price * $i->ordered_count, 2),
-                'orders'  => (int) $i->ordered_count,
+                'orders' => (int) $i->ordered_count,
             ]);
 
         // ---- Category breakdown ---
         $categoryBreakdown = $vendor->menuCategories()
-            ->with(['menuItems' => fn ($q) => $q->where('ordered_count', '>', 0)])
+            ->with(['masterCategory', 'menuItems' => fn ($q) => $q->where('ordered_count', '>', 0)])
             ->get()
             ->map(fn ($cat) => [
-                'name'   => $cat->name,
+                'name' => $cat->display_name,
                 'orders' => $cat->menuItems->sum('ordered_count'),
             ])
             ->filter(fn ($c) => $c['orders'] > 0)
@@ -73,36 +72,36 @@ class AnalyticsController extends Controller
             ->where('payment_received', true)
             ->groupBy('payment_method')
             ->map(fn ($group, $method) => [
-                'method'  => $method ?? 'unknown',
+                'method' => $method ?? 'unknown',
                 'revenue' => round($group->sum('amount'), 2),
-                'count'   => $group->count(),
+                'count' => $group->count(),
             ])
             ->values();
 
         return response()->json([
-            'period'   => $period,
+            'period' => $period,
             'dateRange' => [
                 'from' => $start->toISOString(),
-                'to'   => $end->toISOString(),
+                'to' => $end->toISOString(),
             ],
             'summary' => [
-                'totalRevenue'  => round($totalRevenue, 2),
-                'totalOrders'   => $totalOrders,
+                'totalRevenue' => round($totalRevenue, 2),
+                'totalOrders' => $totalOrders,
                 'avgOrderValue' => $avgOrderValue,
-                'avgRating'     => $avgRating,
-                'reviewCount'   => $reviewCount,
+                'avgRating' => $avgRating,
+                'reviewCount' => $reviewCount,
             ],
             'revenueChart' => [
                 'labels' => $labels,
-                'data'   => $revenueData,
+                'data' => $revenueData,
             ],
             'ordersChart' => [
                 'labels' => $labels,
-                'data'   => $ordersData,
+                'data' => $ordersData,
             ],
-            'topItems'          => $topItems,
+            'topItems' => $topItems,
             'categoryBreakdown' => $categoryBreakdown,
-            'paymentBreakdown'  => $paymentBreakdown,
+            'paymentBreakdown' => $paymentBreakdown,
         ]);
     }
 
@@ -110,34 +109,37 @@ class AnalyticsController extends Controller
 
     private function dailyRange(): array
     {
-        $start  = Carbon::today()->subDays(6)->startOfDay();
-        $end    = Carbon::today()->endOfDay();
+        $start = Carbon::today()->subDays(6)->startOfDay();
+        $end = Carbon::today()->endOfDay();
         $labels = [];
         for ($d = clone $start; $d <= $end; $d->addDay()) {
             $labels[] = $d->format('D');        // Mon, Tue …
         }
+
         return [$start, $end, $labels];
     }
 
     private function weeklyRange(): array
     {
-        $start  = Carbon::today()->subWeeks(11)->startOfWeek();
-        $end    = Carbon::today()->endOfWeek();
+        $start = Carbon::today()->subWeeks(11)->startOfWeek();
+        $end = Carbon::today()->endOfWeek();
         $labels = [];
         for ($d = clone $start; $d <= $end; $d->addWeek()) {
-            $labels[] = 'W' . $d->weekOfYear;
+            $labels[] = 'W'.$d->weekOfYear;
         }
+
         return [$start, $end, $labels];
     }
 
     private function monthlyRange(): array
     {
-        $start  = Carbon::today()->subMonths(11)->startOfMonth();
-        $end    = Carbon::today()->endOfMonth();
+        $start = Carbon::today()->subMonths(11)->startOfMonth();
+        $end = Carbon::today()->endOfMonth();
         $labels = [];
         for ($d = clone $start; $d <= $end; $d->addMonth()) {
             $labels[] = $d->format('M');
         }
+
         return [$start, $end, $labels];
     }
 
@@ -163,9 +165,9 @@ class AnalyticsController extends Controller
     private function bucket($collection, Carbon $start, Carbon $end, string $period, callable $fn): array
     {
         $format = match ($period) {
-            'daily'   => 'Y-m-d',
+            'daily' => 'Y-m-d',
             'monthly' => 'Y-m',
-            default   => 'Y-W',
+            default => 'Y-W',
         };
 
         $grouped = $collection->groupBy(fn ($o) => Carbon::parse($o->created_at)->format($format));
@@ -173,14 +175,15 @@ class AnalyticsController extends Controller
         $result = [];
         $cursor = clone $start;
         while ($cursor <= $end) {
-            $key      = $cursor->format($format);
+            $key = $cursor->format($format);
             $result[] = isset($grouped[$key]) ? $fn($grouped[$key]) : 0;
             match ($period) {
-                'daily'   => $cursor->addDay(),
+                'daily' => $cursor->addDay(),
                 'monthly' => $cursor->addMonth(),
-                default   => $cursor->addWeek(),
+                default => $cursor->addWeek(),
             };
         }
+
         return $result;
     }
 

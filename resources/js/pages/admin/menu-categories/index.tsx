@@ -1,10 +1,6 @@
 import { Head, router, useForm } from '@inertiajs/react';
-import { Edit2, Plus, Tags, Trash2, X } from 'lucide-react';
-import { FormEvent, useState } from 'react';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+import { CircleCheckBig, CircleX, Edit2, Search, Tags, Trash2, X } from 'lucide-react';
+import { ChangeEvent, FormEvent, useMemo, useState } from 'react';
 import AdminLayout from '@/layouts/admin-layout';
 
 type MasterMenuCategory = {
@@ -18,28 +14,77 @@ type MasterMenuCategory = {
 };
 
 type CategoryForm = {
+    _method?: string;
     name: string;
-    icon: string;
+    icon: File | null;
+    remove_icon: boolean;
     sort_order: number;
     is_active: boolean;
 };
 
 const emptyForm: CategoryForm = {
     name: '',
-    icon: '',
+    icon: null,
+    remove_icon: false,
     sort_order: 0,
     is_active: true,
 };
 
 export default function AdminMenuCategoriesIndex({ categories }: { categories: MasterMenuCategory[] }) {
     const [editing, setEditing] = useState<MasterMenuCategory | null>(null);
+    const [searchQuery, setSearchQuery] = useState('');
+    const [localIconPreview, setLocalIconPreview] = useState<string | null>(null);
+    const [iconInputKey, setIconInputKey] = useState(0);
     const form = useForm<CategoryForm>(emptyForm);
+
+    const filteredCategories = useMemo(() => {
+        const query = searchQuery.trim().toLowerCase();
+
+        if (!query) {
+            return categories;
+        }
+
+        return categories.filter((category) => (
+            category.name.toLowerCase().includes(query)
+            || category.slug.toLowerCase().includes(query)
+        ));
+    }, [categories, searchQuery]);
+
+    const stats = [
+        {
+            label: 'Total Categories',
+            value: categories.length,
+            icon: Tags,
+            iconColor: 'text-gray-600',
+        },
+        {
+            label: 'Active',
+            value: categories.filter((category) => category.isActive).length,
+            icon: CircleCheckBig,
+            iconColor: 'text-green-600',
+        },
+        {
+            label: 'Inactive',
+            value: categories.filter((category) => !category.isActive).length,
+            icon: CircleX,
+            iconColor: 'text-red-600',
+        },
+        {
+            label: 'Used by Vendors',
+            value: categories.filter((category) => category.vendorCount > 0).length,
+            icon: Tags,
+            iconColor: 'text-purple-600',
+        },
+    ];
 
     function startEdit(category: MasterMenuCategory) {
         setEditing(category);
+        setLocalIconPreview(null);
+        setIconInputKey((key) => key + 1);
         form.setData({
             name: category.name,
-            icon: category.icon ?? '',
+            icon: null,
+            remove_icon: false,
             sort_order: category.sortOrder,
             is_active: category.isActive,
         });
@@ -48,8 +93,31 @@ export default function AdminMenuCategoriesIndex({ categories }: { categories: M
 
     function resetForm() {
         setEditing(null);
+        setLocalIconPreview(null);
+        setIconInputKey((key) => key + 1);
         form.setData(emptyForm);
         form.clearErrors();
+    }
+
+    function changeIcon(event: ChangeEvent<HTMLInputElement>) {
+        const file = event.target.files?.[0] ?? null;
+
+        form.setData('icon', file);
+        form.setData('remove_icon', false);
+
+        if (!file) {
+            setLocalIconPreview(null);
+            return;
+        }
+
+        setLocalIconPreview(URL.createObjectURL(file));
+    }
+
+    function removeIcon() {
+        form.setData('icon', null);
+        form.setData('remove_icon', true);
+        setLocalIconPreview(null);
+        setIconInputKey((key) => key + 1);
     }
 
     function submit(event: FormEvent) {
@@ -57,14 +125,17 @@ export default function AdminMenuCategoriesIndex({ categories }: { categories: M
 
         const options = {
             preserveScroll: true,
+            forceFormData: true,
             onSuccess: resetForm,
         };
 
         if (editing) {
-            form.put(`/admin/menu-categories/${editing.id}`, options);
+            form.transform((data) => ({ ...data, _method: 'put' }));
+            form.post(`/admin/menu-categories/${editing.id}`, options);
             return;
         }
 
+        form.transform((data) => data);
         form.post('/admin/menu-categories', options);
     }
 
@@ -76,128 +147,202 @@ export default function AdminMenuCategoriesIndex({ categories }: { categories: M
         router.delete(`/admin/menu-categories/${category.id}`, { preserveScroll: true });
     }
 
+    const previewIcon = form.data.remove_icon ? null : (localIconPreview ?? editing?.icon ?? null);
+
     return (
         <AdminLayout>
             <Head title="Menu Categories" />
-            <div className="flex flex-col gap-6 p-6">
-                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="space-y-6 p-6">
+                <div className="flex items-center justify-between gap-4">
                     <div>
-                        <h1 className="text-2xl font-bold">Menu Categories</h1>
-                        <p className="text-sm text-muted-foreground">
+                        <h1 className="text-2xl font-bold text-gray-900">Menu Categories</h1>
+                        <p className="mt-1 text-sm text-gray-600">
                             Master category names and icons that vendors can select for their menus.
                         </p>
                     </div>
-                    <Badge variant="outline" className="w-fit">{categories.length} total</Badge>
+                </div>
+
+                <div>
+                    <h2 className="mb-3 text-sm font-medium tracking-wide text-gray-700 uppercase">Category Overview</h2>
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                        {stats.map((card) => (
+                            <div key={card.label} className="rounded-lg border border-gray-200 bg-white p-4">
+                                <div className="mb-2 flex items-center justify-between">
+                                    <card.icon className={`h-5 w-5 ${card.iconColor}`} aria-hidden="true" />
+                                </div>
+                                <div className="mb-1 text-2xl font-semibold text-gray-900">{card.value}</div>
+                                <div className="text-sm text-gray-600">{card.label}</div>
+                            </div>
+                        ))}
+                    </div>
                 </div>
 
                 <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_380px]">
-                    <div className="overflow-hidden rounded-xl border border-sidebar-border/70 bg-white dark:border-sidebar-border">
-                        <table className="w-full text-sm">
-                            <thead className="bg-muted/50">
-                                <tr>
-                                    <th className="px-4 py-3 text-left font-medium text-muted-foreground">Category</th>
-                                    <th className="px-4 py-3 text-left font-medium text-muted-foreground">Slug</th>
-                                    <th className="px-4 py-3 text-left font-medium text-muted-foreground">Vendors</th>
-                                    <th className="px-4 py-3 text-left font-medium text-muted-foreground">Status</th>
-                                    <th className="px-4 py-3 text-right font-medium text-muted-foreground">Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-sidebar-border/50">
-                                {categories.length === 0 ? (
+                    <div className="space-y-4">
+                        <div className="flex items-center justify-between gap-4">
+                            <div className="max-w-md flex-1">
+                                <div className="relative">
+                                    <Search className="absolute top-1/2 left-3 h-5 w-5 -translate-y-1/2 text-gray-400" aria-hidden="true" />
+                                    <input
+                                        type="text"
+                                        placeholder="Search category or slug"
+                                        value={searchQuery}
+                                        onChange={(event) => setSearchQuery(event.target.value)}
+                                        className="w-full rounded-lg border border-gray-300 py-2.5 pr-4 pl-11 text-sm focus:border-transparent focus:ring-2 focus:ring-purple-600 focus:outline-none"
+                                    />
+                                </div>
+                            </div>
+                            <div className="text-sm text-gray-600">
+                                {filteredCategories.length} shown
+                            </div>
+                        </div>
+
+                        <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
+                            <table className="w-full">
+                                <thead className="border-b border-gray-200 bg-gray-50">
                                     <tr>
-                                        <td colSpan={5} className="px-4 py-12 text-center text-muted-foreground">
-                                            No master categories yet.
-                                        </td>
+                                        <th className="px-4 py-3 text-left text-xs font-medium tracking-wide text-gray-700 uppercase">Category</th>
+                                        <th className="px-4 py-3 text-left text-xs font-medium tracking-wide text-gray-700 uppercase">Slug</th>
+                                        <th className="px-4 py-3 text-left text-xs font-medium tracking-wide text-gray-700 uppercase">Vendors</th>
+                                        <th className="px-4 py-3 text-left text-xs font-medium tracking-wide text-gray-700 uppercase">Status</th>
+                                        <th className="px-4 py-3 text-left text-xs font-medium tracking-wide text-gray-700 uppercase">Sort</th>
+                                        <th className="px-4 py-3 text-left text-xs font-medium tracking-wide text-gray-700 uppercase">Actions</th>
                                     </tr>
-                                ) : categories.map((category) => (
-                                    <tr key={category.id} className="transition-colors hover:bg-muted/30">
-                                        <td className="px-4 py-3">
-                                            <div className="flex items-center gap-3">
-                                                <span className="flex h-9 w-9 items-center justify-center rounded-lg border bg-white text-lg">
-                                                    {category.icon || <Tags className="h-4 w-4 text-muted-foreground" />}
-                                                </span>
-                                                <div>
-                                                    <div className="font-medium">{category.name}</div>
-                                                    <div className="text-xs text-muted-foreground">Sort {category.sortOrder}</div>
+                                </thead>
+                                <tbody className="divide-y divide-gray-100">
+                                    {filteredCategories.length === 0 ? (
+                                        <tr>
+                                            <td colSpan={6} className="px-4 py-8 text-center text-sm text-gray-500">
+                                                No categories found.
+                                            </td>
+                                        </tr>
+                                    ) : filteredCategories.map((category) => (
+                                        <tr key={category.id} className="transition-colors hover:bg-gray-50">
+                                            <td className="px-4 py-3">
+                                                <div className="flex items-center gap-3">
+                                                    <span className="flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 bg-white text-lg">
+                                                        {category.icon ? (
+                                                            <img src={category.icon} alt="" className="h-7 w-7 rounded-md object-cover" />
+                                                        ) : (
+                                                            <Tags className="h-4 w-4 text-gray-400" />
+                                                        )}
+                                                    </span>
+                                                    <div>
+                                                        <div className="font-medium text-gray-900">{category.name}</div>
+                                                        <div className="text-xs font-mono text-gray-500">MC-{category.id}</div>
+                                                    </div>
                                                 </div>
-                                            </div>
-                                        </td>
-                                        <td className="px-4 py-3 text-muted-foreground">{category.slug}</td>
-                                        <td className="px-4 py-3">{category.vendorCount}</td>
-                                        <td className="px-4 py-3">
-                                            <Badge variant={category.isActive ? 'default' : 'secondary'}>
-                                                {category.isActive ? 'Active' : 'Inactive'}
-                                            </Badge>
-                                        </td>
-                                        <td className="px-4 py-3">
-                                            <div className="flex items-center justify-end gap-2">
-                                                <Button variant="outline" size="sm" onClick={() => startEdit(category)}>
-                                                    <Edit2 className="h-4 w-4" />
-                                                </Button>
-                                                <Button
-                                                    variant="destructive"
-                                                    size="sm"
-                                                    onClick={() => destroy(category)}
-                                                    disabled={category.vendorCount > 0}
-                                                >
-                                                    <Trash2 className="h-4 w-4" />
-                                                </Button>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
+                                            </td>
+                                            <td className="px-4 py-3">
+                                                <span className="font-mono text-sm text-gray-600">{category.slug}</span>
+                                            </td>
+                                            <td className="px-4 py-3">
+                                                <span className="text-sm text-gray-900">{category.vendorCount}</span>
+                                            </td>
+                                            <td className="px-4 py-3">
+                                                <span className={`rounded-full px-2 py-1 text-xs font-medium ${category.isActive ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'}`}>
+                                                    {category.isActive ? 'Active' : 'Inactive'}
+                                                </span>
+                                            </td>
+                                            <td className="px-4 py-3">
+                                                <span className="text-sm text-gray-600">{category.sortOrder}</span>
+                                            </td>
+                                            <td className="px-4 py-3">
+                                                <div className="flex items-center gap-2">
+                                                    <button
+                                                        type="button"
+                                                        className="rounded p-1.5 transition-colors hover:bg-gray-100"
+                                                        onClick={() => startEdit(category)}
+                                                        title="Edit category"
+                                                    >
+                                                        <Edit2 className="h-4 w-4 text-gray-600" aria-hidden="true" />
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        className="rounded p-1.5 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
+                                                        onClick={() => destroy(category)}
+                                                        disabled={category.vendorCount > 0}
+                                                        title={category.vendorCount > 0 ? 'Category is used by vendors' : 'Delete category'}
+                                                    >
+                                                        <Trash2 className="h-4 w-4 text-red-600" aria-hidden="true" />
+                                                    </button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
 
-                    <form onSubmit={submit} className="h-fit rounded-xl border border-sidebar-border/70 bg-white p-5 dark:border-sidebar-border">
-                        <div className="mb-5 flex items-center justify-between">
-                            <h2 className="font-semibold">{editing ? 'Edit Category' : 'Add Category'}</h2>
+                    <form onSubmit={submit} className="h-fit rounded-lg border border-gray-200 bg-white">
+                        <div className="flex items-center justify-between border-b border-gray-200 px-5 py-4">
+                            <div>
+                                <h2 className="font-semibold text-gray-900">{editing ? 'Edit Category' : 'Add Category'}</h2>
+                                {editing && <p className="mt-0.5 text-xs text-gray-500">Editing MC-{editing.id}</p>}
+                            </div>
                             {editing && (
-                                <Button type="button" variant="ghost" size="sm" onClick={resetForm}>
-                                    <X className="h-4 w-4" />
-                                </Button>
+                                <button type="button" className="rounded p-1.5 transition-colors hover:bg-gray-100" onClick={resetForm} title="Cancel edit">
+                                    <X className="h-4 w-4 text-gray-600" aria-hidden="true" />
+                                </button>
                             )}
                         </div>
 
-                        <div className="space-y-4">
-                            <div>
-                                <Label htmlFor="name">Name</Label>
-                                <Input
+                        <div className="space-y-4 p-5">
+                            <label className="block">
+                                <span className="text-sm font-medium text-gray-700">Name</span>
+                                <input
                                     id="name"
+                                    type="text"
                                     value={form.data.name}
                                     onChange={(event) => form.setData('name', event.target.value)}
-                                    className="mt-1.5"
+                                    className="mt-1.5 w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 focus:border-transparent focus:ring-2 focus:ring-purple-600 focus:outline-none"
                                     placeholder="Pizza, Pasta, Desserts"
                                 />
                                 {form.errors.name && <p className="mt-1 text-xs text-red-600">{form.errors.name}</p>}
-                            </div>
+                            </label>
 
-                            <div>
-                                <Label htmlFor="icon">Icon</Label>
-                                <Input
-                                    id="icon"
-                                    value={form.data.icon}
-                                    onChange={(event) => form.setData('icon', event.target.value)}
-                                    className="mt-1.5"
-                                    placeholder="🍕"
-                                    maxLength={64}
-                                />
+                            <label className="block">
+                                <span className="text-sm font-medium text-gray-700">Icon Image</span>
+                                <div className="mt-1.5 space-y-2">
+                                    <input
+                                        key={iconInputKey}
+                                        id="icon"
+                                        type="file"
+                                        accept="image/png,image/jpeg,image/webp"
+                                        onChange={changeIcon}
+                                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 file:mr-3 file:rounded-md file:border-0 file:bg-gray-100 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-gray-700 hover:file:bg-gray-200 focus:border-transparent focus:ring-2 focus:ring-purple-600 focus:outline-none"
+                                    />
+                                    {editing && previewIcon && (
+                                        <div className="flex items-center gap-3">
+                                            <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-gray-300 bg-white">
+                                                <img src={previewIcon} alt="" className="h-full w-full object-cover" />
+                                            </span>
+                                            <button
+                                                type="button"
+                                                onClick={removeIcon}
+                                                className="text-xs font-medium text-red-600 hover:text-red-700"
+                                            >
+                                                Remove image
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
                                 {form.errors.icon && <p className="mt-1 text-xs text-red-600">{form.errors.icon}</p>}
-                            </div>
+                            </label>
 
-                            <div>
-                                <Label htmlFor="sort_order">Sort Order</Label>
-                                <Input
+                            <label className="block">
+                                <span className="text-sm font-medium text-gray-700">Sort Order</span>
+                                <input
                                     id="sort_order"
                                     type="number"
                                     min={0}
                                     value={form.data.sort_order}
                                     onChange={(event) => form.setData('sort_order', Number(event.target.value))}
-                                    className="mt-1.5"
+                                    className="mt-1.5 w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 focus:border-transparent focus:ring-2 focus:ring-purple-600 focus:outline-none"
                                 />
                                 {form.errors.sort_order && <p className="mt-1 text-xs text-red-600">{form.errors.sort_order}</p>}
-                            </div>
+                            </label>
 
                             <label className="flex items-center gap-2 text-sm">
                                 <input
@@ -213,10 +358,13 @@ export default function AdminMenuCategoriesIndex({ categories }: { categories: M
                                 <p className="text-xs text-red-600">{(form.errors as Record<string, string>).category}</p>
                             )}
 
-                            <Button type="submit" className="w-full" disabled={form.processing}>
-                                <Plus className="h-4 w-4" />
+                            <button
+                                type="submit"
+                                className="w-full rounded-lg bg-purple-600 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                disabled={form.processing}
+                            >
                                 {form.processing ? 'Saving...' : editing ? 'Save Category' : 'Add Category'}
-                            </Button>
+                            </button>
                         </div>
                     </form>
                 </div>

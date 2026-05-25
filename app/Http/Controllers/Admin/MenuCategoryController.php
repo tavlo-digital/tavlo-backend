@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\MasterMenuCategory;
+use App\Services\MediaService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
@@ -13,6 +14,10 @@ use Inertia\Response;
 
 class MenuCategoryController extends Controller
 {
+    public function __construct(private readonly MediaService $media)
+    {
+    }
+
     public function index(): Response
     {
         $categories = MasterMenuCategory::query()
@@ -24,7 +29,7 @@ class MenuCategoryController extends Controller
                 'id' => $category->id,
                 'name' => $category->name,
                 'slug' => $category->slug,
-                'icon' => $category->icon,
+                'icon' => $category->icon_url,
                 'sortOrder' => $category->sort_order,
                 'isActive' => $category->is_active,
                 'vendorCount' => $category->vendor_categories_count,
@@ -41,7 +46,7 @@ class MenuCategoryController extends Controller
 
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255', Rule::unique('master_menu_categories', 'name')],
-            'icon' => ['nullable', 'string', 'max:64'],
+            'icon' => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp', 'max:2048'],
             'sort_order' => ['nullable', 'integer', 'min:0'],
             'is_active' => ['boolean'],
         ]);
@@ -53,7 +58,9 @@ class MenuCategoryController extends Controller
         MasterMenuCategory::create([
             'name' => $validated['name'],
             'slug' => $slug,
-            'icon' => $validated['icon'] ?? null,
+            'icon' => $request->hasFile('icon')
+                ? $this->media->store($request->file('icon'), 'cat-icons')
+                : null,
             'sort_order' => $validated['sort_order'] ?? 0,
             'is_active' => $validated['is_active'] ?? true,
         ]);
@@ -67,7 +74,8 @@ class MenuCategoryController extends Controller
 
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255', Rule::unique('master_menu_categories', 'name')->ignore($category->id)],
-            'icon' => ['nullable', 'string', 'max:64'],
+            'icon' => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp', 'max:2048'],
+            'remove_icon' => ['boolean'],
             'sort_order' => ['nullable', 'integer', 'min:0'],
             'is_active' => ['boolean'],
         ]);
@@ -76,13 +84,22 @@ class MenuCategoryController extends Controller
             return back()->withErrors(['name' => 'A category with this name already exists.'])->withInput();
         }
 
-        $category->update([
+        $updates = [
             'name' => $validated['name'],
             'slug' => $slug,
-            'icon' => $validated['icon'] ?? null,
             'sort_order' => $validated['sort_order'] ?? 0,
             'is_active' => $validated['is_active'] ?? false,
-        ]);
+        ];
+
+        if ($request->hasFile('icon')) {
+            $this->media->delete($category->getRawOriginal('icon'));
+            $updates['icon'] = $this->media->store($request->file('icon'), 'cat-icons');
+        } elseif ($request->boolean('remove_icon')) {
+            $this->media->delete($category->getRawOriginal('icon'));
+            $updates['icon'] = null;
+        }
+
+        $category->update($updates);
 
         return to_route('admin.menu-categories.index')->with('status', 'Category updated.');
     }
@@ -95,6 +112,7 @@ class MenuCategoryController extends Controller
             ]);
         }
 
+        $this->media->delete($category->getRawOriginal('icon'));
         $category->delete();
 
         return to_route('admin.menu-categories.index')->with('status', 'Category deleted.');

@@ -9,6 +9,8 @@ use App\Models\Role;
 use App\Models\User;
 use App\Models\Vendor;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Storage;
 use Inertia\Response;
 use ReflectionProperty;
 use Tests\TestCase;
@@ -32,7 +34,7 @@ class MasterMenuCategoryTest extends TestCase
         MasterMenuCategory::create([
             'name' => 'Pizza',
             'slug' => 'pizza',
-            'icon' => '🍕',
+            'icon' => 'cat-icons/pizza.png',
             'sort_order' => 1,
             'is_active' => true,
         ]);
@@ -46,15 +48,19 @@ class MasterMenuCategoryTest extends TestCase
 
         $this->assertSame('admin/menu-categories/index', $component->getValue($response));
         $this->assertSame('Pizza', $props->getValue($response)['categories'][0]['name']);
-        $this->assertSame('🍕', $props->getValue($response)['categories'][0]['icon']);
+        $this->assertSame(url('media/cat-icons/pizza.png'), $props->getValue($response)['categories'][0]['icon']);
     }
 
     public function test_admin_can_create_master_menu_category(): void
     {
+        Storage::fake('public');
+
+        $file = UploadedFile::fake()->image('pasta.png', 64, 64);
+
         $this->actingAs($this->admin)
             ->post('/admin/menu-categories', [
                 'name' => 'Pasta',
-                'icon' => '🍝',
+                'icon' => $file,
                 'sort_order' => 2,
                 'is_active' => true,
             ])
@@ -63,22 +69,30 @@ class MasterMenuCategoryTest extends TestCase
         $this->assertDatabaseHas('master_menu_categories', [
             'name' => 'Pasta',
             'slug' => 'pasta',
-            'icon' => '🍝',
         ]);
+
+        $category = MasterMenuCategory::where('slug', 'pasta')->firstOrFail();
+        $this->assertStringStartsWith('cat-icons/', $category->icon);
+        Storage::disk('public')->assertExists($category->icon);
     }
 
     public function test_admin_can_update_master_menu_category(): void
     {
+        Storage::fake('public');
+        Storage::disk('public')->put('cat-icons/old.png', 'old');
+
         $category = MasterMenuCategory::create([
             'name' => 'Old',
             'slug' => 'old',
+            'icon' => 'cat-icons/old.png',
             'is_active' => true,
         ]);
 
         $this->actingAs($this->admin)
-            ->put("/admin/menu-categories/{$category->id}", [
+            ->post("/admin/menu-categories/{$category->id}", [
+                '_method' => 'put',
                 'name' => 'Desserts',
-                'icon' => '🍰',
+                'icon' => UploadedFile::fake()->image('desserts.webp', 64, 64),
                 'sort_order' => 3,
                 'is_active' => false,
             ])
@@ -88,9 +102,14 @@ class MasterMenuCategoryTest extends TestCase
             'id' => $category->id,
             'name' => 'Desserts',
             'slug' => 'desserts',
-            'icon' => '🍰',
             'is_active' => false,
         ]);
+
+        $category->refresh();
+        $this->assertStringStartsWith('cat-icons/', $category->icon);
+        $this->assertNotSame('cat-icons/old.png', $category->icon);
+        Storage::disk('public')->assertMissing('cat-icons/old.png');
+        Storage::disk('public')->assertExists($category->icon);
     }
 
     public function test_admin_cannot_delete_category_used_by_vendor(): void

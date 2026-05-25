@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\Vendor;
 
 use App\Http\Controllers\Controller;
+use App\Models\MasterMenuCategory;
 use App\Models\MenuCategory;
 use App\Models\MenuItem;
 use App\Models\ModifierGroup;
@@ -26,19 +27,22 @@ class MenuController extends Controller
             ->firstOrFail();
 
         $categories = $vendor->menuCategories()
+            ->with('masterCategory')
             ->orderBy('sort_order')
             ->get()
             ->map(fn (MenuCategory $cat) => [
                 'id' => (string) $cat->id,
-                'name' => $cat->name,
-                'slug' => $cat->slug,
+                'masterCategoryId' => $cat->master_menu_category_id,
+                'name' => $cat->display_name,
+                'slug' => $cat->display_slug,
+                'icon' => $cat->display_icon,
                 'defaultTaxCategory' => $cat->default_tax_category,
                 'sortOrder' => $cat->sort_order,
                 'isActive' => $cat->is_active,
             ]);
 
         $items = $vendor->menuItems()
-            ->with(['category', 'modifierGroups.options'])
+            ->with(['category.masterCategory', 'modifierGroups.options'])
             ->orderBy('sort_order')
             ->get()
             ->map(fn (MenuItem $item) => $this->formatItem($item));
@@ -65,7 +69,7 @@ class MenuController extends Controller
         $data = $request->validate([
             'categories' => ['sometimes', 'array'],
             'categories.*.id' => ['sometimes', 'string'],
-            'categories.*.name' => ['required', 'string', 'max:255'],
+            'categories.*.masterCategoryId' => ['required', 'integer', 'exists:master_menu_categories,id'],
             'categories.*.defaultTaxCategory' => ['sometimes', 'string'],
             'items' => ['sometimes', 'array'],
             'items.*.name' => ['required', 'string', 'max:255'],
@@ -80,22 +84,22 @@ class MenuController extends Controller
             $existingIds = [];
 
             foreach ($data['categories'] as $i => $catData) {
-                $slug = Str::slug($catData['name']);
+                $masterCategory = MasterMenuCategory::findOrFail($catData['masterCategoryId']);
 
                 $category = $vendor->menuCategories()->updateOrCreate(
-                    ['slug' => $slug],
+                    ['master_menu_category_id' => $masterCategory->id],
                     [
-                        'name' => $catData['name'],
-                        'slug' => $slug,
                         'default_tax_category' => $catData['defaultTaxCategory'] ?? 'food',
                         'sort_order' => $i,
                         'is_active' => true,
                     ]
                 );
 
-                $frontendId = $catData['id'] ?? $catData['name'];
+                $frontendId = $catData['id'] ?? (string) $masterCategory->id;
                 $categoryMap[$frontendId] = $category->id;
-                $categoryMap[$catData['name']] = $category->id;
+                $categoryMap[$masterCategory->name] = $category->id;
+                $categoryMap[$masterCategory->slug] = $category->id;
+                $categoryMap[(string) $masterCategory->id] = $category->id;
                 $existingIds[] = $category->id;
             }
 
@@ -111,15 +115,14 @@ class MenuController extends Controller
                 // Resolve category
                 $categoryId = $categoryMap[$itemData['category']] ?? null;
                 if (! $categoryId) {
-                    // Try matching by name
-                    $cat = $vendor->menuCategories()->where('name', $itemData['category'])->first();
+                    $masterCategory = MasterMenuCategory::where('slug', $itemData['category'])
+                        ->orWhere('name', $itemData['category'])
+                        ->first();
+                    $cat = $masterCategory
+                        ? $vendor->menuCategories()->where('master_menu_category_id', $masterCategory->id)->first()
+                        : null;
                     if (! $cat) {
-                        $cat = $vendor->menuCategories()->create([
-                            'name' => $itemData['category'],
-                            'slug' => Str::slug($itemData['category']),
-                            'default_tax_category' => 'food',
-                            'sort_order' => 999,
-                        ]);
+                        return response()->json(['message' => 'Menu item category must reference an admin category.'], 422);
                     }
                     $categoryId = $cat->id;
                 }
@@ -226,7 +229,7 @@ class MenuController extends Controller
 
         return [
             'id' => (string) $item->id,
-            'category' => $item->category?->name ?? '',
+            'category' => $item->category?->display_name ?? 'Unknown',
             'name' => $item->name,
             'description' => $item->description,
             'price' => (float) $item->price,
@@ -270,6 +273,7 @@ class MenuController extends Controller
 
         if ($ids->isEmpty()) {
             $item->modifierGroups()->sync([]);
+
             return;
         }
 

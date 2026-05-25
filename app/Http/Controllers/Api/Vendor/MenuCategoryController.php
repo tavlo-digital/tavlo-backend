@@ -8,7 +8,6 @@ use App\Models\MenuCategory;
 use App\Models\TaxCategory;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 
 class MenuCategoryController extends Controller
@@ -37,7 +36,7 @@ class MenuCategoryController extends Controller
                 'id' => $category->id,
                 'name' => $category->name,
                 'slug' => $category->slug,
-                'icon' => $category->icon,
+                'icon' => $category->icon_url,
                 'sortOrder' => $category->sort_order,
             ]);
 
@@ -68,18 +67,13 @@ class MenuCategoryController extends Controller
         $vendor = $request->user();
 
         $data = $request->validate([
-            'masterCategoryId' => ['sometimes', 'required_without:name', 'integer', Rule::exists('master_menu_categories', 'id')->where('is_active', true)],
-            'name' => ['required_without:masterCategoryId', 'string', 'max:255'],
+            'masterCategoryId' => ['required', 'integer', Rule::exists('master_menu_categories', 'id')->where('is_active', true)],
             'taxCategoryId' => ['sometimes', 'nullable', 'integer', 'exists:tax_categories,id'],
             'defaultTaxCategory' => ['sometimes', 'nullable', 'string', 'max:64'],
         ]);
 
-        $masterCategory = isset($data['masterCategoryId'])
-            ? MasterMenuCategory::where('is_active', true)->findOrFail($data['masterCategoryId'])
-            : null;
-        $name = $masterCategory?->name ?? $data['name'];
-        $slug = $masterCategory?->slug ?? Str::slug($name);
-        if ($vendor->menuCategories()->where('slug', $slug)->exists()) {
+        $masterCategory = MasterMenuCategory::where('is_active', true)->findOrFail($data['masterCategoryId']);
+        if ($vendor->menuCategories()->where('master_menu_category_id', $masterCategory->id)->exists()) {
             return response()->json(['message' => 'A category with this name already exists.'], 422);
         }
 
@@ -90,9 +84,7 @@ class MenuCategoryController extends Controller
             ?? $this->defaultTaxCategoryId($vendor);
 
         $category = $vendor->menuCategories()->create([
-            'master_menu_category_id' => $masterCategory?->id,
-            'name' => $name,
-            'slug' => $slug,
+            'master_menu_category_id' => $masterCategory->id,
             'tax_category_id' => $taxCategoryId,
             'default_tax_category' => $this->slugForTaxCategory($taxCategoryId),
             'sort_order' => $maxSort + 1,
@@ -112,7 +104,6 @@ class MenuCategoryController extends Controller
 
         $data = $request->validate([
             'masterCategoryId' => ['sometimes', 'nullable', 'integer', Rule::exists('master_menu_categories', 'id')->where('is_active', true)],
-            'name' => ['sometimes', 'string', 'max:255'],
             'taxCategoryId' => ['sometimes', 'nullable', 'integer', 'exists:tax_categories,id'],
             'defaultTaxCategory' => ['sometimes', 'nullable', 'string', 'max:64'],
             'sortOrder' => ['sometimes', 'integer', 'min:0'],
@@ -126,23 +117,12 @@ class MenuCategoryController extends Controller
             }
         }
 
-        if (isset($data['masterCategoryId'])) {
+        if (isset($data['masterCategoryId']) && (int) $data['masterCategoryId'] !== $category->master_menu_category_id) {
             $masterCategory = MasterMenuCategory::where('is_active', true)->findOrFail($data['masterCategoryId']);
-            $slug = $masterCategory->slug;
-            if ($vendor->menuCategories()->where('slug', $slug)->where('id', '!=', $category->id)->exists()) {
+            if ($vendor->menuCategories()->where('master_menu_category_id', $masterCategory->id)->where('id', '!=', $category->id)->exists()) {
                 return response()->json(['message' => 'A category with this name already exists.'], 422);
             }
             $category->master_menu_category_id = $masterCategory->id;
-            $category->name = $masterCategory->name;
-            $category->slug = $slug;
-        } elseif (isset($data['name'])) {
-            $slug = Str::slug($data['name']);
-            if ($vendor->menuCategories()->where('slug', $slug)->where('id', '!=', $category->id)->exists()) {
-                return response()->json(['message' => 'A category with this name already exists.'], 422);
-            }
-            $category->master_menu_category_id = null;
-            $category->name = $data['name'];
-            $category->slug = $slug;
         }
 
         if (isset($data['taxCategoryId'])) {
@@ -190,9 +170,9 @@ class MenuCategoryController extends Controller
         return [
             'id' => $cat->id,
             'masterCategoryId' => $cat->master_menu_category_id,
-            'name' => $cat->name,
-            'slug' => $cat->slug,
-            'icon' => $cat->masterCategory?->icon,
+            'name' => $cat->display_name,
+            'slug' => $cat->display_slug,
+            'icon' => $cat->display_icon,
             'defaultTaxCategory' => $cat->default_tax_category ?? ($tc?->slug ?? 'food'),
             'taxCategory' => $tc ? [
                 'id' => $tc->id,

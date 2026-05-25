@@ -5,7 +5,6 @@ namespace App\Http\Controllers\Api\Vendor;
 use App\Http\Controllers\Controller;
 use App\Models\CartItem;
 use App\Models\Order;
-use App\Models\RestaurantTable;
 use App\Models\TableScanSession;
 use App\Models\TableSession;
 use App\Models\TeamMember;
@@ -25,7 +24,7 @@ class OrderController extends Controller
         $vendor = $this->resolveVendor($vendorId);
         $this->authorizeVendor($request, $vendor);
 
-        $statusFilter    = $request->query('status');
+        $statusFilter = $request->query('status');
         $orderTypeFilter = $request->query('orderType');
 
         $activeScanSessions = TableScanSession::with([
@@ -114,15 +113,21 @@ class OrderController extends Controller
         ]);
 
         $mapped = [];
-        if (isset($data['status'])) $mapped['status'] = $data['status'];
-        if (isset($data['paymentPending'])) $mapped['payment_pending'] = $data['paymentPending'];
+        if (isset($data['status'])) {
+            $mapped['status'] = $data['status'];
+        }
+        if (isset($data['paymentPending'])) {
+            $mapped['payment_pending'] = $data['paymentPending'];
+        }
         if (isset($data['paymentReceived'])) {
             $mapped['payment_received'] = $data['paymentReceived'];
             if ($data['paymentReceived']) {
                 $mapped['payment_confirmed_at'] = now();
             }
         }
-        if (array_key_exists('paymentNote', $data)) $mapped['payment_note'] = $data['paymentNote'];
+        if (array_key_exists('paymentNote', $data)) {
+            $mapped['payment_note'] = $data['paymentNote'];
+        }
 
         $order->update($mapped);
 
@@ -139,8 +144,8 @@ class OrderController extends Controller
         $this->authorizeVendor($request, $order->vendor);
 
         $order->update([
-            'status'              => 'confirmed',
-            'waiter_confirmed'    => true,
+            'status' => 'confirmed',
+            'waiter_confirmed' => true,
             'waiter_confirmed_at' => now(),
         ]);
 
@@ -157,9 +162,9 @@ class OrderController extends Controller
         $this->authorizeVendor($request, $order->vendor);
 
         $order->update([
-            'payment_received'     => true,
+            'payment_received' => true,
             'payment_confirmed_at' => now(),
-            'payment_pending'      => false,
+            'payment_pending' => false,
         ]);
 
         return response()->json($this->formatOrder($order->fresh()->load('customer')));
@@ -217,23 +222,23 @@ class OrderController extends Controller
         $updates = match ($data['status']) {
             'new' => [
                 'preparing_start_at' => null,
-                'ready_at'           => null,
-                'served_at'          => null,
+                'ready_at' => null,
+                'served_at' => null,
             ],
             'preparing' => [
                 'preparing_start_at' => $item->preparing_start_at ?? $now,
-                'ready_at'           => null,
-                'served_at'          => null,
+                'ready_at' => null,
+                'served_at' => null,
             ],
             'ready' => [
                 'preparing_start_at' => $item->preparing_start_at ?? $now,
-                'ready_at'           => $item->ready_at ?? $now,
-                'served_at'          => null,
+                'ready_at' => $item->ready_at ?? $now,
+                'served_at' => null,
             ],
             'served' => [
                 'preparing_start_at' => $item->preparing_start_at ?? $now,
-                'ready_at'           => $item->ready_at ?? $now,
-                'served_at'          => $item->served_at ?? $now,
+                'ready_at' => $item->ready_at ?? $now,
+                'served_at' => $item->served_at ?? $now,
             ],
         };
 
@@ -271,13 +276,13 @@ class OrderController extends Controller
         $this->loadLinkedCartItems($order)->each(function (CartItem $item) use ($now) {
             $item->update([
                 'preparing_start_at' => $item->preparing_start_at ?? $now,
-                'ready_at'           => $item->ready_at ?? $now,
-                'served_at'          => $item->served_at ?? $now,
+                'ready_at' => $item->ready_at ?? $now,
+                'served_at' => $item->served_at ?? $now,
             ]);
         });
 
         $order->update([
-            'status'    => 'served',
+            'status' => 'served',
             'served_at' => $now,
         ]);
 
@@ -297,8 +302,8 @@ class OrderController extends Controller
         ]);
 
         $order->update([
-            'status'           => 'cancelled',
-            'cancelled_at'     => now(),
+            'status' => 'cancelled',
+            'cancelled_at' => now(),
             'cancelled_reason' => $data['reason'] ?? null,
         ]);
 
@@ -315,12 +320,13 @@ class OrderController extends Controller
      */
     public function releaseToKitchen(Request $request, string $vendorId, string $sessionId): JsonResponse
     {
-        $vendor  = $this->resolveVendor($vendorId);
+        $vendor = $this->resolveVendor($vendorId);
         $session = $this->resolveSession($vendor, $sessionId);
 
         $session->update(['batch_released_at' => now()]);
 
         $session->load('orders.customer');
+
         return response()->json($this->formatSession($session->fresh()));
     }
 
@@ -330,7 +336,7 @@ class OrderController extends Controller
      */
     public function fireNextCourse(Request $request, string $vendorId, string $sessionId): JsonResponse
     {
-        $vendor  = $this->resolveVendor($vendorId);
+        $vendor = $this->resolveVendor($vendorId);
         $session = $this->resolveSession($vendor, $sessionId);
 
         $next = $session->nextCourse();
@@ -342,6 +348,7 @@ class OrderController extends Controller
         $session->update(['current_course' => $next]);
 
         $session->load('orders.customer');
+
         return response()->json($this->formatSession($session->fresh()));
     }
 
@@ -351,15 +358,16 @@ class OrderController extends Controller
      */
     public function closeSession(Request $request, string $vendorId, string $sessionId): JsonResponse
     {
-        $vendor  = $this->resolveVendor($vendorId);
+        $vendor = $this->resolveVendor($vendorId);
         $session = $this->resolveSession($vendor, $sessionId);
 
         $session->update([
-            'status'    => 'closed',
+            'status' => 'closed',
             'closed_at' => now(),
         ]);
 
         $session->load('orders.customer');
+
         return response()->json($this->formatSession($session->fresh()));
     }
 
@@ -399,34 +407,34 @@ class OrderController extends Controller
         };
 
         $kitchenSummary = [
-            'total'     => $orders->count(),
-            'pending'   => $orders->where('status', 'pending')->count(),
-            'draft'     => $orders->where('status', 'draft')->count(),
+            'total' => $orders->count(),
+            'pending' => $orders->where('status', 'pending')->count(),
+            'draft' => $orders->where('status', 'draft')->count(),
             'confirmed' => $orders->where('status', 'confirmed')->count(),
             'preparing' => $orders->where('status', 'preparing')->count(),
-            'ready'     => $orders->where('status', 'ready')->count(),
-            'served'    => $orders->where('status', 'served')->count(),
+            'ready' => $orders->where('status', 'ready')->count(),
+            'served' => $orders->where('status', 'served')->count(),
             'cancelled' => $orders->where('status', 'cancelled')->count(),
         ];
 
         return [
-            'sessionId'      => 'table-' . ($table?->id ?? $first->restaurant_table_id),
-            'tableId'        => $table ? (string) $table->id : (string) $first->restaurant_table_id,
-            'sessionIds'     => $sessionIds->map(fn (int $id) => (string) $id)->all(),
-            'vendorId'       => (string) $first->vendor_id,
-            'tableNumber'    => $table?->number,
-            'tableName'      => $table?->name,
-            'status'         => 'active',
-            'guestCount'     => $scanSessions->count(),
-            'totalAmount'    => $totalAmount,
-            'paidAmount'     => $paidAmount,
-            'paymentStatus'  => $paymentStatus,
-            'cashPending'    => $hasCashPending,
-            'closedAt'       => null,
+            'sessionId' => 'table-'.($table?->id ?? $first->restaurant_table_id),
+            'tableId' => $table ? (string) $table->id : (string) $first->restaurant_table_id,
+            'sessionIds' => $sessionIds->map(fn (int $id) => (string) $id)->all(),
+            'vendorId' => (string) $first->vendor_id,
+            'tableNumber' => $table?->number,
+            'tableName' => $table?->name,
+            'status' => 'active',
+            'guestCount' => $scanSessions->count(),
+            'totalAmount' => $totalAmount,
+            'paidAmount' => $paidAmount,
+            'paymentStatus' => $paymentStatus,
+            'cashPending' => $hasCashPending,
+            'closedAt' => null,
             'kitchenSummary' => $kitchenSummary,
-            'orders'         => $orders->map(fn (Order $order) => $this->formatOrder($order))->values(),
-            'createdAt'      => $scanSessions->min('scanned_at')?->toISOString() ?? $first->created_at?->toISOString(),
-            'updatedAt'      => $scanSessions->max('updated_at')?->toISOString() ?? $first->updated_at?->toISOString(),
+            'orders' => $orders->map(fn (Order $order) => $this->formatOrder($order))->values(),
+            'createdAt' => $scanSessions->min('scanned_at')?->toISOString() ?? $first->created_at?->toISOString(),
+            'updatedAt' => $scanSessions->max('updated_at')?->toISOString() ?? $first->updated_at?->toISOString(),
         ];
     }
 
@@ -435,46 +443,46 @@ class OrderController extends Controller
         $orders = $session->orders ?? collect();
 
         $kitchenSummary = [
-            'total'     => $orders->count(),
-            'pending'   => $orders->where('status', 'pending')->count(),
+            'total' => $orders->count(),
+            'pending' => $orders->where('status', 'pending')->count(),
             'confirmed' => $orders->where('status', 'confirmed')->count(),
             'preparing' => $orders->where('status', 'preparing')->count(),
-            'ready'     => $orders->where('status', 'ready')->count(),
-            'served'    => $orders->where('status', 'served')->count(),
+            'ready' => $orders->where('status', 'ready')->count(),
+            'served' => $orders->where('status', 'served')->count(),
             'cancelled' => $orders->where('status', 'cancelled')->count(),
         ];
 
         return [
-            'sessionId'             => (string) $session->id,
-            'vendorId'              => (string) $session->vendor_id,
-            'tableNumber'           => $session->table_number,
-            'tableName'             => $session->table_name,
-            'status'                => $session->status,
-            'currentCourse'         => $session->current_course,
-            'batchStartedAt'        => $session->batch_started_at?->toISOString(),
-            'batchWindowSeconds'    => $session->batch_window_seconds,
-            'batchReleasedAt'       => $session->batch_released_at?->toISOString(),
-            'batchOpen'             => $session->isBatchOpen(),
+            'sessionId' => (string) $session->id,
+            'vendorId' => (string) $session->vendor_id,
+            'tableNumber' => $session->table_number,
+            'tableName' => $session->table_name,
+            'status' => $session->status,
+            'currentCourse' => $session->current_course,
+            'batchStartedAt' => $session->batch_started_at?->toISOString(),
+            'batchWindowSeconds' => $session->batch_window_seconds,
+            'batchReleasedAt' => $session->batch_released_at?->toISOString(),
+            'batchOpen' => $session->isBatchOpen(),
             'batchSecondsRemaining' => $session->batchSecondsRemaining(),
-            'totalAmount'           => $session->totalAmount(),
-            'closedAt'              => $session->closed_at?->toISOString(),
-            'kitchenSummary'        => $kitchenSummary,
-            'orders'                => $orders->map(fn (Order $o) => $this->formatOrder($o))->values(),
-            'createdAt'             => $session->created_at->toISOString(),
-            'updatedAt'             => $session->updated_at->toISOString(),
+            'totalAmount' => $session->totalAmount(),
+            'closedAt' => $session->closed_at?->toISOString(),
+            'kitchenSummary' => $kitchenSummary,
+            'orders' => $orders->map(fn (Order $o) => $this->formatOrder($o))->values(),
+            'createdAt' => $session->created_at->toISOString(),
+            'updatedAt' => $session->updated_at->toISOString(),
         ];
     }
 
     private function formatOrder(Order $order): array
     {
         $serviceFee = (float) ($order->service_fee ?? 0);
-        $vatAmount  = (float) ($order->vat_amount ?? 0);
-        $total      = (float) $order->amount;
-        $subtotal   = max(0, $total - $serviceFee - $vatAmount);
+        $vatAmount = (float) ($order->vat_amount ?? 0);
+        $total = (float) $order->amount;
+        $subtotal = max(0, $total - $serviceFee - $vatAmount);
 
         $linkedItems = $this->loadLinkedCartItems($order);
-        $itemsCount  = (int) $linkedItems->sum('quantity');
-        $readyAt     = $linkedItems->isNotEmpty() && $linkedItems->every(fn (CartItem $ci) => $ci->ready_at !== null)
+        $itemsCount = (int) $linkedItems->sum('quantity');
+        $readyAt = $linkedItems->isNotEmpty() && $linkedItems->every(fn (CartItem $ci) => $ci->ready_at !== null)
             ? $linkedItems->max(fn (CartItem $ci) => $ci->ready_at)
             : null;
 
@@ -482,15 +490,15 @@ class OrderController extends Controller
         $rawStatus = $order->status;
         $displayStatus = match ($rawStatus) {
             'pending', 'confirmed', 'preparing' => 'received',
-            'delivered'                          => 'served',
-            'picked_up'                          => 'picked-up',
-            default                              => $rawStatus,
+            'delivered' => 'served',
+            'picked_up' => 'picked-up',
+            default => $rawStatus,
         };
 
         $pickupStatus = match ($rawStatus) {
             'picked_up' => 'picked-up',
-            'ready'     => 'ready',
-            default     => 'pending',
+            'ready' => 'ready',
+            default => 'pending',
         };
 
         $timeline = [];
@@ -510,101 +518,101 @@ class OrderController extends Controller
             $timeline[] = ['status' => 'cancelled', 'timestamp' => $order->cancelled_at->toISOString()];
         }
 
-        $items = $linkedItems->map(function (CartItem $ci) use ($order) {
-            $unitPrice  = $this->cartItemUnitPrice($ci);
-            $lineTotal  = round($unitPrice * $ci->quantity, 2);
-            $orderIds   = array_values(array_map('intval', is_array($ci->shared_order_ids) ? $ci->shared_order_ids : []));
+        $items = $linkedItems->map(function (CartItem $ci) {
+            $unitPrice = $this->cartItemUnitPrice($ci);
+            $lineTotal = round($unitPrice * $ci->quantity, 2);
+            $orderIds = array_values(array_map('intval', is_array($ci->shared_order_ids) ? $ci->shared_order_ids : []));
             $sharedBetween = 1 + count($orderIds);
             $itemStatus = $this->cartItemStatus($ci);
             $modifiers = $this->cartItemModifiers($ci);
 
             return [
-                'cartItemId'         => $ci->id,
-                'cart_item_id'       => $ci->id,
-                'menuItemId'         => $ci->menu_item_id,
-                'menu_item_id'       => $ci->menu_item_id,
-                'name'               => $ci->menuItem?->name,
-                'imageUrl'           => $ci->menuItem?->image_url,
-                'image_url'          => $ci->menuItem?->image_url,
-                'category'           => strtolower((string) ($ci->menuItem?->category?->name ?? 'other')),
-                'quantity'           => $ci->quantity,
-                'notes'              => $ci->notes,
-                'specialInstructions'=> $ci->notes,
-                'unitPrice'          => $unitPrice,
-                'unit_price'         => $unitPrice,
-                'price'              => $unitPrice,
-                'lineTotal'          => $lineTotal,
-                'line_total'         => $lineTotal,
-                'paidAddons'         => $ci->paid_addons ?? [],
-                'paid_addons'        => $ci->paid_addons ?? [],
-                'freeAddons'         => $ci->free_addons ?? [],
-                'free_addons'        => $ci->free_addons ?? [],
-                'removedItems'       => $ci->removed_items ?? [],
-                'removed_items'      => $ci->removed_items ?? [],
-                'selectedModifiers'  => $ci->selected_modifiers ?? [],
+                'cartItemId' => $ci->id,
+                'cart_item_id' => $ci->id,
+                'menuItemId' => $ci->menu_item_id,
+                'menu_item_id' => $ci->menu_item_id,
+                'name' => $ci->menuItem?->name,
+                'imageUrl' => $ci->menuItem?->image_url,
+                'image_url' => $ci->menuItem?->image_url,
+                'category' => strtolower((string) ($ci->menuItem?->category?->display_name ?? 'other')),
+                'quantity' => $ci->quantity,
+                'notes' => $ci->notes,
+                'specialInstructions' => $ci->notes,
+                'unitPrice' => $unitPrice,
+                'unit_price' => $unitPrice,
+                'price' => $unitPrice,
+                'lineTotal' => $lineTotal,
+                'line_total' => $lineTotal,
+                'paidAddons' => $ci->paid_addons ?? [],
+                'paid_addons' => $ci->paid_addons ?? [],
+                'freeAddons' => $ci->free_addons ?? [],
+                'free_addons' => $ci->free_addons ?? [],
+                'removedItems' => $ci->removed_items ?? [],
+                'removed_items' => $ci->removed_items ?? [],
+                'selectedModifiers' => $ci->selected_modifiers ?? [],
                 'selected_modifiers' => $ci->selected_modifiers ?? [],
-                'modifiers'          => $modifiers,
-                'status'             => $itemStatus,
-                'sharedBetween'      => $sharedBetween,
+                'modifiers' => $modifiers,
+                'status' => $itemStatus,
+                'sharedBetween' => $sharedBetween,
                 'sharedWithOrderIds' => $orderIds,
-                'preparingStartAt'   => $ci->preparing_start_at?->toISOString(),
+                'preparingStartAt' => $ci->preparing_start_at?->toISOString(),
                 'preparing_start_at' => $ci->preparing_start_at?->toISOString(),
-                'readyAt'            => $ci->ready_at?->toISOString(),
-                'ready_at'           => $ci->ready_at?->toISOString(),
-                'servedAt'           => $ci->served_at?->toISOString(),
-                'served_at'          => $ci->served_at?->toISOString(),
+                'readyAt' => $ci->ready_at?->toISOString(),
+                'ready_at' => $ci->ready_at?->toISOString(),
+                'servedAt' => $ci->served_at?->toISOString(),
+                'served_at' => $ci->served_at?->toISOString(),
             ];
         })->values()->all();
 
         $table = $order->tableScanSession?->restaurantTable;
         $customerName = $order->customer
-            ? trim(($order->customer->first_name ?? '') . ' ' . ($order->customer->last_name ?? ''))
+            ? trim(($order->customer->first_name ?? '').' '.($order->customer->last_name ?? ''))
             : null;
         $customerName = $customerName !== '' ? $customerName : null;
 
         return [
-            'id'                 => (string) $order->id,
-            'orderPublicId'      => $order->order_public_id,
-            'orderNumber'        => $order->order_number ?? $order->id,
-            'orderType'          => $order->order_type ?? 'dine-in',
-            'tableNumber'        => $order->table_number ?? $table?->number,
-            'tableId'            => $table ? (string) $table->id : null,
+            'id' => (string) $order->id,
+            'orderPublicId' => $order->order_public_id,
+            'orderNumber' => $order->order_number ?? $order->id,
+            'orderType' => $order->order_type ?? 'dine-in',
+            'tableNumber' => $order->table_number ?? $table?->number,
+            'tableId' => $table ? (string) $table->id : null,
             'tableScanSessionId' => $order->table_scan_session_id ? (string) $order->table_scan_session_id : null,
-            'course'             => $order->course,
-            'waiterConfirmed'    => (bool) $order->waiter_confirmed,
-            'waiterConfirmedAt'  => $order->waiter_confirmed_at?->toISOString(),
+            'course' => $order->course,
+            'waiterConfirmed' => (bool) $order->waiter_confirmed,
+            'waiterConfirmedAt' => $order->waiter_confirmed_at?->toISOString(),
             'customer' => $order->customer ? [
-                'id'    => (string) $order->customer->id,
-                'name'  => $customerName,
+                'id' => (string) $order->customer->id,
+                'name' => $customerName,
                 'email' => $order->customer->email,
                 'phone' => $order->customer->phone,
             ] : null,
-            'customerName'       => $customerName,
-            'customerPhone'      => $order->customer?->phone,
-            'customerEmail'      => $order->customer?->email,
-            'status'             => $rawStatus,
-            'displayStatus'      => $displayStatus,
-            'pickupStatus'       => $pickupStatus,
-            'itemsCount'         => $itemsCount,
-            'items'              => $items,
-            'amount'             => $total,
-            'total'              => $total,
-            'subtotal'           => $subtotal,
-            'serviceFee'         => $serviceFee,
-            'vatAmount'          => $vatAmount,
-            'currency'           => $order->currency,
-            'paymentMethod'      => $order->payment_method,
-            'paymentPending'     => (bool) $order->payment_pending,
-            'paymentReceived'    => (bool) $order->payment_received,
+            'customerName' => $customerName,
+            'customerPhone' => $order->customer?->phone,
+            'customerEmail' => $order->customer?->email,
+            'status' => $rawStatus,
+            'displayStatus' => $displayStatus,
+            'pickupStatus' => $pickupStatus,
+            'itemsCount' => $itemsCount,
+            'items' => $items,
+            'amount' => $total,
+            'total' => $total,
+            'subtotal' => $subtotal,
+            'serviceFee' => $serviceFee,
+            'vatAmount' => $vatAmount,
+            'currency' => $order->currency,
+            'paymentMethod' => $order->payment_method,
+            'paymentPending' => (bool) $order->payment_pending,
+            'paymentReceived' => (bool) $order->payment_received,
             'paymentConfirmedAt' => $order->payment_confirmed_at?->toISOString(),
-            'paymentNote'        => $order->payment_note,
-            'readyAt'            => $readyAt?->toISOString(),
-            'servedAt'           => $order->served_at?->toISOString(),
-            'cancelledAt'        => $order->cancelled_at?->toISOString(),
-            'cancelledReason'    => $order->cancelled_reason,
-            'timeline'           => $timeline,
-            'createdAt'          => $order->created_at->toISOString(),
-            'updatedAt'          => $order->updated_at->toISOString(),
+            'paymentNote' => $order->payment_note,
+            'readyAt' => $readyAt?->toISOString(),
+            'servedAt' => $order->served_at?->toISOString(),
+            'cancelledAt' => $order->cancelled_at?->toISOString(),
+            'cancelledReason' => $order->cancelled_reason,
+            'timeline' => $timeline,
+            'createdAt' => $order->created_at->toISOString(),
+            'updatedAt' => $order->updated_at->toISOString(),
         ];
     }
 
@@ -614,7 +622,7 @@ class OrderController extends Controller
      */
     private function loadLinkedCartItems(Order $order)
     {
-        return CartItem::with('menuItem:id,name,price,has_discount,discounted_price,image_url,menu_category_id', 'menuItem.category:id,name')
+        return CartItem::with('menuItem:id,name,price,has_discount,discounted_price,image_url,menu_category_id', 'menuItem.category.masterCategory')
             ->where(function ($q) use ($order) {
                 if ($order->status === 'draft' && $order->table_scan_session_id) {
                     $q->where(function ($owned) use ($order) {
@@ -665,7 +673,7 @@ class OrderController extends Controller
 
         $removedItems = collect($item->removed_items ?? [])
             ->map(fn ($name) => [
-                'name' => 'No ' . (string) $name,
+                'name' => 'No '.(string) $name,
                 'price' => 0.0,
             ]);
 
@@ -764,25 +772,28 @@ class OrderController extends Controller
 
         if ($items->every(fn (CartItem $item) => $item->served_at !== null)) {
             $order->update([
-                'status'    => 'served',
+                'status' => 'served',
                 'served_at' => $order->served_at ?? now(),
             ]);
+
             return;
         }
 
         if ($items->every(fn (CartItem $item) => $item->ready_at !== null || $item->served_at !== null)) {
             $order->update(['status' => 'ready']);
+
             return;
         }
 
         if ($items->contains(fn (CartItem $item) => $item->preparing_start_at !== null)) {
             $order->update(['status' => 'preparing']);
+
             return;
         }
 
         if (in_array($order->status, ['ready', 'preparing', 'served'], true)) {
             $order->update([
-                'status'    => $order->waiter_confirmed ? 'confirmed' : 'pending',
+                'status' => $order->waiter_confirmed ? 'confirmed' : 'pending',
                 'served_at' => null,
             ]);
         }

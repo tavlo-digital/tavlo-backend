@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\Customer;
 
 use App\Http\Controllers\Controller;
+use App\Models\MenuCategory;
 use App\Models\Vendor;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -20,7 +21,7 @@ class FavoriteController extends Controller
                 'vendorSetting:id,vendor_id,logo_url,cover_photo_url,description,business_hours',
                 'menuCategories' => fn ($query) => $query
                     ->where('is_active', true)
-                    ->select('id', 'vendor_id', 'name'),
+                    ->with('masterCategory'),
             ])
             ->withAvg('reviews', 'rating')
             ->withCount('reviews')
@@ -40,8 +41,8 @@ class FavoriteController extends Controller
             if (is_string($businessHours)) {
                 $businessHours = json_decode($businessHours, true) ?: [];
             }
-            if (isset($businessHours[$dayKey]) && !($businessHours[$dayKey]['closed'] ?? false)) {
-                $open  = $businessHours[$dayKey]['open']  ?? null;
+            if (isset($businessHours[$dayKey]) && ! ($businessHours[$dayKey]['closed'] ?? false)) {
+                $open = $businessHours[$dayKey]['open'] ?? null;
                 $close = $businessHours[$dayKey]['close'] ?? null;
                 if ($open && $close) {
                     $isOpen = $now >= $open && $now <= $close;
@@ -49,20 +50,23 @@ class FavoriteController extends Controller
             }
 
             return [
-                'id'               => $vendor->id,
+                'id' => $vendor->id,
                 'vendor_public_id' => $vendor->vendor_public_id,
-                'restaurant_name'  => $vendor->restaurant_name,
-                'slug'             => $vendor->slug,
-                'city'             => $vendor->city,
-                'address'          => $vendor->address,
-                'logo_url'         => $setting?->logo_url,
-                'cover_photo_url'  => $setting?->cover_photo_url,
-                'avg_rating'       => round($vendor->reviews_avg_rating ?? 0, 1),
-                'review_count'     => $vendor->reviews_count ?? 0,
-                'is_open'          => $isOpen,
-                'status'           => $isOpen ? 'Open' : 'Closed',
-                'business_hours'   => $businessHours ?: null,
-                'cuisines'         => $vendor->menuCategories->pluck('name')->unique()->values(),
+                'restaurant_name' => $vendor->restaurant_name,
+                'slug' => $vendor->slug,
+                'city' => $vendor->city,
+                'address' => $vendor->address,
+                'logo_url' => $setting?->logo_url,
+                'cover_photo_url' => $setting?->cover_photo_url,
+                'avg_rating' => round($vendor->reviews_avg_rating ?? 0, 1),
+                'review_count' => $vendor->reviews_count ?? 0,
+                'is_open' => $isOpen,
+                'status' => $isOpen ? 'Open' : 'Closed',
+                'business_hours' => $businessHours ?: null,
+                'cuisines' => $vendor->menuCategories
+                    ->map(fn (MenuCategory $category) => $category->display_name)
+                    ->unique()
+                    ->values(),
             ];
         });
 

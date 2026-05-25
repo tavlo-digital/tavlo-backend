@@ -15,9 +15,7 @@ use Illuminate\Validation\ValidationException;
 
 class MenuItemController extends Controller
 {
-    public function __construct(private readonly MediaService $media)
-    {
-    }
+    public function __construct(private readonly MediaService $media) {}
 
     /**
      * GET /api/vendor/menu/items
@@ -28,16 +26,16 @@ class MenuItemController extends Controller
 
         $query = $vendor->menuItems()
             ->where('is_active', true)
-            ->with(['category', 'modifierGroups.options']);
+            ->with(['category.masterCategory', 'modifierGroups.options']);
 
         // Accept both `categoryId` and legacy `category_id`
         $categoryId = $request->input('categoryId') ?? $request->input('category_id');
-        if (!empty($categoryId)) {
+        if (! empty($categoryId)) {
             $query->where('menu_category_id', $categoryId);
         }
 
         if ($request->filled('search')) {
-            $query->whereRaw('LOWER(name) LIKE ?', [strtolower('%' . $request->input('search') . '%')]);
+            $query->whereRaw('LOWER(name) LIKE ?', [strtolower('%'.$request->input('search').'%')]);
         }
 
         if ($request->filled('available')) {
@@ -47,14 +45,14 @@ class MenuItemController extends Controller
         $items = $query->orderBy('sort_order')->get();
 
         $stats = [
-            'totalItems'      => $items->count(),
+            'totalItems' => $items->count(),
             'totalCategories' => $vendor->menuCategories()->count(),
-            'averagePrice'    => $items->count() ? round((float) $items->avg('price'), 2) : 0,
-            'averageRating'   => $items->count() ? round((float) $items->avg('rating'), 2) : 0,
+            'averagePrice' => $items->count() ? round((float) $items->avg('price'), 2) : 0,
+            'averageRating' => $items->count() ? round((float) $items->avg('rating'), 2) : 0,
         ];
 
         return response()->json([
-            'data'  => $items->map(fn (MenuItem $item) => $this->formatItem($item)),
+            'data' => $items->map(fn (MenuItem $item) => $this->formatItem($item)),
             'stats' => $stats,
         ]);
     }
@@ -72,8 +70,8 @@ class MenuItemController extends Controller
 
         [$vatRate, $taxSlug] = $this->resolveTax($data, $category, $vendor);
 
-        $price           = (float) $data['price'];
-        $hasDiscount     = (bool) ($data['hasDiscount'] ?? false);
+        $price = (float) $data['price'];
+        $hasDiscount = (bool) ($data['hasDiscount'] ?? false);
         $discountPercent = (float) ($data['discountPercent'] ?? 0);
         $discountedPrice = ($hasDiscount && $discountPercent > 0)
             ? round($price * (1 - $discountPercent / 100), 2)
@@ -82,36 +80,36 @@ class MenuItemController extends Controller
         $maxSort = $vendor->menuItems()->where('menu_category_id', $category->id)->max('sort_order') ?? -1;
 
         $item = $vendor->menuItems()->create([
-            'menu_category_id'   => $category->id,
-            'name'               => $data['name'],
-            'description'        => $data['description'] ?? null,
-            'price'              => $price,
-            'image_url'          => $data['imageUrl'] ?? null,
-            'available'          => $data['available'] ?? true,
-            'is_active'          => true,
-            'calories'           => $data['calories'] ?? 0,
-            'fat'                => $data['fat'] ?? 0,
-            'carbs'              => $data['carbs'] ?? 0,
-            'protein'            => $data['protein'] ?? 0,
-            'vat_rate'           => $vatRate,
-            'tax_category'       => $taxSlug,
+            'menu_category_id' => $category->id,
+            'name' => $data['name'],
+            'description' => $data['description'] ?? null,
+            'price' => $price,
+            'image_url' => $data['imageUrl'] ?? null,
+            'available' => $data['available'] ?? true,
+            'is_active' => true,
+            'calories' => $data['calories'] ?? 0,
+            'fat' => $data['fat'] ?? 0,
+            'carbs' => $data['carbs'] ?? 0,
+            'protein' => $data['protein'] ?? 0,
+            'vat_rate' => $vatRate,
+            'tax_category' => $taxSlug,
             'dietary_preference' => $data['dietaryPreference'] ?? null,
-            'allergies'          => $data['allergies'] ?? [],
-            'special_tags'       => $data['specialTags'] ?? [],
-            'has_discount'       => $hasDiscount,
-            'discount_percent'   => $discountPercent,
-            'discounted_price'   => $discountedPrice,
-            'paid_addons'        => $data['paidAddons'] ?? [],
-            'free_addons'        => $data['freeAddons'] ?? [],
-            'removable_items'    => $data['removableItems'] ?? [],
-            'translations'       => $this->normalizeTranslations($data['translations'] ?? null),
-            'ingredients'        => $data['ingredients'] ?? [],
-            'sort_order'         => $maxSort + 1,
+            'allergies' => $data['allergies'] ?? [],
+            'special_tags' => $data['specialTags'] ?? [],
+            'has_discount' => $hasDiscount,
+            'discount_percent' => $discountPercent,
+            'discounted_price' => $discountedPrice,
+            'paid_addons' => $data['paidAddons'] ?? [],
+            'free_addons' => $data['freeAddons'] ?? [],
+            'removable_items' => $data['removableItems'] ?? [],
+            'translations' => $this->normalizeTranslations($data['translations'] ?? null),
+            'ingredients' => $data['ingredients'] ?? [],
+            'sort_order' => $maxSort + 1,
         ]);
 
         $this->syncModifierGroups($item, $vendor, $data['modifierGroupIds'] ?? []);
 
-        $item->load(['category', 'modifierGroups.options']);
+        $item->load(['category.masterCategory', 'modifierGroups.options']);
 
         return response()->json(['data' => $this->formatItem($item)], 201);
     }
@@ -122,9 +120,9 @@ class MenuItemController extends Controller
     public function show(Request $request, int $itemId): JsonResponse
     {
         $vendor = $request->user();
-        $item   = $vendor->menuItems()
+        $item = $vendor->menuItems()
             ->where('is_active', true)
-            ->with(['category', 'modifierGroups.options'])
+            ->with(['category.masterCategory', 'modifierGroups.options'])
             ->findOrFail($itemId);
 
         return response()->json(['data' => $this->formatItem($item)]);
@@ -136,7 +134,7 @@ class MenuItemController extends Controller
     public function update(Request $request, int $itemId): JsonResponse
     {
         $vendor = $request->user();
-        $item   = $vendor->menuItems()->where('is_active', true)->findOrFail($itemId);
+        $item = $vendor->menuItems()->where('is_active', true)->findOrFail($itemId);
 
         $data = $this->validatePayload($request, false);
 
@@ -148,24 +146,24 @@ class MenuItemController extends Controller
         }
 
         $directFields = [
-            'name'              => 'name',
-            'description'       => 'description',
-            'price'             => 'price',
-            'imageUrl'          => 'image_url',
-            'available'         => 'available',
-            'calories'          => 'calories',
-            'fat'                => 'fat',
-            'carbs'              => 'carbs',
-            'protein'            => 'protein',
+            'name' => 'name',
+            'description' => 'description',
+            'price' => 'price',
+            'imageUrl' => 'image_url',
+            'available' => 'available',
+            'calories' => 'calories',
+            'fat' => 'fat',
+            'carbs' => 'carbs',
+            'protein' => 'protein',
             'dietaryPreference' => 'dietary_preference',
-            'hasDiscount'       => 'has_discount',
-            'discountPercent'   => 'discount_percent',
-            'allergies'         => 'allergies',
-            'specialTags'       => 'special_tags',
-            'paidAddons'        => 'paid_addons',
-            'freeAddons'        => 'free_addons',
-            'removableItems'    => 'removable_items',
-            'ingredients'       => 'ingredients',
+            'hasDiscount' => 'has_discount',
+            'discountPercent' => 'discount_percent',
+            'allergies' => 'allergies',
+            'specialTags' => 'special_tags',
+            'paidAddons' => 'paid_addons',
+            'freeAddons' => 'free_addons',
+            'removableItems' => 'removable_items',
+            'ingredients' => 'ingredients',
         ];
 
         foreach ($directFields as $camel => $snake) {
@@ -186,11 +184,11 @@ class MenuItemController extends Controller
             $category = $item->category ?? $vendor->menuCategories()->find($mapped['menu_category_id'] ?? $item->menu_category_id);
             [$vatRate, $taxSlug] = $this->resolveTax($data, $category, $vendor);
             $mapped['tax_category'] = $taxSlug;
-            $mapped['vat_rate']     = $vatRate;
+            $mapped['vat_rate'] = $vatRate;
         }
 
-        $price           = (float) ($mapped['price'] ?? $item->price);
-        $hasDiscount     = (bool) ($mapped['has_discount'] ?? $item->has_discount);
+        $price = (float) ($mapped['price'] ?? $item->price);
+        $hasDiscount = (bool) ($mapped['has_discount'] ?? $item->has_discount);
         $discountPercent = (float) ($mapped['discount_percent'] ?? $item->discount_percent);
         $mapped['discounted_price'] = ($hasDiscount && $discountPercent > 0)
             ? round($price * (1 - $discountPercent / 100), 2)
@@ -202,7 +200,7 @@ class MenuItemController extends Controller
             $this->syncModifierGroups($item, $vendor, $data['modifierGroupIds'] ?? []);
         }
 
-        $item->load(['category', 'modifierGroups.options']);
+        $item->load(['category.masterCategory', 'modifierGroups.options']);
 
         return response()->json(['data' => $this->formatItem($item)]);
     }
@@ -214,16 +212,18 @@ class MenuItemController extends Controller
     public function destroy(Request $request, int $itemId): JsonResponse
     {
         $vendor = $request->user();
-        $item   = $vendor->menuItems()->findOrFail($itemId);
+        $item = $vendor->menuItems()->findOrFail($itemId);
 
         $hasOrders = OrderItem::where('menu_item_id', $item->id)->exists();
 
         if ($hasOrders) {
             $item->update(['is_active' => false, 'available' => false]);
+
             return response()->json(['message' => 'Menu item hidden (soft deleted — referenced in orders)']);
         }
 
         $item->delete();
+
         return response()->json(['message' => 'Menu item deleted']);
     }
 
@@ -233,10 +233,10 @@ class MenuItemController extends Controller
     public function toggleAvailability(Request $request, int $itemId): JsonResponse
     {
         $vendor = $request->user();
-        $item   = $vendor->menuItems()->where('is_active', true)->findOrFail($itemId);
+        $item = $vendor->menuItems()->where('is_active', true)->findOrFail($itemId);
 
-        $item->update(['available' => !$item->available]);
-        $item->load('category');
+        $item->update(['available' => ! $item->available]);
+        $item->load('category.masterCategory');
 
         return response()->json(['data' => $this->formatItem($item)]);
     }
@@ -266,43 +266,43 @@ class MenuItemController extends Controller
     private function validatePayload(Request $request, bool $isCreate): array
     {
         $rules = [
-            'categoryId'         => [$isCreate ? 'required' : 'sometimes', 'integer', 'exists:menu_categories,id'],
-            'name'               => [$isCreate ? 'required' : 'sometimes', 'string', 'max:255'],
-            'description'        => ['nullable', 'string', 'max:5000'],
-            'price'              => [$isCreate ? 'required' : 'sometimes', 'numeric', 'min:0'],
-            'imageUrl'           => ['nullable', 'string', 'max:2000'],
-            'available'          => ['sometimes', 'boolean'],
-            'calories'           => ['sometimes', 'integer', 'min:0'],
-            'fat'                => ['sometimes', 'numeric', 'min:0'],
-            'carbs'              => ['sometimes', 'numeric', 'min:0'],
-            'protein'            => ['sometimes', 'numeric', 'min:0'],
-            'taxCategory'        => ['sometimes', 'nullable', 'string', 'max:64'],
-            'taxCategoryId'      => ['sometimes', 'nullable', 'integer', 'exists:tax_categories,id'],
-            'dietaryPreference'  => ['nullable', 'string', 'max:64'],
-            'allergies'          => ['sometimes', 'array'],
-            'allergies.*'        => ['string', 'max:64'],
-            'specialTags'        => ['sometimes', 'array'],
-            'specialTags.*'      => ['string', 'max:64'],
-            'hasDiscount'        => ['sometimes', 'boolean'],
-            'discountPercent'    => ['sometimes', 'numeric', 'min:0', 'max:100'],
-            'paidAddons'         => ['sometimes', 'array'],
-            'paidAddons.*.name'  => ['required_with:paidAddons', 'string', 'max:255'],
+            'categoryId' => [$isCreate ? 'required' : 'sometimes', 'integer', 'exists:menu_categories,id'],
+            'name' => [$isCreate ? 'required' : 'sometimes', 'string', 'max:255'],
+            'description' => ['nullable', 'string', 'max:5000'],
+            'price' => [$isCreate ? 'required' : 'sometimes', 'numeric', 'min:0'],
+            'imageUrl' => ['nullable', 'string', 'max:2000'],
+            'available' => ['sometimes', 'boolean'],
+            'calories' => ['sometimes', 'integer', 'min:0'],
+            'fat' => ['sometimes', 'numeric', 'min:0'],
+            'carbs' => ['sometimes', 'numeric', 'min:0'],
+            'protein' => ['sometimes', 'numeric', 'min:0'],
+            'taxCategory' => ['sometimes', 'nullable', 'string', 'max:64'],
+            'taxCategoryId' => ['sometimes', 'nullable', 'integer', 'exists:tax_categories,id'],
+            'dietaryPreference' => ['nullable', 'string', 'max:64'],
+            'allergies' => ['sometimes', 'array'],
+            'allergies.*' => ['string', 'max:64'],
+            'specialTags' => ['sometimes', 'array'],
+            'specialTags.*' => ['string', 'max:64'],
+            'hasDiscount' => ['sometimes', 'boolean'],
+            'discountPercent' => ['sometimes', 'numeric', 'min:0', 'max:100'],
+            'paidAddons' => ['sometimes', 'array'],
+            'paidAddons.*.name' => ['required_with:paidAddons', 'string', 'max:255'],
             'paidAddons.*.price' => ['required_with:paidAddons', 'numeric', 'min:0'],
-            'freeAddons'         => ['sometimes', 'array'],
-            'freeAddons.*'       => ['string', 'max:255'],
-            'removableItems'     => ['sometimes', 'array'],
-            'removableItems.*'   => ['string', 'max:255'],
-            'modifierGroupIds'   => ['sometimes', 'array'],
+            'freeAddons' => ['sometimes', 'array'],
+            'freeAddons.*' => ['string', 'max:255'],
+            'removableItems' => ['sometimes', 'array'],
+            'removableItems.*' => ['string', 'max:255'],
+            'modifierGroupIds' => ['sometimes', 'array'],
             'modifierGroupIds.*' => ['integer'],
             // translations: accept either a nested map { en: {name, description}, ... }
             // or an array of objects [{language, name, description}, ...]
-            'translations'       => ['sometimes'],
-            'ingredients'        => ['sometimes', 'array'],
-            'ingredients.*.ingredientId'   => ['sometimes', 'string'],
+            'translations' => ['sometimes'],
+            'ingredients' => ['sometimes', 'array'],
+            'ingredients.*.ingredientId' => ['sometimes', 'string'],
             'ingredients.*.ingredientName' => ['sometimes', 'string', 'max:255'],
-            'ingredients.*.quantity'       => ['required_with:ingredients', 'numeric', 'min:0'],
-            'ingredients.*.unit'           => ['sometimes', 'string', 'max:32'],
-            'ingredients.*.isCritical'     => ['sometimes', 'boolean'],
+            'ingredients.*.quantity' => ['required_with:ingredients', 'numeric', 'min:0'],
+            'ingredients.*.unit' => ['sometimes', 'string', 'max:32'],
+            'ingredients.*.isCritical' => ['sometimes', 'boolean'],
         ];
 
         return $request->validate($rules);
@@ -314,7 +314,7 @@ class MenuItemController extends Controller
      */
     private function normalizeTranslations(mixed $value): array
     {
-        if (empty($value) || !is_array($value)) {
+        if (empty($value) || ! is_array($value)) {
             return [];
         }
 
@@ -325,24 +325,25 @@ class MenuItemController extends Controller
 
         if ($isArrayOfObjects) {
             foreach ($value as $entry) {
-                if (!is_array($entry) || empty($entry['language'])) {
+                if (! is_array($entry) || empty($entry['language'])) {
                     continue;
                 }
                 $out[$entry['language']] = [
-                    'name'        => $entry['name'] ?? '',
+                    'name' => $entry['name'] ?? '',
                     'description' => $entry['description'] ?? null,
                 ];
             }
+
             return $out;
         }
 
         // Already in nested-map shape
         foreach ($value as $lang => $entry) {
-            if (!is_string($lang) || !is_array($entry)) {
+            if (! is_string($lang) || ! is_array($entry)) {
                 continue;
             }
             $out[$lang] = [
-                'name'        => $entry['name'] ?? '',
+                'name' => $entry['name'] ?? '',
                 'description' => $entry['description'] ?? null,
             ];
         }
@@ -356,7 +357,7 @@ class MenuItemController extends Controller
     private function resolveTax(array $data, $category, $vendor): array
     {
         // 1. explicit slug
-        if (!empty($data['taxCategory'])) {
+        if (! empty($data['taxCategory'])) {
             $country = $this->resolveCountryCode($vendor->country ?? 'AT');
             $tc = TaxCategory::where('country', $country)
                 ->where('slug', $data['taxCategory'])
@@ -367,7 +368,7 @@ class MenuItemController extends Controller
         }
 
         // 2. explicit id
-        if (!empty($data['taxCategoryId'])) {
+        if (! empty($data['taxCategoryId'])) {
             $tc = TaxCategory::find($data['taxCategoryId']);
             if ($tc) {
                 return [(float) $tc->vat_rate, $tc->slug];
@@ -385,19 +386,21 @@ class MenuItemController extends Controller
         // 4. country default
         $country = $this->resolveCountryCode($vendor->country ?? 'AT');
         $tc = TaxCategory::where('country', $country)->where('slug', 'food')->first();
+
         return [(float) ($tc?->vat_rate ?? 10), $tc?->slug ?? 'food'];
     }
 
     private function resolveCountryCode(string $country): string
     {
         $map = [
-            'austria'        => 'AT',
-            'germany'        => 'DE',
+            'austria' => 'AT',
+            'germany' => 'DE',
             'united kingdom' => 'GB',
-            'uk'             => 'GB',
-            'great britain'  => 'GB',
+            'uk' => 'GB',
+            'great britain' => 'GB',
         ];
         $lower = strtolower(trim($country));
+
         return $map[$lower] ?? strtoupper(substr($country, 0, 2));
     }
 
@@ -408,41 +411,41 @@ class MenuItemController extends Controller
         }
 
         return [
-            'id'                => $item->id,
-            'categoryId'        => $item->menu_category_id,
-            'categoryName'      => $item->category?->name ?? '',
-            'name'              => $item->name,
-            'description'       => $item->description,
-            'price'             => (float) $item->price,
-            'imageUrl'          => $this->media->url($item->image_url),
-            'available'         => (bool) $item->available,
-            'isActive'          => (bool) $item->is_active,
-            'calories'          => (int) $item->calories,
-            'fat'               => (float) $item->fat,
-            'carbs'             => (float) $item->carbs,
-            'protein'           => (float) $item->protein,
-            'vatRate'           => (float) $item->vat_rate,
-            'taxCategory'       => $item->tax_category,
+            'id' => $item->id,
+            'categoryId' => $item->menu_category_id,
+            'categoryName' => $item->category?->display_name ?? 'Unknown',
+            'name' => $item->name,
+            'description' => $item->description,
+            'price' => (float) $item->price,
+            'imageUrl' => $this->media->url($item->image_url),
+            'available' => (bool) $item->available,
+            'isActive' => (bool) $item->is_active,
+            'calories' => (int) $item->calories,
+            'fat' => (float) $item->fat,
+            'carbs' => (float) $item->carbs,
+            'protein' => (float) $item->protein,
+            'vatRate' => (float) $item->vat_rate,
+            'taxCategory' => $item->tax_category,
             'dietaryPreference' => $item->dietary_preference,
-            'allergies'         => $item->allergies ?? [],
-            'specialTags'       => $item->special_tags ?? [],
-            'hasDiscount'       => (bool) $item->has_discount,
-            'discountPercent'   => (float) $item->discount_percent,
-            'discountedPrice'   => $item->discounted_price !== null ? (float) $item->discounted_price : null,
-            'paidAddons'        => $item->paid_addons ?? [],
-            'freeAddons'        => $item->free_addons ?? [],
-            'removableItems'    => $item->removable_items ?? [],
-            'modifierGroupIds'  => $item->modifierGroups->pluck('id')->values()->all(),
-            'modifierGroups'    => $item->modifierGroups
+            'allergies' => $item->allergies ?? [],
+            'specialTags' => $item->special_tags ?? [],
+            'hasDiscount' => (bool) $item->has_discount,
+            'discountPercent' => (float) $item->discount_percent,
+            'discountedPrice' => $item->discounted_price !== null ? (float) $item->discounted_price : null,
+            'paidAddons' => $item->paid_addons ?? [],
+            'freeAddons' => $item->free_addons ?? [],
+            'removableItems' => $item->removable_items ?? [],
+            'modifierGroupIds' => $item->modifierGroups->pluck('id')->values()->all(),
+            'modifierGroups' => $item->modifierGroups
                 ->map(fn (ModifierGroup $group) => $this->formatModifierGroup($group))
                 ->values()
                 ->all(),
-            'translations'      => $item->translations ?? new \stdClass(),
-            'ingredients'       => $item->ingredients ?? [],
-            'rating'            => (float) $item->rating,
-            'reviewCount'       => (int) $item->review_count,
-            'orderedCount'      => (int) $item->ordered_count,
-            'sortOrder'         => (int) $item->sort_order,
+            'translations' => $item->translations ?? new \stdClass,
+            'ingredients' => $item->ingredients ?? [],
+            'rating' => (float) $item->rating,
+            'reviewCount' => (int) $item->review_count,
+            'orderedCount' => (int) $item->ordered_count,
+            'sortOrder' => (int) $item->sort_order,
         ];
     }
 
@@ -456,6 +459,7 @@ class MenuItemController extends Controller
 
         if ($ids->isEmpty()) {
             $item->modifierGroups()->sync([]);
+
             return;
         }
 
@@ -482,21 +486,21 @@ class MenuItemController extends Controller
     private function formatModifierGroup(ModifierGroup $group): array
     {
         return [
-            'id'           => $group->id,
-            'name'         => $group->name,
-            'type'         => $group->type,
+            'id' => $group->id,
+            'name' => $group->name,
+            'type' => $group->type,
             'minSelection' => (int) $group->min_selection,
             'maxSelection' => (int) $group->max_selection,
-            'isRequired'   => (bool) $group->is_required,
-            'sortOrder'    => (int) ($group->pivot?->sort_order ?? $group->sort_order),
-            'isActive'     => (bool) $group->is_active,
-            'options'      => $group->options
+            'isRequired' => (bool) $group->is_required,
+            'sortOrder' => (int) ($group->pivot?->sort_order ?? $group->sort_order),
+            'isActive' => (bool) $group->is_active,
+            'options' => $group->options
                 ->map(fn (ModifierOption $option) => [
-                    'id'              => $option->id,
-                    'name'            => $option->name,
+                    'id' => $option->id,
+                    'name' => $option->name,
                     'priceAdjustment' => (float) $option->price_adjustment,
-                    'sortOrder'       => (int) $option->sort_order,
-                    'isActive'        => (bool) $option->is_active,
+                    'sortOrder' => (int) $option->sort_order,
+                    'isActive' => (bool) $option->is_active,
                 ])
                 ->values()
                 ->all(),

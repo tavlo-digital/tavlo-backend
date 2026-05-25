@@ -46,7 +46,7 @@ class MenuCategoryTest extends TestCase
         MasterMenuCategory::create([
             'name' => 'Pizza',
             'slug' => 'pizza',
-            'icon' => '🍕',
+            'icon' => 'cat-icons/pizza.png',
             'sort_order' => 1,
             'is_active' => true,
         ]);
@@ -63,7 +63,7 @@ class MenuCategoryTest extends TestCase
             ->assertOk()
             ->assertJsonCount(1, 'data')
             ->assertJsonPath('data.0.name', 'Pizza')
-            ->assertJsonPath('data.0.icon', '🍕');
+            ->assertJsonPath('data.0.icon', url('media/cat-icons/pizza.png'));
     }
 
     public function test_category_options_requires_authentication(): void
@@ -184,12 +184,19 @@ class MenuCategoryTest extends TestCase
 
     public function test_store_creates_category(): void
     {
-        $response = $this->postJson('/api/vendor/menu/categories', [
+        $master = MasterMenuCategory::create([
             'name' => 'Pasta',
+            'slug' => 'pasta',
+            'is_active' => true,
+        ]);
+
+        $response = $this->postJson('/api/vendor/menu/categories', [
+            'masterCategoryId' => $master->id,
             'taxCategoryId' => $this->taxFood->id,
         ], $this->authHeaders());
 
         $response->assertCreated()
+            ->assertJsonPath('data.masterCategoryId', $master->id)
             ->assertJsonPath('data.name', 'Pasta')
             ->assertJsonPath('data.slug', 'pasta')
             ->assertJsonPath('data.taxCategory.id', $this->taxFood->id)
@@ -199,8 +206,7 @@ class MenuCategoryTest extends TestCase
 
         $this->assertDatabaseHas('menu_categories', [
             'vendor_id' => $this->vendor->id,
-            'name' => 'Pasta',
-            'slug' => 'pasta',
+            'master_menu_category_id' => $master->id,
         ]);
     }
 
@@ -209,7 +215,7 @@ class MenuCategoryTest extends TestCase
         $master = MasterMenuCategory::create([
             'name' => 'Pizza',
             'slug' => 'pizza',
-            'icon' => '🍕',
+            'icon' => 'cat-icons/pizza.png',
             'sort_order' => 0,
             'is_active' => true,
         ]);
@@ -223,13 +229,11 @@ class MenuCategoryTest extends TestCase
             ->assertJsonPath('data.masterCategoryId', $master->id)
             ->assertJsonPath('data.name', 'Pizza')
             ->assertJsonPath('data.slug', 'pizza')
-            ->assertJsonPath('data.icon', '🍕');
+            ->assertJsonPath('data.icon', url('media/cat-icons/pizza.png'));
 
         $this->assertDatabaseHas('menu_categories', [
             'vendor_id' => $this->vendor->id,
             'master_menu_category_id' => $master->id,
-            'name' => 'Pizza',
-            'slug' => 'pizza',
         ]);
     }
 
@@ -250,33 +254,44 @@ class MenuCategoryTest extends TestCase
 
     public function test_store_defaults_to_food_tax_when_no_tax_category(): void
     {
-        $response = $this->postJson('/api/vendor/menu/categories', [
+        $master = MasterMenuCategory::create([
             'name' => 'Desserts',
+            'slug' => 'desserts',
+            'is_active' => true,
+        ]);
+
+        $response = $this->postJson('/api/vendor/menu/categories', [
+            'masterCategoryId' => $master->id,
         ], $this->authHeaders());
 
         $response->assertCreated()
             ->assertJsonPath('data.taxCategory.slug', 'food');
     }
 
-    public function test_store_requires_name(): void
+    public function test_store_requires_master_category(): void
     {
         $this->postJson('/api/vendor/menu/categories', [], $this->authHeaders())
             ->assertUnprocessable()
-            ->assertJsonValidationErrors(['name']);
+            ->assertJsonValidationErrors(['masterCategoryId']);
     }
 
-    public function test_store_rejects_duplicate_name(): void
+    public function test_store_rejects_duplicate_master_category(): void
     {
-        MenuCategory::create([
-            'vendor_id' => $this->vendor->id,
+        $master = MasterMenuCategory::create([
             'name' => 'Salads',
             'slug' => 'salads',
+            'is_active' => true,
+        ]);
+
+        MenuCategory::create([
+            'vendor_id' => $this->vendor->id,
+            'master_menu_category_id' => $master->id,
             'default_tax_category' => 'food',
             'sort_order' => 0,
             'is_active' => true,
         ]);
 
-        $this->postJson('/api/vendor/menu/categories', ['name' => 'Salads'], $this->authHeaders())
+        $this->postJson('/api/vendor/menu/categories', ['masterCategoryId' => $master->id], $this->authHeaders())
             ->assertUnprocessable()
             ->assertJsonFragment(['message' => 'A category with this name already exists.']);
     }
@@ -285,7 +300,7 @@ class MenuCategoryTest extends TestCase
     // PATCH /api/vendor/menu/categories/{id}
     // ----------------------------------------------------------------
 
-    public function test_update_changes_name_and_slug(): void
+    public function test_update_changes_category_to_selected_master(): void
     {
         $category = MenuCategory::create([
             'vendor_id' => $this->vendor->id,
@@ -296,10 +311,17 @@ class MenuCategoryTest extends TestCase
             'is_active' => true,
         ]);
 
-        $this->patchJson("/api/vendor/menu/categories/{$category->id}", [
+        $master = MasterMenuCategory::create([
             'name' => 'New Name',
+            'slug' => 'new-name',
+            'is_active' => true,
+        ]);
+
+        $this->patchJson("/api/vendor/menu/categories/{$category->id}", [
+            'masterCategoryId' => $master->id,
         ], $this->authHeaders())
             ->assertOk()
+            ->assertJsonPath('data.masterCategoryId', $master->id)
             ->assertJsonPath('data.name', 'New Name')
             ->assertJsonPath('data.slug', 'new-name');
     }
@@ -318,7 +340,7 @@ class MenuCategoryTest extends TestCase
         $master = MasterMenuCategory::create([
             'name' => 'Desserts',
             'slug' => 'desserts',
-            'icon' => '🍰',
+            'icon' => 'cat-icons/desserts.png',
             'is_active' => true,
         ]);
 
@@ -329,7 +351,7 @@ class MenuCategoryTest extends TestCase
             ->assertJsonPath('data.masterCategoryId', $master->id)
             ->assertJsonPath('data.name', 'Desserts')
             ->assertJsonPath('data.slug', 'desserts')
-            ->assertJsonPath('data.icon', '🍰');
+            ->assertJsonPath('data.icon', url('media/cat-icons/desserts.png'));
     }
 
     public function test_update_changes_tax_category(): void
@@ -352,12 +374,17 @@ class MenuCategoryTest extends TestCase
             ->assertJsonPath('data.taxCategory.vatRate', 20);
     }
 
-    public function test_update_rejects_duplicate_name_on_different_category(): void
+    public function test_update_rejects_duplicate_master_category_on_different_category(): void
     {
-        MenuCategory::create([
-            'vendor_id' => $this->vendor->id,
+        $master = MasterMenuCategory::create([
             'name' => 'Existing',
             'slug' => 'existing',
+            'is_active' => true,
+        ]);
+
+        MenuCategory::create([
+            'vendor_id' => $this->vendor->id,
+            'master_menu_category_id' => $master->id,
             'default_tax_category' => 'food',
             'sort_order' => 0,
             'is_active' => true,
@@ -373,7 +400,7 @@ class MenuCategoryTest extends TestCase
         ]);
 
         $this->patchJson("/api/vendor/menu/categories/{$category->id}", [
-            'name' => 'Existing',
+            'masterCategoryId' => $master->id,
         ], $this->authHeaders())
             ->assertUnprocessable()
             ->assertJsonFragment(['message' => 'A category with this name already exists.']);
