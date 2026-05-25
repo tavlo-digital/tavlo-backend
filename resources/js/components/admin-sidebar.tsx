@@ -11,6 +11,7 @@ import {
     ScrollText,
     X,
     Shield,
+    Tags,
 } from 'lucide-react';
 import type { Auth } from '@/types';
 
@@ -27,6 +28,7 @@ const navItems: NavItem[] = [
     { title: 'Customers Management', href: '/admin/customers', icon: CircleUser },
     { title: 'Finance & Billing Overview', href: '/admin/finance', icon: FileText, disabled: true },
     { title: 'Subscriptions Management', href: '/admin/subscriptions/plans', icon: CreditCard },
+    { title: 'Menu Categories', href: '/admin/menu-categories', icon: Tags },
     { title: 'Reviews & Complaints', href: '/admin/reviews', icon: MessageSquareWarning, disabled: true },
     { title: 'Insights & Analysis', href: '/admin/insights', icon: Sparkles, disabled: true },
     { title: 'System Settings', href: '/admin/settings', icon: Settings, disabled: true },

@@ -10,6 +10,7 @@ class MenuCategory extends Model
 {
     protected $fillable = [
         'vendor_id',
+        'master_menu_category_id',
         'name',
         'slug',
         'default_tax_category',
@@ -28,6 +29,11 @@ class MenuCategory extends Model
     public function vendor(): BelongsTo
     {
         return $this->belongsTo(Vendor::class);
+    }
+
+    public function masterCategory(): BelongsTo
+    {
+        return $this->belongsTo(MasterMenuCategory::class, 'master_menu_category_id');
     }
 
     public function taxCategory(): BelongsTo

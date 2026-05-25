@@ -41,6 +41,7 @@ Route::middleware(['auth:vendor,team_member', 'vendor.staff.access'])->group(fun
     Route::patch('{vendorId}/menu/items/{itemId}',   [MenuController::class, 'updateItem'])->name('menu.updateItem');
 
     // Menu Categories
+    Route::get('menu/category-options',              [MenuCategoryController::class, 'categoryOptions'])->name('menu.categoryOptions');
     Route::get('menu/categories',                    [MenuCategoryController::class, 'index'])->name('menu.categories.index');
     Route::post('menu/categories',                   [MenuCategoryController::class, 'store'])->name('menu.categories.store');
     Route::patch('menu/categories/{categoryId}',     [MenuCategoryController::class, 'update'])->name('menu.categories.update');

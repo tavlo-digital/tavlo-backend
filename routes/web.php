@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Admin\CustomerController;
+use App\Http\Controllers\Admin\MenuCategoryController;
 use App\Http\Controllers\Admin\RoleController;
 use App\Http\Controllers\Admin\SubscriptionPlanController;
 use App\Http\Controllers\Admin\UserController;
@@ -24,6 +25,10 @@ Route::middleware(['auth', 'verified'])->group(function () {
 Route::middleware(['auth', 'verified', 'admin'])->prefix('admin')->name('admin.')->group(function () {
     Route::get('vendors', [VendorController::class, 'index'])->name('vendors.index');
     Route::get('customers', [CustomerController::class, 'index'])->name('customers.index');
+    Route::get('menu-categories', [MenuCategoryController::class, 'index'])->name('menu-categories.index');
+    Route::post('menu-categories', [MenuCategoryController::class, 'store'])->name('menu-categories.store');
+    Route::put('menu-categories/{category}', [MenuCategoryController::class, 'update'])->name('menu-categories.update');
+    Route::delete('menu-categories/{category}', [MenuCategoryController::class, 'destroy'])->name('menu-categories.destroy');
     Route::get('customer/{customer}/{tab}', [CustomerController::class, 'show'])
         ->name('customer.show')
         ->where('tab', 'overview|orders|refunds|reviews|activity|gdpr');
@@ -59,4 +64,3 @@ Route::middleware(['auth', 'verified', 'admin'])->prefix('admin')->name('admin.'
 });
 
 require __DIR__.'/settings.php';
-
