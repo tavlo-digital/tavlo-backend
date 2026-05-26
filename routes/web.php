@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Admin\CustomerController;
+use App\Http\Controllers\Admin\DiagnosticsController;
 use App\Http\Controllers\Admin\MenuCategoryController;
 use App\Http\Controllers\Admin\RoleController;
 use App\Http\Controllers\Admin\SubscriptionPlanController;
@@ -61,6 +62,12 @@ Route::middleware(['auth', 'verified', 'admin'])->prefix('admin')->name('admin.'
     Route::get('roles/{role}/edit', [RoleController::class, 'edit'])->name('roles.edit');
     Route::patch('roles/{role}', [RoleController::class, 'update'])->name('roles.update');
     Route::delete('roles/{role}', [RoleController::class, 'destroy'])->name('roles.destroy');
+
+    // Diagnostics
+    Route::get('diagnostics', [DiagnosticsController::class, 'index'])->name('diagnostics.index');
+    Route::get('diagnostics/webhook-logs', [DiagnosticsController::class, 'webhookLogs'])->name('diagnostics.webhook-logs');
+    Route::get('diagnostics/application-logs', [DiagnosticsController::class, 'applicationLogs'])->name('diagnostics.application-logs');
+    Route::post('diagnostics/reconcile', [DiagnosticsController::class, 'reconcile'])->name('diagnostics.reconcile');
 });
 
 require __DIR__.'/settings.php';

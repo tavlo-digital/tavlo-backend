@@ -12,6 +12,7 @@ import {
     X,
     Shield,
     Tags,
+    Stethoscope,
 } from 'lucide-react';
 import type { Auth } from '@/types';
 
@@ -31,6 +32,7 @@ const navItems: NavItem[] = [
     { title: 'Menu Categories', href: '/admin/menu-categories', icon: Tags },
     { title: 'Reviews & Complaints', href: '/admin/reviews', icon: MessageSquareWarning, disabled: true },
     { title: 'Insights & Analysis', href: '/admin/insights', icon: Sparkles, disabled: true },
+    { title: 'Diagnostics', href: '/admin/diagnostics', icon: Stethoscope },
     { title: 'System Settings', href: '/admin/settings', icon: Settings, disabled: true },
     { title: 'Audit Log', href: '/admin/audit-log', icon: ScrollText, disabled: true },
 ];

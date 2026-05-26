@@ -461,6 +461,41 @@ class CustomerPaymentsTest extends TestCase
         $this->assertTrue($order->fresh()->payment_received);
     }
 
+    public function test_webhook_returns_200_for_unknown_payment_intent(): void
+    {
+        $this->stripe->events[] = [
+            'type' => 'payment_intent.succeeded',
+            'payment_intent' => [
+                'id' => 'pi_unknown_xyz',
+                'client_secret' => null,
+                'status' => 'succeeded',
+                'metadata' => [],
+                'payment_method' => 'pm_card_visa',
+            ],
+        ];
+
+        $this->postJson('/api/customer/payments/webhook', ['id' => 'evt_unknown'], [
+            'Stripe-Signature' => 'valid',
+        ])
+            ->assertOk()
+            ->assertJsonPath('received', true)
+            ->assertJsonPath('ignored', true);
+    }
+
+    public function test_webhook_logs_every_delivery_attempt(): void
+    {
+        $this->stripe->rejectWebhook = true;
+
+        $this->postJson('/api/customer/payments/webhook', ['id' => 'evt_bad'], [
+            'Stripe-Signature' => 'bad',
+        ])->assertStatus(400);
+
+        $this->assertDatabaseHas('stripe_webhook_logs', [
+            'outcome' => 'signature_invalid',
+            'http_status' => 400,
+        ]);
+    }
+
     public function test_webhook_marks_failed_payment(): void
     {
         $order = $this->order();

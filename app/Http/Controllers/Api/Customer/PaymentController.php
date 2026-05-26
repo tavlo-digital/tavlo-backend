@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\CartItem;
 use App\Models\Order;
 use App\Models\OrderPayment;
+use App\Models\StripeWebhookLog;
 use App\Models\Vendor;
 use App\Services\StripePaymentService;
 use Closure;
@@ -323,30 +324,63 @@ class PaymentController extends Controller
                 $request->getContent(),
                 $request->header('Stripe-Signature')
             );
-        } catch (UnexpectedValueException|SignatureVerificationException) {
+        } catch (UnexpectedValueException|SignatureVerificationException $e) {
+            StripeWebhookLog::create([
+                'event_type' => 'unknown',
+                'http_status' => 400,
+                'outcome' => 'signature_invalid',
+                'error_message' => $e->getMessage(),
+            ]);
+
             return response()->json(['message' => 'Invalid Stripe webhook signature.'], 400);
         }
 
         $type = $event['type'];
+        $intent = $event['payment_intent'];
+
         if (! in_array($type, [
             'payment_intent.succeeded',
             'payment_intent.payment_failed',
             'payment_intent.canceled',
             'payment_intent.processing',
         ], true)) {
+            StripeWebhookLog::create([
+                'event_type' => $type,
+                'stripe_payment_intent_id' => $intent['id'] ?? null,
+                'http_status' => 200,
+                'outcome' => 'ignored_event_type',
+            ]);
+
             return response()->json(['received' => true]);
         }
 
-        $intent = $event['payment_intent'];
         $payment = OrderPayment::with('order')
             ->where('stripe_payment_intent_id', $intent['id'])
             ->first();
 
         if (! $payment) {
+            StripeWebhookLog::create([
+                'event_type' => $type,
+                'stripe_payment_intent_id' => $intent['id'],
+                'http_status' => 200,
+                'outcome' => 'payment_not_found',
+            ]);
+
             return response()->json(['received' => true, 'ignored' => true]);
         }
 
         $this->syncPaymentIntentStatus($payment, $intent, $type);
+
+        StripeWebhookLog::create([
+            'event_type' => $type,
+            'stripe_payment_intent_id' => $intent['id'],
+            'http_status' => 200,
+            'outcome' => 'processed',
+            'metadata' => [
+                'order_id' => $payment->order_id,
+                'status_applied' => $payment->fresh()->status,
+            ],
+        ]);
 
         return response()->json(['received' => true]);
     }

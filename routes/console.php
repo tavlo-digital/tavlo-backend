@@ -9,3 +9,4 @@ Artisan::command('inspire', function () {
 })->purpose('Display an inspiring quote');
 
 Schedule::command('table-sessions:close-stale')->everyMinute();
+Schedule::command('payments:reconcile-stale')->everyMinute();
