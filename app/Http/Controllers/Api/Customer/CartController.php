@@ -7,6 +7,7 @@ use App\Models\CartItem;
 use App\Models\MenuItem;
 use App\Models\Order;
 use App\Models\TableScanSession;
+use App\Services\NotificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -40,6 +41,11 @@ class CartController extends Controller
             ->where('status', 'active')
             ->pluck('id')
             ->all();
+    }
+
+    private function customerName($customer): string
+    {
+        return trim(($customer->first_name ?? '') . ' ' . ($customer->last_name ?? '')) ?: 'A guest';
     }
 
     /**
@@ -203,6 +209,10 @@ class CartController extends Controller
 
         $item->load('menuItem:id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category');
 
+        $customerName = $this->customerName($request->user());
+        $itemName = $item->menuItem?->name ?? 'an item';
+        NotificationService::notifyTableCustomers($mySession->restaurant_table_id, 'cart_updated', "{$customerName} added {$itemName} to the cart.");
+
         return response()->json($this->itemPayload($item), 201);
     }
 
@@ -276,6 +286,10 @@ class CartController extends Controller
         $item->update($updates);
         $item->load('menuItem:id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category');
 
+        $customerName = $this->customerName($request->user());
+        $itemName = $item->menuItem?->name ?? 'an item';
+        NotificationService::notifyTableCustomers($mySession->restaurant_table_id, 'cart_updated', "{$customerName} updated {$itemName} in the cart.");
+
         return response()->json($this->itemPayload($item));
     }
 
@@ -299,7 +313,11 @@ class CartController extends Controller
             return response()->json(['message' => 'Item not found.'], 404);
         }
 
+        $itemName = $item->menuItem?->name ?? 'an item';
         $item->delete();
+
+        $customerName = $this->customerName($request->user());
+        NotificationService::notifyTableCustomers($mySession->restaurant_table_id, 'cart_updated', "{$customerName} removed {$itemName} from the cart.");
 
         return response()->json(null, 204);
     }
@@ -427,8 +445,12 @@ class CartController extends Controller
         }
         $myTotal = round($myTotal, 2);
 
+        $customerName = $this->customerName($request->user());
+
         if ($existingOrder) {
             $existingOrder->update(['amount' => $myTotal]);
+
+            NotificationService::notifyTableCustomers($mySession->restaurant_table_id, 'order_updated', "{$customerName} updated their order draft.");
 
             return response()->json($this->buildTableHistoryResponse($mySession));
         }
@@ -447,6 +469,8 @@ class CartController extends Controller
                 'order_type'            => 'dine-in',
             ]);
         });
+
+        NotificationService::notifyTableCustomers($mySession->restaurant_table_id, 'order_updated', "{$customerName} created an order draft.");
 
         return response()->json($this->buildTableHistoryResponse($mySession), 201);
     }
@@ -520,6 +544,16 @@ class CartController extends Controller
                 ], 422);
             }
 
+            if ($cartItem->order_id) {
+                $ownerOrder = Order::where('id', $cartItem->order_id)->first();
+
+                if ($ownerOrder && $ownerOrder->payment_received) {
+                    return response()->json([
+                        'message' => 'Cannot unshare an item whose owner has already paid.',
+                    ], 422);
+                }
+            }
+
             $existing = is_array($cartItem->shared_order_ids) ? $cartItem->shared_order_ids : [];
             $filtered = array_values(array_filter(
                 array_map('intval', $existing),
@@ -527,6 +561,9 @@ class CartController extends Controller
             ));
             $cartItem->update(['shared_order_ids' => $filtered]);
         }
+
+        $customerName = $this->customerName($request->user());
+        NotificationService::notifyTableCustomers($mySession->restaurant_table_id, 'order_updated', "{$customerName} updated item sharing on the order.");
 
         return response()->json($this->buildTableHistoryResponse($mySession));
     }
@@ -565,6 +602,9 @@ class CartController extends Controller
                 'amount' => $total,
             ]);
         });
+
+        $customerName = $this->customerName($request->user());
+        NotificationService::notifyTableCustomers($mySession->restaurant_table_id, 'order_updated', "{$customerName} confirmed their order.");
 
         return response()->json($this->buildTableHistoryResponse($mySession));
     }

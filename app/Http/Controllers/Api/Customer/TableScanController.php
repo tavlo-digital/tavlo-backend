@@ -4,10 +4,12 @@ namespace App\Http\Controllers\Api\Customer;
 
 use App\Http\Controllers\Controller;
 use App\Models\CartItem;
+use App\Models\CustomerSessionActivity;
 use App\Models\Order;
 use App\Models\RestaurantTable;
 use App\Models\TableScanSession;
 use App\Models\Vendor;
+use App\Services\NotificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -144,6 +146,7 @@ class TableScanController extends Controller
                 'message'     => 'This table already has an active session',
                 'status'      => 'active',
                 'requiresPin' => true,
+                'pin'         => null,
             ]), 409);
         }
 
@@ -241,6 +244,9 @@ class TableScanController extends Controller
         /** @var \App\Models\TableScanSession $session */
         $session = $result['created'];
 
+        $customerName = trim(($customer->first_name ?? '') . ' ' . ($customer->last_name ?? '')) ?: 'A guest';
+        NotificationService::notifyTableCustomers($table->id, 'participant_added', "{$customerName} has joined the table.");
+
         return response()->json($this->sessionResponsePayload($session, $table, $vendor, [
             'message'     => 'Joined table session',
             'status'      => 'active',
@@ -250,8 +256,10 @@ class TableScanController extends Controller
 
     /**
      * POST /api/customer/table/close
-     * Authenticated customer endpoint. Closes the customer's active table scan session for the
-     * given restaurant + table.
+     * Authenticated customer endpoint. Closes the table scan session for all users.
+     *
+     * Session user: closes if no session user has an active order. No activity check.
+     * Non-session user: closes only if no activity for 10 minutes AND no active orders.
      */
     public function close(Request $request): JsonResponse
     {
@@ -262,9 +270,8 @@ class TableScanController extends Controller
 
         $customer = $request->user();
 
-        $session = TableScanSession::query()
+        $allSessions = TableScanSession::query()
             ->with(['restaurantTable.vendor'])
-            ->where('customer_id', $customer->id)
             ->where('restaurant_table_id', $data['table_id'])
             ->where('status', 'active')
             ->when(isset($data['vendor_public_id']), function ($query) use ($data) {
@@ -272,24 +279,40 @@ class TableScanController extends Controller
                     $vendorQuery->where('vendor_public_id', $data['vendor_public_id']);
                 });
             })
-            ->latest('id')
-            ->first();
+            ->get();
 
-        if (! $session) {
+        if ($allSessions->isEmpty()) {
             return response()->json([
                 'message' => 'No active table session found.',
             ], 422);
         }
 
+        $customerSession = $allSessions->firstWhere('customer_id', $customer->id);
+        $isSessionUser = $customerSession !== null;
+
+        if (! $isSessionUser) {
+            $hasRecentActivity = CustomerSessionActivity::query()
+                ->whereIn('table_scan_session_id', $allSessions->pluck('id'))
+                ->where('created_at', '>=', now()->subMinutes(10))
+                ->exists();
+
+            if ($hasRecentActivity) {
+                return response()->json([
+                    'message' => 'Session is still active. Please wait until there is no activity for 10 minutes.',
+                ], 422);
+            }
+        }
+
+        $sessionIds = $allSessions->pluck('id');
+
         $orders = Order::query()
-            ->where('customer_id', $customer->id)
-            ->where('table_scan_session_id', $session->id)
+            ->whereIn('table_scan_session_id', $sessionIds)
             ->whereNotIn('status', ['cancelled', 'draft'])
             ->get();
 
         if ($orders->contains(fn (Order $order) => ! $order->payment_received)) {
             return response()->json([
-                'message' => 'You have an active order for this table',
+                'message' => 'There is an active order on this table.',
             ], 422);
         }
 
@@ -304,22 +327,29 @@ class TableScanController extends Controller
             ], 422);
         }
 
-        $session->update([
-            'status'    => 'closed',
-            'closed_at' => now(),
-        ]);
+        $customerIds = $allSessions->pluck('customer_id')->filter()->unique();
 
-        $table        = $session->restaurantTable;
+        TableScanSession::query()
+            ->whereIn('id', $sessionIds)
+            ->update([
+                'status'    => 'closed',
+                'closed_at' => now(),
+            ]);
+
+        NotificationService::notifyCustomers($customerIds, 'session_expire', 'Your table session has been closed.');
+
+        $referenceSession = $customerSession ?? $allSessions->first();
+        $table = $referenceSession->restaurantTable;
         $vendorLoaded = $table?->vendor;
 
         return response()->json([
             'message' => 'Table session closed',
             'status'  => 'closed',
             'session' => [
-                'id'        => (string) $session->id,
-                'status'    => $session->status,
-                'scannedAt' => $session->scanned_at?->toIso8601String(),
-                'closedAt'  => $session->closed_at?->toIso8601String(),
+                'id'        => (string) $referenceSession->id,
+                'status'    => 'closed',
+                'scannedAt' => $referenceSession->scanned_at?->toIso8601String(),
+                'closedAt'  => now()->toIso8601String(),
             ],
             'table'  => $table        ? $this->tablePayload($table)         : null,
             'vendor' => $vendorLoaded ? $this->vendorPayload($vendorLoaded) : null,

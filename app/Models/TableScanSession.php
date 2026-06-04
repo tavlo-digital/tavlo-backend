@@ -46,6 +46,16 @@ class TableScanSession extends Model
         return $this->hasMany(CartItem::class, 'table_scan_session_id');
     }
 
+    public function orders(): HasMany
+    {
+        return $this->hasMany(Order::class, 'table_scan_session_id');
+    }
+
+    public function sessionActivities(): HasMany
+    {
+        return $this->hasMany(CustomerSessionActivity::class);
+    }
+
     /**
      * Generate a 4-digit PIN that is unique across all currently-active sessions.
      */

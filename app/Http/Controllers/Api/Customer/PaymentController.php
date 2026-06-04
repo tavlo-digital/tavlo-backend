@@ -8,6 +8,7 @@ use App\Models\Order;
 use App\Models\OrderPayment;
 use App\Models\StripeWebhookLog;
 use App\Models\Vendor;
+use App\Services\NotificationService;
 use App\Services\StripePaymentService;
 use Closure;
 use Illuminate\Database\Eloquent\Builder;
@@ -173,6 +174,14 @@ class PaymentController extends Controller
             ]);
         });
 
+        if ($order->table_scan_session_id) {
+            $tableId = $order->tableScanSession?->restaurant_table_id;
+            if ($tableId) {
+                $customerName = trim(($customer->first_name ?? '') . ' ' . ($customer->last_name ?? '')) ?: 'A guest';
+                NotificationService::notifyTableCustomers($tableId, 'payment_updated', "{$customerName} initiated a payment.");
+            }
+        }
+
         return response()->json([
             'clientSecret' => $intent['client_secret'],
             'paymentIntentId' => $intent['id'],
@@ -284,6 +293,14 @@ class PaymentController extends Controller
             ]);
         });
 
+        if ($order->table_scan_session_id) {
+            $tableId = $order->tableScanSession?->restaurant_table_id;
+            if ($tableId) {
+                $customerName = trim(($customer->first_name ?? '') . ' ' . ($customer->last_name ?? '')) ?: 'A guest';
+                NotificationService::notifyTableCustomers($tableId, 'payment_updated', "{$customerName} updated the payment.");
+            }
+        }
+
         return response()->json([
             'clientSecret' => $updatedIntent['client_secret'],
             'paymentIntentId' => $updatedIntent['id'],
@@ -370,6 +387,13 @@ class PaymentController extends Controller
         }
 
         $this->syncPaymentIntentStatus($payment, $intent, $type);
+
+        if ($type === 'payment_intent.succeeded' && $payment->table_scan_session_id) {
+            $session = $payment->order?->tableScanSession;
+            if ($session) {
+                NotificationService::notifyTableCustomers($session->restaurant_table_id, 'payment_updated', 'A payment has been completed on this table.');
+            }
+        }
 
         StripeWebhookLog::create([
             'event_type' => $type,

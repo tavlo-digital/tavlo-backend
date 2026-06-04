@@ -65,7 +65,7 @@ Route::prefix('restaurants')->name('restaurants.')->group(function () {
 Route::get('table/status', [TableScanController::class, 'status'])->name('table.status');
 
 // Authenticated customer routes
-Route::middleware('auth:customer')->group(function () {
+Route::middleware(['auth:customer', 'track.session.activity'])->group(function () {
     Route::get('me',           [AuthController::class, 'me'])->name('me');
     Route::post('logout',      [AuthController::class, 'logout'])->name('logout');
     Route::post('logout-all',  [AuthController::class, 'logoutAll'])->name('logout.all');

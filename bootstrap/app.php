@@ -36,6 +36,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'admin' => \App\Http\Middleware\EnsureUserIsAdmin::class,
             'vendor.staff.access' => \App\Http\Middleware\EnsureStaffCanAccessVendorRoute::class,
+            'track.session.activity' => \App\Http\Middleware\TrackSessionActivity::class,
         ]);
 
         $middleware->web(append: [

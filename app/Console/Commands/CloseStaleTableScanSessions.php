@@ -3,10 +3,11 @@
 namespace App\Console\Commands;
 
 use App\Models\CartItem;
+use App\Models\CustomerSessionActivity;
 use App\Models\Order;
 use App\Models\TableScanSession;
+use App\Services\NotificationService;
 use Illuminate\Console\Command;
-use Illuminate\Support\Collection;
 
 class CloseStaleTableScanSessions extends Command
 {
@@ -16,70 +17,85 @@ class CloseStaleTableScanSessions extends Command
 
     public function handle(): int
     {
-        $cutoff = now()->subMinutes(10);
         $closed = 0;
 
-        TableScanSession::query()
+        $tableIds = TableScanSession::query()
             ->where('status', 'active')
-            ->orderBy('id')
-            ->chunkById(100, function (Collection $sessions) use ($cutoff, &$closed) {
-                foreach ($sessions as $session) {
-                    if (! $this->shouldClose($session, $cutoff)) {
-                        continue;
-                    }
+            ->distinct()
+            ->pluck('restaurant_table_id');
 
-                    $session->update([
-                        'status' => 'closed',
-                        'closed_at' => now(),
-                    ]);
+        foreach ($tableIds as $tableId) {
+            $sessions = TableScanSession::query()
+                ->where('restaurant_table_id', $tableId)
+                ->where('status', 'active')
+                ->get();
 
-                    $closed++;
-                }
-            });
+            if ($sessions->isEmpty() || ! $this->shouldClose($sessions)) {
+                continue;
+            }
+
+            $customerIds = $sessions->pluck('customer_id')->filter()->unique();
+
+            TableScanSession::query()
+                ->whereIn('id', $sessions->pluck('id'))
+                ->update([
+                    'status' => 'closed',
+                    'closed_at' => now(),
+                ]);
+
+            NotificationService::notifyCustomers($customerIds, 'session_expire', 'Your table session has expired due to inactivity.');
+
+            $closed += $sessions->count();
+        }
 
         $this->info("Closed {$closed} stale table scan session(s).");
 
         return self::SUCCESS;
     }
 
-    private function shouldClose(TableScanSession $session, mixed $cutoff): bool
+    private function shouldClose($sessions): bool
     {
-        $orders = Order::query()
-            ->where('table_scan_session_id', $session->id)
-            ->where('status', '!=', 'cancelled')
-            ->get();
+        $sessionIds = $sessions->pluck('id');
 
-        if ($orders->isEmpty()) {
-            return ($session->scanned_at ?? $session->created_at)?->lte($cutoff) ?? false;
-        }
+        $hasRecentActivity = CustomerSessionActivity::query()
+            ->whereIn('table_scan_session_id', $sessionIds)
+            ->where('created_at', '>=', now()->subMinutes(10))
+            ->exists();
 
-        $draftOrders = $orders->where('status', 'draft');
-        $nonDraftOrders = $orders->where('status', '!=', 'draft');
-
-        if ($nonDraftOrders->isEmpty()) {
-            return $draftOrders->every(fn (Order $order) => ($order->updated_at ?? $order->created_at)?->lte($cutoff) ?? false);
-        }
-
-        if ($nonDraftOrders->contains(fn (Order $order) => ! $order->payment_received)) {
+        if ($hasRecentActivity) {
             return false;
         }
 
-        foreach ($nonDraftOrders as $order) {
-            if ($this->hasUnservedCartItemsForOrder($order)) {
-                return false;
-            }
+        $orders = Order::query()
+            ->whereIn('table_scan_session_id', $sessionIds)
+            ->whereNotIn('status', ['cancelled', 'draft'])
+            ->get();
+
+        if ($orders->contains(fn (Order $order) => ! $order->payment_received)) {
+            return false;
         }
 
-        return $draftOrders->isEmpty()
-            || $draftOrders->every(fn (Order $order) => ($order->updated_at ?? $order->created_at)?->lte($cutoff) ?? false);
+        $paidOrderIds = $orders
+            ->where('payment_received', true)
+            ->pluck('id')
+            ->values();
+
+        if ($paidOrderIds->isNotEmpty() && $this->hasUnservedCartItemsForOrders($paidOrderIds->all())) {
+            return false;
+        }
+
+        return true;
     }
 
-    private function hasUnservedCartItemsForOrder(Order $order): bool
+    private function hasUnservedCartItemsForOrders(array $orderIds): bool
     {
         return CartItem::query()
-            ->where(function ($query) use ($order) {
-                $query->where('order_id', $order->id)
-                    ->orWhereJsonContains('shared_order_ids', $order->id);
+            ->where(function ($query) use ($orderIds) {
+                $query->whereIn('order_id', $orderIds);
+
+                foreach ($orderIds as $orderId) {
+                    $query->orWhereJsonContains('shared_order_ids', $orderId);
+                }
             })
             ->whereNull('served_at')
             ->exists();

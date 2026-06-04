@@ -4,6 +4,7 @@ namespace Tests\Feature\Customer;
 
 use App\Models\Customer;
 use App\Models\CartItem;
+use App\Models\CustomerSessionActivity;
 use App\Models\MenuCategory;
 use App\Models\MenuItem;
 use App\Models\Order;
@@ -419,10 +420,25 @@ class TableScanTest extends TestCase
                 'message'     => 'This table already has an active session',
                 'status'      => 'active',
                 'requiresPin' => true,
+                'pin'         => null,
             ]);
 
         $this->assertSame(1, TableScanSession::where('restaurant_table_id', $table->id)->where('status', 'active')->count());
         $this->assertSame('active', $first['session']['status']);
+    }
+
+    public function test_409_response_does_not_expose_pin(): void
+    {
+        $table = $this->makeTable();
+
+        $this->postScan($table->qr_token, $this->headers)->assertCreated();
+
+        $otherCustomer = Customer::factory()->create();
+        $response = $this->postScan($table->qr_token, $this->headersFor($otherCustomer));
+
+        $response->assertStatus(409)
+            ->assertJsonPath('requiresPin', true)
+            ->assertJsonPath('pin', null);
     }
 
     // ----------------------------------------------------------------
@@ -583,7 +599,7 @@ class TableScanTest extends TestCase
             ->assertJsonValidationErrors(['table_id']);
     }
 
-    public function test_close_route_closes_only_requesting_customers_active_session(): void
+    public function test_session_user_close_closes_all_sessions_for_table(): void
     {
         $table = $this->makeTable();
         $mySession = $this->activeSession($table);
@@ -602,7 +618,7 @@ class TableScanTest extends TestCase
         ]);
         $this->assertDatabaseHas('table_scan_sessions', [
             'id'     => $otherSession->id,
-            'status' => 'active',
+            'status' => 'closed',
         ]);
     }
 
@@ -619,7 +635,7 @@ class TableScanTest extends TestCase
             ->assertJsonPath('session.id', (string) $session->id);
     }
 
-    public function test_close_route_blocks_when_customer_has_unpaid_order_for_session(): void
+    public function test_close_route_blocks_when_any_session_user_has_unpaid_order(): void
     {
         $table = $this->makeTable();
         $session = $this->activeSession($table);
@@ -627,10 +643,32 @@ class TableScanTest extends TestCase
 
         $this->postClose(['table_id' => $table->id])
             ->assertStatus(422)
-            ->assertJsonPath('message', 'You have an active order for this table');
+            ->assertJsonPath('message', 'There is an active order on this table.');
 
         $this->assertDatabaseHas('table_scan_sessions', [
             'id'     => $session->id,
+            'status' => 'active',
+        ]);
+    }
+
+    public function test_session_user_close_blocked_when_other_session_user_has_unpaid_order(): void
+    {
+        $table = $this->makeTable();
+        $mySession = $this->activeSession($table);
+        $otherCustomer = Customer::factory()->create();
+        $otherSession = $this->activeSession($table, $otherCustomer);
+        $this->order($otherSession, ['payment_received' => false]);
+
+        $this->postClose(['table_id' => $table->id])
+            ->assertStatus(422)
+            ->assertJsonPath('message', 'There is an active order on this table.');
+
+        $this->assertDatabaseHas('table_scan_sessions', [
+            'id'     => $mySession->id,
+            'status' => 'active',
+        ]);
+        $this->assertDatabaseHas('table_scan_sessions', [
+            'id'     => $otherSession->id,
             'status' => 'active',
         ]);
     }
@@ -699,5 +737,138 @@ class TableScanTest extends TestCase
             'id'     => $session->id,
             'status' => 'closed',
         ]);
+    }
+
+    public function test_session_user_close_does_not_check_activity(): void
+    {
+        $table = $this->makeTable();
+        $session = $this->activeSession($table);
+
+        CustomerSessionActivity::create([
+            'table_scan_session_id' => $session->id,
+            'customer_id'           => $this->customer->id,
+            'endpoint'              => 'api/customer/cart',
+            'method'                => 'GET',
+        ]);
+
+        $this->postClose(['table_id' => $table->id])
+            ->assertOk()
+            ->assertJsonPath('message', 'Table session closed');
+    }
+
+    // ----------------------------------------------------------------
+    // POST /api/customer/table/close — Non-session user
+    // ----------------------------------------------------------------
+
+    public function test_non_session_user_blocked_when_recent_activity_exists(): void
+    {
+        $table = $this->makeTable();
+        $sessionOwner = Customer::factory()->create();
+        $session = $this->activeSession($table, $sessionOwner);
+
+        CustomerSessionActivity::create([
+            'table_scan_session_id' => $session->id,
+            'customer_id'           => $sessionOwner->id,
+            'endpoint'              => 'api/customer/cart',
+            'method'                => 'GET',
+            'created_at'            => now()->subMinutes(5),
+        ]);
+
+        $this->postClose(['table_id' => $table->id])
+            ->assertStatus(422)
+            ->assertJsonPath('message', 'Session is still active. Please wait until there is no activity for 10 minutes.');
+    }
+
+    public function test_non_session_user_can_close_after_10_minutes_inactivity(): void
+    {
+        $table = $this->makeTable();
+        $sessionOwner = Customer::factory()->create();
+        $session = $this->activeSession($table, $sessionOwner);
+
+        $this->travel(-15)->minutes();
+        CustomerSessionActivity::create([
+            'table_scan_session_id' => $session->id,
+            'customer_id'           => $sessionOwner->id,
+            'endpoint'              => 'api/customer/cart',
+            'method'                => 'GET',
+        ]);
+        $this->travelBack();
+
+        $this->postClose(['table_id' => $table->id])
+            ->assertOk()
+            ->assertJsonPath('message', 'Table session closed');
+
+        $this->assertDatabaseHas('table_scan_sessions', [
+            'id'     => $session->id,
+            'status' => 'closed',
+        ]);
+    }
+
+    public function test_non_session_user_blocked_when_order_exists_even_after_inactivity(): void
+    {
+        $table = $this->makeTable();
+        $sessionOwner = Customer::factory()->create();
+        $session = $this->activeSession($table, $sessionOwner);
+
+        $this->travel(-15)->minutes();
+        CustomerSessionActivity::create([
+            'table_scan_session_id' => $session->id,
+            'customer_id'           => $sessionOwner->id,
+            'endpoint'              => 'api/customer/cart',
+            'method'                => 'GET',
+        ]);
+        $this->travelBack();
+
+        $this->order($session, ['payment_received' => false]);
+
+        $this->postClose(['table_id' => $table->id])
+            ->assertStatus(422)
+            ->assertJsonPath('message', 'There is an active order on this table.');
+    }
+
+    public function test_non_session_user_can_close_when_no_activity_at_all(): void
+    {
+        $table = $this->makeTable();
+        $sessionOwner = Customer::factory()->create();
+        $session = $this->activeSession($table, $sessionOwner);
+
+        $this->postClose(['table_id' => $table->id])
+            ->assertOk()
+            ->assertJsonPath('message', 'Table session closed');
+
+        $this->assertDatabaseHas('table_scan_sessions', [
+            'id'     => $session->id,
+            'status' => 'closed',
+        ]);
+    }
+
+    public function test_non_session_user_close_closes_all_sessions(): void
+    {
+        $table = $this->makeTable();
+        $owner1 = Customer::factory()->create();
+        $owner2 = Customer::factory()->create();
+        $session1 = $this->activeSession($table, $owner1);
+        $session2 = $this->activeSession($table, $owner2);
+
+        $this->postClose(['table_id' => $table->id])
+            ->assertOk();
+
+        $this->assertDatabaseHas('table_scan_sessions', [
+            'id'     => $session1->id,
+            'status' => 'closed',
+        ]);
+        $this->assertDatabaseHas('table_scan_sessions', [
+            'id'     => $session2->id,
+            'status' => 'closed',
+        ]);
+    }
+
+    public function test_close_returns_422_when_no_active_session_for_table(): void
+    {
+        $table = $this->makeTable();
+
+        $this->postClose(['table_id' => $table->id])
+            ->assertStatus(422)
+            ->assertJsonPath('message', 'No active table session found.');
     }
 }
