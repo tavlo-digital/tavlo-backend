@@ -4,7 +4,6 @@ namespace Tests\Feature\Customer;
 
 use App\Models\Customer;
 use App\Models\CartItem;
-use App\Models\CustomerSessionActivity;
 use App\Models\MenuCategory;
 use App\Models\MenuItem;
 use App\Models\Order;
@@ -739,85 +738,15 @@ class TableScanTest extends TestCase
         ]);
     }
 
-    public function test_session_user_close_does_not_check_activity(): void
-    {
-        $table = $this->makeTable();
-        $session = $this->activeSession($table);
-
-        CustomerSessionActivity::create([
-            'table_scan_session_id' => $session->id,
-            'customer_id'           => $this->customer->id,
-            'endpoint'              => 'api/customer/cart',
-            'method'                => 'GET',
-        ]);
-
-        $this->postClose(['table_id' => $table->id])
-            ->assertOk()
-            ->assertJsonPath('message', 'Table session closed');
-    }
-
     // ----------------------------------------------------------------
     // POST /api/customer/table/close — Non-session user
     // ----------------------------------------------------------------
 
-    public function test_non_session_user_blocked_when_recent_activity_exists(): void
+    public function test_non_session_user_blocked_when_order_exists(): void
     {
         $table = $this->makeTable();
         $sessionOwner = Customer::factory()->create();
         $session = $this->activeSession($table, $sessionOwner);
-
-        CustomerSessionActivity::create([
-            'table_scan_session_id' => $session->id,
-            'customer_id'           => $sessionOwner->id,
-            'endpoint'              => 'api/customer/cart',
-            'method'                => 'GET',
-            'created_at'            => now()->subMinutes(5),
-        ]);
-
-        $this->postClose(['table_id' => $table->id])
-            ->assertStatus(422)
-            ->assertJsonPath('message', 'Session is still active. Please wait until there is no activity for 10 minutes.');
-    }
-
-    public function test_non_session_user_can_close_after_10_minutes_inactivity(): void
-    {
-        $table = $this->makeTable();
-        $sessionOwner = Customer::factory()->create();
-        $session = $this->activeSession($table, $sessionOwner);
-
-        $this->travel(-15)->minutes();
-        CustomerSessionActivity::create([
-            'table_scan_session_id' => $session->id,
-            'customer_id'           => $sessionOwner->id,
-            'endpoint'              => 'api/customer/cart',
-            'method'                => 'GET',
-        ]);
-        $this->travelBack();
-
-        $this->postClose(['table_id' => $table->id])
-            ->assertOk()
-            ->assertJsonPath('message', 'Table session closed');
-
-        $this->assertDatabaseHas('table_scan_sessions', [
-            'id'     => $session->id,
-            'status' => 'closed',
-        ]);
-    }
-
-    public function test_non_session_user_blocked_when_order_exists_even_after_inactivity(): void
-    {
-        $table = $this->makeTable();
-        $sessionOwner = Customer::factory()->create();
-        $session = $this->activeSession($table, $sessionOwner);
-
-        $this->travel(-15)->minutes();
-        CustomerSessionActivity::create([
-            'table_scan_session_id' => $session->id,
-            'customer_id'           => $sessionOwner->id,
-            'endpoint'              => 'api/customer/cart',
-            'method'                => 'GET',
-        ]);
-        $this->travelBack();
 
         $this->order($session, ['payment_received' => false]);
 
@@ -826,7 +755,7 @@ class TableScanTest extends TestCase
             ->assertJsonPath('message', 'There is an active order on this table.');
     }
 
-    public function test_non_session_user_can_close_when_no_activity_at_all(): void
+    public function test_non_session_user_can_close_when_no_orders(): void
     {
         $table = $this->makeTable();
         $sessionOwner = Customer::factory()->create();

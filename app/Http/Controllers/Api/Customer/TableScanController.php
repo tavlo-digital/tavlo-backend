@@ -4,7 +4,6 @@ namespace App\Http\Controllers\Api\Customer;
 
 use App\Http\Controllers\Controller;
 use App\Models\CartItem;
-use App\Models\CustomerSessionActivity;
 use App\Models\Order;
 use App\Models\RestaurantTable;
 use App\Models\TableScanSession;
@@ -258,8 +257,7 @@ class TableScanController extends Controller
      * POST /api/customer/table/close
      * Authenticated customer endpoint. Closes the table scan session for all users.
      *
-     * Session user: closes if no session user has an active order. No activity check.
-     * Non-session user: closes only if no activity for 10 minutes AND no active orders.
+     * Blocks if any order is unpaid, or if paid orders have unserved items.
      */
     public function close(Request $request): JsonResponse
     {
@@ -288,20 +286,6 @@ class TableScanController extends Controller
         }
 
         $customerSession = $allSessions->firstWhere('customer_id', $customer->id);
-        $isSessionUser = $customerSession !== null;
-
-        if (! $isSessionUser) {
-            $hasRecentActivity = CustomerSessionActivity::query()
-                ->whereIn('table_scan_session_id', $allSessions->pluck('id'))
-                ->where('created_at', '>=', now()->subMinutes(10))
-                ->exists();
-
-            if ($hasRecentActivity) {
-                return response()->json([
-                    'message' => 'Session is still active. Please wait until there is no activity for 10 minutes.',
-                ], 422);
-            }
-        }
 
         $sessionIds = $allSessions->pluck('id');
 
