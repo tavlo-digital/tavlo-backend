@@ -853,12 +853,12 @@ class TableScanTest extends TestCase
         $this->assertDatabaseHas('notifications', [
             'user_id'   => $waiter1->id,
             'event'     => 'table_call',
-            'user_role' => 'team_member',
+            'user_role' => 'waiter',
         ]);
         $this->assertDatabaseHas('notifications', [
             'user_id'   => $waiter2->id,
             'event'     => 'table_call',
-            'user_role' => 'team_member',
+            'user_role' => 'waiter',
         ]);
     }
 

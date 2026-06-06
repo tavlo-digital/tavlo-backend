@@ -382,7 +382,7 @@ class TableScanController extends Controller
             'event'      => 'table_call',
             'message'    => "Table {$tableLabel} is calling.",
             'read'       => false,
-            'user_role'  => 'team_member',
+            'user_role'  => 'waiter',
             'created_at' => now(),
             'updated_at' => now(),
         ])->all();
