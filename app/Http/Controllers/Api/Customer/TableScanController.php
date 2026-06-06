@@ -4,9 +4,11 @@ namespace App\Http\Controllers\Api\Customer;
 
 use App\Http\Controllers\Controller;
 use App\Models\CartItem;
+use App\Models\Notification;
 use App\Models\Order;
 use App\Models\RestaurantTable;
 use App\Models\TableScanSession;
+use App\Models\TeamMember;
 use App\Models\Vendor;
 use App\Services\NotificationService;
 use Illuminate\Http\JsonResponse;
@@ -338,6 +340,58 @@ class TableScanController extends Controller
             'table'  => $table        ? $this->tablePayload($table)         : null,
             'vendor' => $vendorLoaded ? $this->vendorPayload($vendorLoaded) : null,
         ], 200);
+    }
+
+    /**
+     * POST /api/customer/table/call
+     * Authenticated customer endpoint. Sends a notification to all waiters at the restaurant.
+     */
+    public function call(Request $request): JsonResponse
+    {
+        $customer = $request->user();
+
+        $session = TableScanSession::with('restaurantTable')
+            ->where('customer_id', $customer->id)
+            ->where('status', 'active')
+            ->latest('scanned_at')
+            ->first();
+
+        if (! $session) {
+            return response()->json([
+                'message' => 'You do not have an active table session.',
+            ], 422);
+        }
+
+        $table = $session->restaurantTable;
+        $tableLabel = $table->name ?? "#{$table->number}";
+
+        $waiterIds = TeamMember::query()
+            ->where('vendor_id', $session->vendor_id)
+            ->where('role', 'waiter')
+            ->where('status', 'active')
+            ->pluck('id');
+
+        if ($waiterIds->isEmpty()) {
+            return response()->json([
+                'message' => 'No waiters available at this restaurant.',
+            ], 422);
+        }
+
+        $rows = $waiterIds->map(fn (int $id) => [
+            'user_id'    => $id,
+            'event'      => 'table_call',
+            'message'    => "Table {$tableLabel} is calling.",
+            'read'       => false,
+            'user_role'  => 'team_member',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ])->all();
+
+        Notification::insert($rows);
+
+        return response()->json([
+            'message' => 'Waiters have been notified.',
+        ]);
     }
 
     private function hasUnservedCartItemsForOrders(array $orderIds): bool

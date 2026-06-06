@@ -6,9 +6,11 @@ use App\Models\Customer;
 use App\Models\CartItem;
 use App\Models\MenuCategory;
 use App\Models\MenuItem;
+use App\Models\Notification;
 use App\Models\Order;
 use App\Models\RestaurantTable;
 use App\Models\TableScanSession;
+use App\Models\TeamMember;
 use App\Models\Vendor;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -799,5 +801,121 @@ class TableScanTest extends TestCase
         $this->postClose(['table_id' => $table->id])
             ->assertStatus(422)
             ->assertJsonPath('message', 'No active table session found.');
+    }
+
+    // ----------------------------------------------------------------
+    // POST /api/customer/table/call
+    // ----------------------------------------------------------------
+
+    private function postCall(?array $headers = null)
+    {
+        return $this->withHeaders($headers ?? $this->headers)
+            ->postJson('/api/customer/table/call');
+    }
+
+    public function test_call_requires_authentication(): void
+    {
+        $this->postJson('/api/customer/table/call')
+            ->assertUnauthorized();
+    }
+
+    public function test_call_requires_active_session(): void
+    {
+        $this->postCall()
+            ->assertStatus(422)
+            ->assertJsonPath('message', 'You do not have an active table session.');
+    }
+
+    public function test_call_notifies_all_waiters(): void
+    {
+        $table = $this->makeTable();
+        $this->activeSession($table);
+
+        $waiter1 = TeamMember::create([
+            'vendor_id' => $this->vendor->id,
+            'name'      => 'Waiter One',
+            'email'     => 'w1@test.com',
+            'role'      => 'waiter',
+            'status'    => 'active',
+        ]);
+        $waiter2 = TeamMember::create([
+            'vendor_id' => $this->vendor->id,
+            'name'      => 'Waiter Two',
+            'email'     => 'w2@test.com',
+            'role'      => 'waiter',
+            'status'    => 'active',
+        ]);
+
+        $this->postCall()
+            ->assertOk()
+            ->assertJsonPath('message', 'Waiters have been notified.');
+
+        $this->assertDatabaseHas('notifications', [
+            'user_id'   => $waiter1->id,
+            'event'     => 'table_call',
+            'user_role' => 'team_member',
+        ]);
+        $this->assertDatabaseHas('notifications', [
+            'user_id'   => $waiter2->id,
+            'event'     => 'table_call',
+            'user_role' => 'team_member',
+        ]);
+    }
+
+    public function test_call_does_not_notify_kitchen_staff(): void
+    {
+        $table = $this->makeTable();
+        $this->activeSession($table);
+
+        TeamMember::create([
+            'vendor_id' => $this->vendor->id,
+            'name'      => 'Waiter',
+            'email'     => 'waiter@test.com',
+            'role'      => 'waiter',
+            'status'    => 'active',
+        ]);
+        $kitchen = TeamMember::create([
+            'vendor_id' => $this->vendor->id,
+            'name'      => 'Chef',
+            'email'     => 'chef@test.com',
+            'role'      => 'kitchen',
+            'status'    => 'active',
+        ]);
+
+        $this->postCall()->assertOk();
+
+        $this->assertDatabaseMissing('notifications', [
+            'user_id'   => $kitchen->id,
+            'event'     => 'table_call',
+        ]);
+        $this->assertCount(1, Notification::where('event', 'table_call')->get());
+    }
+
+    public function test_call_returns_422_when_no_waiters_available(): void
+    {
+        $table = $this->makeTable();
+        $this->activeSession($table);
+
+        $this->postCall()
+            ->assertStatus(422)
+            ->assertJsonPath('message', 'No waiters available at this restaurant.');
+    }
+
+    public function test_call_does_not_notify_suspended_waiters(): void
+    {
+        $table = $this->makeTable();
+        $this->activeSession($table);
+
+        TeamMember::create([
+            'vendor_id' => $this->vendor->id,
+            'name'      => 'Suspended Waiter',
+            'email'     => 'suspended@test.com',
+            'role'      => 'waiter',
+            'status'    => 'suspended',
+        ]);
+
+        $this->postCall()
+            ->assertStatus(422)
+            ->assertJsonPath('message', 'No waiters available at this restaurant.');
     }
 }
