@@ -16,7 +16,7 @@ return new class extends Migration
             $table->string('method', 10);
             $table->timestamps();
 
-            $table->index(['table_scan_session_id', 'created_at']);
+            $table->index(['table_scan_session_id', 'created_at'], 'csa_session_created_index');
         });
     }
 

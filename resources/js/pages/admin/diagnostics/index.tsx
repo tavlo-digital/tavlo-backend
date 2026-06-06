@@ -1,4 +1,4 @@
-import { Head, Link, router } from '@inertiajs/react';
+import { Head, Link, router, usePage } from '@inertiajs/react';
 import {
     CircleCheckBig,
     CircleX,
@@ -12,9 +12,12 @@ import {
     CreditCard,
     ScrollText,
     ChevronDown,
+    Bell,
+    Send,
 } from 'lucide-react';
-import { useState } from 'react';
+import { FormEvent, useState } from 'react';
 import AdminLayout from '@/layouts/admin-layout';
+import { useNotifications } from '@/hooks/use-notifications';
 
 type Check = {
     name: string;
@@ -78,6 +81,7 @@ type Props = {
 const tabs = [
     { key: 'stripe', label: 'Stripe', icon: CreditCard },
     { key: 'logs', label: 'Application Logs', icon: ScrollText },
+    { key: 'test-notification', label: 'Test Notification', icon: Bell },
 ];
 
 const statusIcon = (status: string) => {
@@ -431,6 +435,167 @@ function AppLogsTab({ appLogs }: { appLogs: AppLogsData }) {
     );
 }
 
+function TestNotificationTab({ flash }: { flash?: Flash }) {
+    const { auth } = usePage().props;
+    const { notifications, clearNotifications } = useNotifications('admin', auth.user.id);
+
+    const [message, setMessage] = useState('This is a test notification from the admin diagnostics panel.');
+    const [sending, setSending] = useState(false);
+
+    const handleSend = (e: FormEvent) => {
+        e.preventDefault();
+        setSending(true);
+        router.post(
+            '/admin/diagnostics/test-notification',
+            { message },
+            {
+                preserveScroll: true,
+                onFinish: () => setSending(false),
+            },
+        );
+    };
+
+    return (
+        <>
+            {flash && (
+                <div
+                    className={`mb-6 rounded-lg border px-4 py-3 text-sm ${
+                        flash.type === 'success'
+                            ? 'border-green-200 bg-green-50 text-green-800'
+                            : 'border-red-200 bg-red-50 text-red-800'
+                    }`}
+                >
+                    {flash.message}
+                </div>
+            )}
+
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+                {/* Send form */}
+                <div className="rounded-lg border border-gray-200 bg-white p-6">
+                    <div className="mb-4 flex items-center gap-2">
+                        <Send className="h-5 w-5 text-gray-600" />
+                        <h2 className="text-lg font-semibold text-gray-900">Send Test Notification</h2>
+                    </div>
+                    <p className="mb-6 text-sm text-gray-500">
+                        Sends a notification with event <code className="rounded bg-gray-100 px-1.5 py-0.5 text-xs font-mono">test_notification</code> to the current admin user.
+                    </p>
+
+                    <form onSubmit={handleSend}>
+                        <div className="mb-2">
+                            <label htmlFor="notif-event" className="block mb-1 text-sm font-medium text-gray-700">Event</label>
+                            <input
+                                id="notif-event"
+                                type="text"
+                                value="test_notification"
+                                disabled
+                                className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 font-mono text-sm text-gray-500"
+                            />
+                        </div>
+
+                        <div className="mb-2">
+                            <label htmlFor="notif-role" className="block mb-1 text-sm font-medium text-gray-700">Role</label>
+                            <input
+                                id="notif-role"
+                                type="text"
+                                value={auth.user.role?.name ?? 'admin'}
+                                disabled
+                                className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 font-mono text-sm text-gray-500"
+                            />
+                        </div>
+
+                        <div className="mb-2">
+                            <label htmlFor="notif-user-id" className="block mb-1 text-sm font-medium text-gray-700">User ID</label>
+                            <input
+                                id="notif-user-id"
+                                type="text"
+                                value={auth.user.id}
+                                disabled
+                                className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 font-mono text-sm text-gray-500"
+                            />
+                        </div>
+
+                        <div className="mb-4">
+                            <label htmlFor="notif-message" className="block mb-1 text-sm font-medium text-gray-700">Message</label>
+                            <textarea
+                                id="notif-message"
+                                value={message}
+                                onChange={(e) => setMessage(e.target.value)}
+                                rows={3}
+                                maxLength={500}
+                                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-purple-500 focus:ring-purple-500"
+                            />
+                            <p className="mt-1 text-xs text-gray-400">{message.length}/500</p>
+                        </div>
+
+                        <button
+                            type="submit"
+                            disabled={sending || message.trim().length === 0}
+                            className="flex w-full items-center justify-center gap-2 rounded-lg bg-purple-600 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                            <Send className="h-4 w-4" />
+                            {sending ? 'Sending...' : 'Send Test Notification'}
+                        </button>
+                    </form>
+                </div>
+
+                {/* Realtime feed */}
+                <div className="rounded-lg border border-gray-200 bg-white p-6">
+                    <div className="mb-4 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                            <Bell className="h-5 w-5 text-gray-600" />
+                            <h2 className="text-lg font-semibold text-gray-900">Realtime Feed</h2>
+                            <span className="relative flex h-2.5 w-2.5">
+                                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
+                                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-green-500" />
+                            </span>
+                        </div>
+                        {notifications.length > 0 && (
+                            <button
+                                onClick={clearNotifications}
+                                className="text-xs text-gray-400 hover:text-gray-600"
+                            >
+                                Clear
+                            </button>
+                        )}
+                    </div>
+                    <p className="mb-4 text-sm text-gray-500">
+                        Listening for notifications where <code className="rounded bg-gray-100 px-1.5 py-0.5 text-xs font-mono">admin_id={auth.user.id}</code>
+                    </p>
+
+                    <div className="space-y-3">
+                        {notifications.length === 0 && (
+                            <div className="rounded-lg border border-dashed border-gray-200 py-10 text-center">
+                                <Bell className="mx-auto mb-2 h-8 w-8 text-gray-300" />
+                                <p className="text-sm text-gray-400">No notifications yet</p>
+                                <p className="text-xs text-gray-400">Send a test notification to see it appear here in realtime</p>
+                            </div>
+                        )}
+                        {notifications.map((n) => (
+                            <div
+                                key={n.id}
+                                className="animate-in slide-in-from-top rounded-lg border border-purple-200 bg-purple-50 p-4"
+                            >
+                                <div className="mb-1 flex items-center justify-between">
+                                    <span className="inline-flex items-center rounded-full bg-purple-100 px-2 py-0.5 text-xs font-medium text-purple-700">
+                                        {n.event}
+                                    </span>
+                                    <span className="text-xs text-gray-400">
+                                        {new Date(n.created_at).toLocaleTimeString()}
+                                    </span>
+                                </div>
+                                <p className="text-sm text-gray-900">{n.message}</p>
+                                <p className="mt-1 text-xs text-gray-400">
+                                    admin_id: {n.admin_id}
+                                </p>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            </div>
+        </>
+    );
+}
+
 function DiagnosticsPage({ currentTab, stripe, appLogs, flash }: Props) {
     const [activeTab, setActiveTab] = useState(currentTab);
 
@@ -483,6 +648,7 @@ function DiagnosticsPage({ currentTab, stripe, appLogs, flash }: Props) {
                 {/* Tab content */}
                 {activeTab === 'stripe' && <StripeTab stripe={stripe} flash={flash} />}
                 {activeTab === 'logs' && <AppLogsTab appLogs={appLogs} />}
+                {activeTab === 'test-notification' && <TestNotificationTab flash={flash} />}
             </div>
         </>
     );

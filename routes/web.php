@@ -68,6 +68,7 @@ Route::middleware(['auth', 'verified', 'admin'])->prefix('admin')->name('admin.'
     Route::get('diagnostics/webhook-logs', [DiagnosticsController::class, 'webhookLogs'])->name('diagnostics.webhook-logs');
     Route::get('diagnostics/application-logs', [DiagnosticsController::class, 'applicationLogs'])->name('diagnostics.application-logs');
     Route::post('diagnostics/reconcile', [DiagnosticsController::class, 'reconcile'])->name('diagnostics.reconcile');
+    Route::post('diagnostics/test-notification', [DiagnosticsController::class, 'sendTestNotification'])->name('diagnostics.test-notification');
 });
 
 require __DIR__.'/settings.php';

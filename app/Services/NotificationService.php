@@ -23,13 +23,12 @@ class NotificationService
     public static function notifyCustomers(Collection $customerIds, string $event, string $message): void
     {
         $rows = $customerIds->map(fn (int $id) => [
-            'user_id'    => $id,
-            'event'      => $event,
-            'message'    => $message,
-            'read'       => false,
-            'user_role'  => 'customer',
-            'created_at' => now(),
-            'updated_at' => now(),
+            'customer_id' => $id,
+            'event'       => $event,
+            'message'     => $message,
+            'read'        => false,
+            'created_at'  => now(),
+            'updated_at'  => now(),
         ])->all();
 
         if (! empty($rows)) {
@@ -37,14 +36,13 @@ class NotificationService
         }
     }
 
-    public static function notify(int $userId, string $userRole, string $event, string $message): void
+    public static function notify(string $role, int $id, string $event, string $message): void
     {
         Notification::create([
-            'user_id'   => $userId,
-            'event'     => $event,
-            'message'   => $message,
-            'read'      => false,
-            'user_role' => $userRole,
+            "{$role}_id" => $id,
+            'event'      => $event,
+            'message'    => $message,
+            'read'       => false,
         ]);
     }
 }

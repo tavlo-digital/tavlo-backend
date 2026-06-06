@@ -7,11 +7,14 @@ use Illuminate\Database\Eloquent\Model;
 class Notification extends Model
 {
     protected $fillable = [
-        'user_id',
+        'customer_id',
+        'vendor_id',
+        'waiter_id',
+        'kitchen_id',
+        'admin_id',
         'event',
         'message',
         'read',
-        'user_role',
     ];
 
     protected function casts(): array

@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\ApplicationLog;
 use App\Models\OrderPayment;
 use App\Models\StripeWebhookLog;
+use App\Services\NotificationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Artisan;
 use Inertia\Inertia;
@@ -64,6 +65,27 @@ class DiagnosticsController extends Controller
         return back()->with('flash', [
             'type' => 'success',
             'message' => trim($output),
+        ]);
+    }
+
+    public function sendTestNotification(Request $request)
+    {
+        $request->validate([
+            'message' => ['required', 'string', 'max:500'],
+        ]);
+
+        $user = $request->user();
+
+        NotificationService::notify(
+            role: 'admin',
+            id: $user->id,
+            event: 'test_notification',
+            message: $request->input('message'),
+        );
+
+        return back()->with('flash', [
+            'type' => 'success',
+            'message' => 'Test notification sent successfully.',
         ]);
     }
 
