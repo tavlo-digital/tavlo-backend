@@ -11,6 +11,7 @@ use App\Models\RestaurantTable;
 use App\Models\SpecialTag;
 use App\Models\Vendor;
 use App\Models\VendorSetting;
+use App\Services\TaxCalculationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
@@ -369,21 +370,25 @@ class RestaurantController extends Controller
         // Compute popularity rank (by ordered_count desc)
         $ranked = $items->sortByDesc('ordered_count')->values();
 
-        $data = $items->map(function ($item) use ($ranked) {
+        $vendorCountry = $vendor->country;
+
+        $data = $items->map(function ($item) use ($ranked, $vendorCountry) {
             $rank = $ranked->search(fn ($r) => $r->id === $item->id);
+            $vatRate = TaxCalculationService::itemVatRate($item, $vendorCountry);
 
             return [
                 'id' => $item->id,
                 'name' => $item->name,
                 'description' => $item->description,
                 'image_url' => $item->image_url,
-                'price' => (float) $item->price,
+                'price' => TaxCalculationService::gross((float) $item->price, $vatRate),
                 'has_discount' => (bool) $item->has_discount,
                 'discount_percent' => $item->has_discount ? (float) $item->discount_percent : null,
-                'discounted_price' => $item->has_discount ? (float) $item->discounted_price : null,
-                'vat_rate' => (float) $item->vat_rate,
+                'discounted_price' => $item->has_discount && $item->discounted_price !== null
+                    ? TaxCalculationService::gross((float) $item->discounted_price, $vatRate)
+                    : null,
+                'vat_rate' => $vatRate,
                 'tax_category' => $item->tax_category,
-                'vat_amount' => $this->menuItemVatAmount($item),
                 'rating' => (float) ($item->rating ?? 0),
                 'review_count' => (int) ($item->review_count ?? 0),
                 'ordered_count' => (int) ($item->ordered_count ?? 0),
@@ -393,7 +398,7 @@ class RestaurantController extends Controller
                 'carbs' => $item->carbs ? (float) $item->carbs : null,
                 'protein' => $item->protein ? (float) $item->protein : null,
                 'dietary_preference' => $item->dietary_preference,
-                'paid_addons' => $item->paid_addons ?? [],
+                'paid_addons' => $this->formatPaidAddonsGross($item->paid_addons ?? [], $item->tax_category ?? 'food', $vendorCountry),
                 'free_addons' => $item->free_addons ?? [],
                 'removable_items' => $item->removable_items ?? [],
                 'category' => $item->category ? [
@@ -404,7 +409,7 @@ class RestaurantController extends Controller
                 ] : null,
                 'allergens' => $this->menuItemAllergenNames($item),
                 'tags' => $this->menuItemTagLabels($item),
-                'modifier_groups' => $item->modifierGroups->map(fn ($g) => $this->formatModifierGroup($g))->values(),
+                'modifier_groups' => $item->modifierGroups->map(fn ($g) => $this->formatModifierGroup($g, $item->tax_category ?? 'food', $vendorCountry))->values(),
             ];
         });
 
@@ -432,18 +437,22 @@ class RestaurantController extends Controller
             ])
             ->firstOrFail();
 
+        $vendorCountry = $vendor->country;
+        $vatRate = TaxCalculationService::itemVatRate($item, $vendorCountry);
+
         return response()->json([
             'id' => $item->id,
             'name' => $item->name,
             'description' => $item->description,
             'image_url' => $item->image_url,
-            'price' => (float) $item->price,
+            'price' => TaxCalculationService::gross((float) $item->price, $vatRate),
             'has_discount' => (bool) $item->has_discount,
             'discount_percent' => $item->has_discount ? (float) $item->discount_percent : null,
-            'discounted_price' => $item->has_discount ? (float) $item->discounted_price : null,
-            'vat_rate' => (float) $item->vat_rate,
+            'discounted_price' => $item->has_discount && $item->discounted_price !== null
+                ? TaxCalculationService::gross((float) $item->discounted_price, $vatRate)
+                : null,
+            'vat_rate' => $vatRate,
             'tax_category' => $item->tax_category,
-            'vat_amount' => $this->menuItemVatAmount($item),
             'available' => (bool) $item->available,
             'rating' => (float) ($item->rating ?? 0),
             'review_count' => (int) ($item->review_count ?? 0),
@@ -453,7 +462,7 @@ class RestaurantController extends Controller
             'carbs' => $item->carbs ? (float) $item->carbs : null,
             'protein' => $item->protein ? (float) $item->protein : null,
             'dietary_preference' => $item->dietary_preference,
-            'paid_addons' => $item->paid_addons ?? [],
+            'paid_addons' => $this->formatPaidAddonsGross($item->paid_addons ?? [], $item->tax_category ?? 'food', $vendorCountry),
             'free_addons' => $item->free_addons ?? [],
             'removable_items' => $item->removable_items ?? [],
             'ingredients' => $item->ingredients,
@@ -465,12 +474,18 @@ class RestaurantController extends Controller
             ] : null,
             'allergens' => $this->formatMenuItemAllergens($item),
             'tags' => $this->formatMenuItemTags($item),
-            'modifier_groups' => $item->modifierGroups->map(fn ($g) => $this->formatModifierGroup($g))->values(),
+            'modifier_groups' => $item->modifierGroups->map(fn ($g) => $this->formatModifierGroup($g, $item->tax_category ?? 'food', $vendorCountry))->values(),
         ]);
     }
 
-    private function formatModifierGroup($group): array
+    private function formatModifierGroup($group, string $itemTaxCategory = 'food', string $vendorCountry = 'AT'): array
     {
+        $groupVatRate = TaxCalculationService::modifierGroupVatRate(
+            $group->tax_category ?? '',
+            $itemTaxCategory,
+            $vendorCountry
+        );
+
         return [
             'id' => $group->id,
             'name' => $group->name,
@@ -478,12 +493,26 @@ class RestaurantController extends Controller
             'is_required' => (bool) $group->is_required,
             'min_selection' => (int) $group->min_selection,
             'max_selection' => (int) $group->max_selection,
+            'vat_rate' => $groupVatRate,
             'options' => $group->options->map(fn ($option) => [
                 'id' => $option->id,
                 'name' => $option->name,
-                'price_adjustment' => (float) $option->price_adjustment,
+                'price_adjustment' => TaxCalculationService::gross((float) $option->price_adjustment, $groupVatRate),
             ])->values(),
         ];
+    }
+
+    private function formatPaidAddonsGross(array $addons, string $itemTaxCategory, string $vendorCountry): array
+    {
+        return collect($addons)->map(function ($addon) use ($itemTaxCategory, $vendorCountry) {
+            $vatRate = TaxCalculationService::addonVatRate($addon, $itemTaxCategory, $vendorCountry);
+
+            return [
+                'name' => $addon['name'],
+                'price' => TaxCalculationService::gross((float) ($addon['price'] ?? 0), $vatRate),
+                'vat_rate' => $vatRate,
+            ];
+        })->values()->all();
     }
 
     private function menuItemAllergenNames(MenuItem $item): Collection
@@ -605,15 +634,6 @@ class RestaurantController extends Controller
             ->filter(fn ($value) => is_string($value) && trim($value) !== '')
             ->map(fn ($value) => trim($value))
             ->values();
-    }
-
-    private function menuItemVatAmount(MenuItem $item): float
-    {
-        $effectivePrice = $item->has_discount && $item->discounted_price !== null
-            ? (float) $item->discounted_price
-            : (float) $item->price;
-
-        return round($effectivePrice * ((float) $item->vat_rate / 100), 2);
     }
 
     /**

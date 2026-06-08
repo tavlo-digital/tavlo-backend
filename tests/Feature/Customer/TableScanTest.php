@@ -851,14 +851,12 @@ class TableScanTest extends TestCase
             ->assertJsonPath('message', 'Waiters have been notified.');
 
         $this->assertDatabaseHas('notifications', [
-            'user_id'   => $waiter1->id,
+            'waiter_id' => $waiter1->id,
             'event'     => 'table_call',
-            'user_role' => 'waiter',
         ]);
         $this->assertDatabaseHas('notifications', [
-            'user_id'   => $waiter2->id,
+            'waiter_id' => $waiter2->id,
             'event'     => 'table_call',
-            'user_role' => 'waiter',
         ]);
     }
 
@@ -885,8 +883,8 @@ class TableScanTest extends TestCase
         $this->postCall()->assertOk();
 
         $this->assertDatabaseMissing('notifications', [
-            'user_id'   => $kitchen->id,
-            'event'     => 'table_call',
+            'kitchen_id' => $kitchen->id,
+            'event'      => 'table_call',
         ]);
         $this->assertCount(1, Notification::where('event', 'table_call')->get());
     }

@@ -10,6 +10,7 @@ use App\Models\StripeWebhookLog;
 use App\Models\Vendor;
 use App\Services\NotificationService;
 use App\Services\StripePaymentService;
+use App\Services\TaxCalculationService;
 use Closure;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
@@ -439,59 +440,36 @@ class PaymentController extends Controller
             return round((float) $order->amount, 2);
         }
 
-        $itemsTotal = $this->computeTableOrderAmount($order);
+        $vendorCountry = $order->vendor?->country ?? 'AT';
+        $serviceFeeRate = (float) ($order->vendor?->vendorSetting?->service_fee_rate ?? 0);
+        $itemsGrossTotal = $this->computeTableOrderAmount($order, $vendorCountry);
 
-        if ($itemsTotal <= 0) {
+        if ($itemsGrossTotal <= 0) {
             return round((float) $order->amount, 2);
         }
 
-        return round($itemsTotal + (float) ($order->service_fee ?? 0) + (float) ($order->vat_amount ?? 0), 2);
+        $serviceFee = round($itemsGrossTotal * ($serviceFeeRate / 100), 2);
+
+        return round($itemsGrossTotal + $serviceFee, 2);
     }
 
-    private function computeTableOrderAmount(Order $order): float
+    private function computeTableOrderAmount(Order $order, string $vendorCountry = 'AT'): float
     {
-        $owned = CartItem::with('menuItem:id,price,has_discount,discounted_price')
+        $owned = CartItem::with('menuItem:id,price,has_discount,discounted_price,vat_rate,tax_category')
             ->where('order_id', $order->id)
             ->get();
 
-        $sharedInto = CartItem::with('menuItem:id,price,has_discount,discounted_price')
+        $sharedInto = CartItem::with('menuItem:id,price,has_discount,discounted_price,vat_rate,tax_category')
             ->whereJsonContains('shared_order_ids', $order->id)
             ->where('table_scan_session_id', '!=', $order->table_scan_session_id)
             ->get();
 
-        return round($owned->merge($sharedInto)->sum(function (CartItem $item) {
-            $unitPrice = $this->cartItemUnitPrice($item);
-            $lineTotal = $unitPrice * $item->quantity;
+        return round($owned->merge($sharedInto)->sum(function (CartItem $item) use ($vendorCountry) {
+            $lineTotal = TaxCalculationService::cartItemLineTotalGross($item, $vendorCountry);
             $shareCount = 1 + count($item->shared_order_ids ?? []);
 
             return $lineTotal / $shareCount;
         }), 2);
-    }
-
-    private function cartItemUnitPrice(CartItem $item): float
-    {
-        $basePrice = $this->cartItemBasePrice($item);
-        $addonsTotal = collect($item->paid_addons ?? [])->sum(fn ($addon) => (float) ($addon['price'] ?? 0));
-        $modifiersTotal = collect($item->selected_modifiers ?? [])
-            ->flatMap(fn ($group) => is_array($group) ? ($group['options'] ?? []) : [])
-            ->sum(fn ($option) => (float) ($option['price_adjustment'] ?? 0));
-
-        return round($basePrice + $addonsTotal + $modifiersTotal, 2);
-    }
-
-    private function cartItemBasePrice(CartItem $item): float
-    {
-        $menuItem = $item->menuItem;
-
-        if (! $menuItem) {
-            return 0.0;
-        }
-
-        if ($menuItem->has_discount && $menuItem->discounted_price !== null) {
-            return (float) $menuItem->discounted_price;
-        }
-
-        return (float) $menuItem->price;
     }
 
     private function stripeAmountMinor(float $amount, string $currency): int

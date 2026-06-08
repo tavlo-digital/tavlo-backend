@@ -378,11 +378,10 @@ class TableScanController extends Controller
         }
 
         $rows = $waiterIds->map(fn (int $id) => [
-            'user_id'    => $id,
+            'waiter_id'  => $id,
             'event'      => 'table_call',
             'message'    => "Table {$tableLabel} is calling.",
             'read'       => false,
-            'user_role'  => 'waiter',
             'created_at' => now(),
             'updated_at' => now(),
         ])->all();

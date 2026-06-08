@@ -264,7 +264,7 @@ class CustomerPaymentsTest extends TestCase
             ->assertJsonPath('clientSecret', 'pi_fake_1_secret_test')
             ->assertJsonPath('paymentIntentId', 'pi_fake_1');
 
-        $this->assertSame(1500, $this->stripe->created[0]['amountMinor']);
+        $this->assertSame(1650, $this->stripe->created[0]['amountMinor']);
         $this->assertSame('acct_test_123', $this->stripe->created[0]['stripeAccountId']);
         $this->assertSame('dine_in', $this->stripe->created[0]['metadata']['payment_for']);
         $this->assertSame((string) $this->session->id, $this->stripe->created[0]['metadata']['table_session_id']);
@@ -273,14 +273,14 @@ class CustomerPaymentsTest extends TestCase
             'order_id' => $order->id,
             'customer_id' => $this->customer->id,
             'stripe_payment_intent_id' => 'pi_fake_1',
-            'amount' => 15,
+            'amount' => 16.50,
             'currency' => 'EUR',
             'status' => 'requires_payment_method',
         ]);
 
         $this->assertDatabaseHas('orders', [
             'id' => $order->id,
-            'amount' => 15,
+            'amount' => 16.50,
             'payment_method' => 'stripe',
             'transaction_id' => 'pi_fake_1',
             'payment_pending' => true,
@@ -331,14 +331,14 @@ class CustomerPaymentsTest extends TestCase
             ->assertJsonPath('clientSecret', 'pi_fake_1_secret_test')
             ->assertJsonPath('paymentIntentId', 'pi_fake_1');
 
-        $this->assertSame(1700, $this->stripe->updated[0]['amountMinor']);
+        $this->assertSame(1820, $this->stripe->updated[0]['amountMinor']);
         $this->assertSame('5.00', $this->stripe->updated[0]['metadata']['tip_amount']);
-        $this->assertSame('12.00', $this->stripe->updated[0]['metadata']['base_amount']);
-        $this->assertSame('17.00', $this->stripe->updated[0]['metadata']['payable_amount']);
+        $this->assertSame('13.20', $this->stripe->updated[0]['metadata']['base_amount']);
+        $this->assertSame('18.20', $this->stripe->updated[0]['metadata']['payable_amount']);
 
         $this->assertDatabaseHas('orders', [
             'id' => $order->id,
-            'amount' => 12,
+            'amount' => 13.20,
             'tip_amount' => 5,
             'transaction_id' => 'pi_fake_1',
             'payment_pending' => true,
@@ -348,7 +348,7 @@ class CustomerPaymentsTest extends TestCase
         $this->assertDatabaseHas('order_payments', [
             'order_id' => $order->id,
             'stripe_payment_intent_id' => 'pi_fake_1',
-            'amount' => 17,
+            'amount' => 18.20,
             'currency' => 'EUR',
         ]);
     }

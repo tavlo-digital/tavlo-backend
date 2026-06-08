@@ -68,23 +68,38 @@ class CloseStaleTableScanSessions extends Command
 
         $orders = Order::query()
             ->whereIn('table_scan_session_id', $sessionIds)
-            ->whereNotIn('status', ['cancelled', 'draft'])
+            ->where('status', '!=', 'cancelled')
             ->get();
 
-        if ($orders->contains(fn (Order $order) => ! $order->payment_received)) {
-            return false;
+        $realOrders = $orders->reject(fn (Order $o) => $o->status === 'draft');
+
+        if ($realOrders->isNotEmpty()) {
+            if ($realOrders->contains(fn (Order $order) => ! $order->payment_received)) {
+                return false;
+            }
+
+            $paidOrderIds = $realOrders
+                ->where('payment_received', true)
+                ->pluck('id')
+                ->values();
+
+            if ($paidOrderIds->isNotEmpty() && $this->hasUnservedCartItemsForOrders($paidOrderIds->all())) {
+                return false;
+            }
+
+            return true;
         }
 
-        $paidOrderIds = $orders
-            ->where('payment_received', true)
-            ->pluck('id')
-            ->values();
+        $draftOrders = $orders->where('status', 'draft');
+        if ($draftOrders->isNotEmpty()) {
+            $newestDraftUpdate = $draftOrders->max('updated_at');
 
-        if ($paidOrderIds->isNotEmpty() && $this->hasUnservedCartItemsForOrders($paidOrderIds->all())) {
-            return false;
+            return ! $newestDraftUpdate || $newestDraftUpdate->lt(now()->subMinutes(10));
         }
 
-        return true;
+        $newestScan = $sessions->max('scanned_at');
+
+        return ! $newestScan || $newestScan->lt(now()->subMinutes(10));
     }
 
     private function hasUnservedCartItemsForOrders(array $orderIds): bool

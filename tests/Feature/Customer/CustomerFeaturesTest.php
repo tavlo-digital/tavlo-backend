@@ -187,12 +187,10 @@ class CustomerFeaturesTest extends TestCase
             ->assertJsonPath('history.0.orders.0.payment_status', 'paid')
             ->assertJsonPath('history.0.orders.0.payment_method', 'card')
             ->assertJsonPath('history.0.orders.0.items_count', 1)
-            ->assertJsonPath('history.0.orders.0.subtotal', 20.24)
-            ->assertJsonPath('history.0.orders.0.vat', 4)
             ->assertJsonPath('history.0.orders.0.total_amount', 24.24)
             ->assertJsonPath('history.0.orders.0.items.0.name', 'Tonkotsu Ramen')
             ->assertJsonPath('history.0.orders.0.items.0.quantity', 1)
-            ->assertJsonPath('history.0.orders.0.items.0.unit_price', 16.24)
+            ->assertJsonPath('history.0.orders.0.items.0.unit_price', 17.86)
             ->assertJsonPath('history.0.pagination.current_page', 2)
             ->assertJsonPath('history.0.pagination.per_page', 1)
             ->assertJsonPath('history.0.pagination.total', 2)
@@ -306,15 +304,15 @@ class CustomerFeaturesTest extends TestCase
             ->assertJsonPath('items.0.menu_item_id', $ramen->id)
             ->assertJsonPath('items.0.name', 'Tonkotsu Ramen')
             ->assertJsonPath('items.0.quantity', 1)
-            ->assertJsonPath('items.0.unit_price', 16.24)
-            ->assertJsonPath('items.0.line_total', 16.24)
+            ->assertJsonPath('items.0.unit_price', 17.86)
+            ->assertJsonPath('items.0.line_total', 17.86)
             ->assertJsonPath('items.1.menu_item_id', $latte->id)
             ->assertJsonPath('items.1.name', 'Matcha Latte')
-            ->assertJsonPath('items.1.unit_price', 8)
-            ->assertJsonPath('totals.subtotal', 20.24)
-            ->assertJsonPath('totals.vat', 4)
+            ->assertJsonPath('items.1.unit_price', 8.8)
+            ->assertJsonPath('totals.net_total', 24.24)
+            ->assertJsonPath('totals.vat_total', 2.42)
             ->assertJsonPath('totals.service_fee', 0)
-            ->assertJsonPath('totals.total', 24.24)
+            ->assertJsonPath('totals.grand_total', 26.66)
             ->assertJsonPath('totals.currency', 'USD');
     }
 
@@ -332,6 +330,154 @@ class CustomerFeaturesTest extends TestCase
             "/api/customer/orders/{$order->order_public_id}",
             $this->headers
         )->assertNotFound();
+    }
+
+    public function test_can_get_order_receipt(): void
+    {
+        $this->vendor->update([
+            'restaurant_name' => 'La Bella Cucina',
+            'vat_number' => 'ATU12345678',
+            'business_registration_number' => 'FN 123456 a',
+            'address' => 'Mariahilfer Straße 45',
+            'city' => 'Vienna',
+            'country' => 'AT',
+            'phone' => '+43 1 234 5678',
+            'email' => 'info@labellacucina.at',
+        ]);
+        $this->vendor->vendorSetting()->update([
+            'currency' => 'EUR',
+            'service_fee_rate' => 10,
+            'invoice_prefix' => 'INV',
+            'next_invoice_number' => 1001,
+        ]);
+
+        $category = MenuCategory::create([
+            'vendor_id' => $this->vendor->id,
+            'name' => 'Mains',
+            'slug' => 'mains',
+            'is_active' => true,
+        ]);
+
+        $food = MenuItem::create([
+            'vendor_id' => $this->vendor->id,
+            'menu_category_id' => $category->id,
+            'name' => 'Bruschetta al Pomodoro',
+            'price' => 8.00,
+            'is_active' => true,
+            'available' => true,
+        ]);
+
+        $session = $this->tableScanSession();
+        $order = Order::factory()->create([
+            'order_public_id' => 'ord-receipt-test',
+            'customer_id' => $this->customer->id,
+            'vendor_id' => $this->vendor->id,
+            'table_scan_session_id' => $session->id,
+            'status' => 'confirmed',
+            'amount' => 8.80,
+            'currency' => 'EUR',
+            'payment_received' => true,
+            'payment_confirmed_at' => now(),
+            'payment_method' => 'stripe',
+            'transaction_id' => 'pi_test123',
+        ]);
+
+        CartItem::create([
+            'table_scan_session_id' => $session->id,
+            'menu_item_id' => $food->id,
+            'order_id' => $order->id,
+            'quantity' => 1,
+        ]);
+
+        $response = $this->getJson(
+            "/api/customer/orders/{$order->order_public_id}/receipt",
+            $this->headers
+        );
+
+        $response->assertOk()
+            ->assertJsonPath('data.restaurant.name', 'La Bella Cucina')
+            ->assertJsonPath('data.restaurant.vat_id', 'ATU12345678')
+            ->assertJsonPath('data.restaurant.phone', '+43 1 234 5678')
+            ->assertJsonPath('data.restaurant.company_register_number', 'FN 123456 a')
+            ->assertJsonPath('data.receipt.invoice_number', 'INV-0001001')
+            ->assertJsonPath('data.receipt.order_id', 'ord-receipt-test')
+            ->assertJsonPath('data.receipt.currency', 'EUR')
+            ->assertJsonPath('data.order.items.0.name', 'Bruschetta al Pomodoro')
+            ->assertJsonPath('data.order.items.0.quantity', 1)
+            ->assertJsonPath('data.order.items.0.unit_price_gross', 8.80)
+            ->assertJsonPath('data.order.items.0.line_gross', 8.80)
+            ->assertJsonPath('data.order.items.0.tax_category', 'FOOD')
+            ->assertJsonPath('data.order.items.0.vat_rate', 10)
+            ->assertJsonPath('data.tax_groups.0.code', 'A')
+            ->assertJsonPath('data.tax_groups.0.tax_category', 'FOOD')
+            ->assertJsonPath('data.totals.net_total', 8)
+            ->assertJsonPath('data.totals.vat_total', 0.8)
+            ->assertJsonPath('data.totals.service_fee', 0.88)
+            ->assertJsonPath('data.totals.grand_total', 9.68)
+            ->assertJsonPath('data.payment.method', 'stripe')
+            ->assertJsonPath('data.payment.status', 'CONFIRMED')
+            ->assertJsonPath('data.payment.transaction_id', 'pi_test123')
+            ->assertJsonPath('data.legal.rksv_required_check', true)
+            ->assertJsonPath('meta.version', '1.0');
+
+        $this->assertDatabaseHas('orders', [
+            'id' => $order->id,
+            'invoice_number' => 'INV-0001001',
+        ]);
+
+        $this->assertDatabaseHas('vendor_settings', [
+            'vendor_id' => $this->vendor->id,
+            'next_invoice_number' => 1002,
+        ]);
+    }
+
+    public function test_receipt_requires_paid_order(): void
+    {
+        $session = $this->tableScanSession();
+        $order = Order::factory()->create([
+            'customer_id' => $this->customer->id,
+            'vendor_id' => $this->vendor->id,
+            'table_scan_session_id' => $session->id,
+            'payment_received' => false,
+        ]);
+
+        $this->getJson(
+            "/api/customer/orders/{$order->order_public_id}/receipt",
+            $this->headers
+        )->assertStatus(422)
+            ->assertJsonPath('message', 'Receipt is only available for paid orders.');
+    }
+
+    public function test_receipt_reuses_existing_invoice_number(): void
+    {
+        $this->vendor->update(['country' => 'AT']);
+        $this->vendor->vendorSetting()->update([
+            'invoice_prefix' => 'INV',
+            'next_invoice_number' => 2000,
+        ]);
+
+        $session = $this->tableScanSession();
+        $order = Order::factory()->create([
+            'customer_id' => $this->customer->id,
+            'vendor_id' => $this->vendor->id,
+            'table_scan_session_id' => $session->id,
+            'payment_received' => true,
+            'payment_confirmed_at' => now(),
+            'invoice_number' => 'INV-EXISTING',
+        ]);
+
+        $response = $this->getJson(
+            "/api/customer/orders/{$order->order_public_id}/receipt",
+            $this->headers
+        );
+
+        $response->assertOk()
+            ->assertJsonPath('data.receipt.invoice_number', 'INV-EXISTING');
+
+        $this->assertDatabaseHas('vendor_settings', [
+            'vendor_id' => $this->vendor->id,
+            'next_invoice_number' => 2000,
+        ]);
     }
 
     // ================================================================

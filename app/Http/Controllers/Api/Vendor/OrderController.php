@@ -9,6 +9,7 @@ use App\Models\TableScanSession;
 use App\Models\TableSession;
 use App\Models\TeamMember;
 use App\Models\Vendor;
+use App\Services\TaxCalculationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
@@ -39,6 +40,7 @@ class OrderController extends Controller
         $ordersByScanSession = Order::with([
             'customer:id,first_name,last_name,email,phone,customer_public_id',
             'tableScanSession.restaurantTable:id,number,name',
+            'vendor.vendorSetting',
         ])
             ->where('vendor_id', $vendor->id)
             ->whereIn('table_scan_session_id', $activeScanSessions->pluck('id'))
@@ -475,10 +477,10 @@ class OrderController extends Controller
 
     private function formatOrder(Order $order): array
     {
-        $serviceFee = (float) ($order->service_fee ?? 0);
-        $vatAmount = (float) ($order->vat_amount ?? 0);
+        $vendor = $order->relationLoaded('vendor') ? $order->vendor : ($order->vendor ?? null);
+        $vendorCountry = $vendor?->country ?? 'AT';
+        $serviceFeeRate = (float) ($vendor?->vendorSetting?->service_fee_rate ?? 0);
         $total = (float) $order->amount;
-        $subtotal = max(0, $total - $serviceFee - $vatAmount);
 
         $linkedItems = $this->loadLinkedCartItems($order);
         $itemsCount = (int) $linkedItems->sum('quantity');
@@ -486,7 +488,9 @@ class OrderController extends Controller
             ? $linkedItems->max(fn (CartItem $ci) => $ci->ready_at)
             : null;
 
-        // Display status bucket used by the UI tabs
+        $taxGroups = TaxCalculationService::computeTaxGroups($linkedItems, $vendorCountry);
+        $totals = TaxCalculationService::computeTotals($taxGroups, $serviceFeeRate);
+
         $rawStatus = $order->status;
         $displayStatus = match ($rawStatus) {
             'pending', 'confirmed', 'preparing' => 'received',
@@ -518,13 +522,15 @@ class OrderController extends Controller
             $timeline[] = ['status' => 'cancelled', 'timestamp' => $order->cancelled_at->toISOString()];
         }
 
-        $items = $linkedItems->map(function (CartItem $ci) {
-            $unitPrice = $this->cartItemUnitPrice($ci);
+        $items = $linkedItems->map(function (CartItem $ci) use ($vendorCountry) {
+            $itemTaxCategory = $ci->menuItem?->tax_category ?? 'food';
+            $unitPrice = $this->cartItemUnitPrice($ci, $vendorCountry);
             $lineTotal = round($unitPrice * $ci->quantity, 2);
+            $vatRate = TaxCalculationService::itemVatRate($ci->menuItem, $vendorCountry);
             $orderIds = array_values(array_map('intval', is_array($ci->shared_order_ids) ? $ci->shared_order_ids : []));
             $sharedBetween = 1 + count($orderIds);
             $itemStatus = $this->cartItemStatus($ci);
-            $modifiers = $this->cartItemModifiers($ci);
+            $modifiers = $this->cartItemModifiers($ci, $vendorCountry);
 
             return [
                 'cartItemId' => $ci->id,
@@ -543,6 +549,10 @@ class OrderController extends Controller
                 'price' => $unitPrice,
                 'lineTotal' => $lineTotal,
                 'line_total' => $lineTotal,
+                'vatRate' => $vatRate,
+                'vat_rate' => $vatRate,
+                'taxCategory' => $itemTaxCategory,
+                'tax_category' => $itemTaxCategory,
                 'paidAddons' => $ci->paid_addons ?? [],
                 'paid_addons' => $ci->paid_addons ?? [],
                 'freeAddons' => $ci->free_addons ?? [],
@@ -597,9 +607,9 @@ class OrderController extends Controller
             'items' => $items,
             'amount' => $total,
             'total' => $total,
-            'subtotal' => $subtotal,
-            'serviceFee' => $serviceFee,
-            'vatAmount' => $vatAmount,
+            'taxGroups' => $taxGroups,
+            'tax_groups' => $taxGroups,
+            'totals' => $totals,
             'currency' => $order->currency,
             'paymentMethod' => $order->payment_method,
             'paymentPending' => (bool) $order->payment_pending,
@@ -622,7 +632,7 @@ class OrderController extends Controller
      */
     private function loadLinkedCartItems(Order $order)
     {
-        return CartItem::with('menuItem:id,name,price,has_discount,discounted_price,image_url,menu_category_id', 'menuItem.category.masterCategory')
+        return CartItem::with('menuItem:id,name,price,has_discount,discounted_price,image_url,menu_category_id,vat_rate,tax_category', 'menuItem.category.masterCategory')
             ->where(function ($q) use ($order) {
                 if ($order->status === 'draft' && $order->table_scan_session_id) {
                     $q->where(function ($owned) use ($order) {
@@ -638,32 +648,24 @@ class OrderController extends Controller
             ->get();
     }
 
-    private function cartItemUnitPrice(CartItem $item): float
+    private function cartItemUnitPrice(CartItem $item, string $vendorCountry = 'AT'): float
     {
-        $menuItem = $item->menuItem;
-        $basePrice = 0.0;
-
-        if ($menuItem) {
-            $basePrice = $menuItem->has_discount && $menuItem->discounted_price !== null
-                ? (float) $menuItem->discounted_price
-                : (float) $menuItem->price;
-        }
-
-        $addonsTotal = collect($item->paid_addons ?? [])->sum(fn ($addon) => (float) ($addon['price'] ?? 0));
-        $modifiersTotal = collect($item->selected_modifiers ?? [])
-            ->flatMap(fn ($group) => is_array($group) ? ($group['options'] ?? []) : [])
-            ->sum(fn ($option) => (float) ($option['price_adjustment'] ?? 0));
-
-        return round($basePrice + $addonsTotal + $modifiersTotal, 2);
+        return TaxCalculationService::cartItemUnitPriceGross($item, $vendorCountry);
     }
 
-    private function cartItemModifiers(CartItem $item): array
+    private function cartItemModifiers(CartItem $item, string $vendorCountry = 'AT'): array
     {
+        $itemTaxCategory = $item->menuItem?->tax_category ?? 'food';
+
         $paidAddons = collect($item->paid_addons ?? [])
-            ->map(fn ($addon) => [
-                'name' => (string) ($addon['name'] ?? ''),
-                'price' => (float) ($addon['price'] ?? 0),
-            ]);
+            ->map(function ($addon) use ($itemTaxCategory, $vendorCountry) {
+                $vatRate = TaxCalculationService::addonVatRate($addon, $itemTaxCategory, $vendorCountry);
+
+                return [
+                    'name' => (string) ($addon['name'] ?? ''),
+                    'price' => TaxCalculationService::gross((float) ($addon['price'] ?? 0), $vatRate),
+                ];
+            });
 
         $freeAddons = collect($item->free_addons ?? [])
             ->map(fn ($name) => [
@@ -678,11 +680,15 @@ class OrderController extends Controller
             ]);
 
         $selectedModifiers = collect($item->selected_modifiers ?? [])
-            ->flatMap(fn ($group) => is_array($group) ? ($group['options'] ?? []) : [])
-            ->map(fn ($option) => [
-                'name' => (string) ($option['name'] ?? ''),
-                'price' => (float) ($option['price_adjustment'] ?? 0),
-            ]);
+            ->flatMap(function ($group) use ($itemTaxCategory, $vendorCountry) {
+                $groupTaxCategory = $group['tax_category'] ?? '';
+                $vatRate = TaxCalculationService::modifierGroupVatRate($groupTaxCategory, $itemTaxCategory, $vendorCountry);
+
+                return collect($group['options'] ?? [])->map(fn ($option) => [
+                    'name' => (string) ($option['name'] ?? ''),
+                    'price' => TaxCalculationService::gross((float) ($option['price_adjustment'] ?? 0), $vatRate),
+                ]);
+            });
 
         return $paidAddons
             ->merge($freeAddons)
@@ -695,7 +701,8 @@ class OrderController extends Controller
 
     private function resolveVendor(string $vendorId): Vendor
     {
-        return Vendor::where('vendor_public_id', $vendorId)
+        return Vendor::with('vendorSetting')
+            ->where('vendor_public_id', $vendorId)
             ->orWhere('id', $vendorId)
             ->firstOrFail();
     }
@@ -704,7 +711,7 @@ class OrderController extends Controller
     {
         return Order::where('order_public_id', $orderId)
             ->orWhere('id', $orderId)
-            ->with(['vendor', 'tableScanSession.restaurantTable'])
+            ->with(['vendor.vendorSetting', 'tableScanSession.restaurantTable'])
             ->firstOrFail();
     }
 

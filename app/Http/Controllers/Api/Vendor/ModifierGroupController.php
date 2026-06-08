@@ -5,8 +5,10 @@ namespace App\Http\Controllers\Api\Vendor;
 use App\Http\Controllers\Controller;
 use App\Models\ModifierGroup;
 use App\Models\ModifierOption;
+use App\Models\TaxCategory;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 
 class ModifierGroupController extends Controller
 {
@@ -36,6 +38,7 @@ class ModifierGroupController extends Controller
             'minSelection' => ['sometimes', 'integer', 'min:0'],
             'maxSelection' => ['sometimes', 'integer', 'min:1'],
             'isRequired'   => ['sometimes', 'boolean'],
+            'taxCategory'  => ['sometimes', 'nullable', 'string', Rule::in(TaxCategory::pluck('slug')->unique())],
             'options'      => ['sometimes', 'array', 'max:10'],
             'options.*.name'            => ['required', 'string', 'max:255'],
             'options.*.priceAdjustment' => ['sometimes', 'numeric'],
@@ -50,6 +53,7 @@ class ModifierGroupController extends Controller
             'min_selection' => $data['minSelection'] ?? 0,
             'max_selection' => $data['maxSelection'] ?? 1,
             'is_required'   => $data['isRequired'] ?? false,
+            'tax_category'  => $data['taxCategory'] ?? null,
             'sort_order'    => $maxSort + 1,
             'is_active'     => true,
         ]);
@@ -82,6 +86,7 @@ class ModifierGroupController extends Controller
             'minSelection' => ['sometimes', 'integer', 'min:0'],
             'maxSelection' => ['sometimes', 'integer', 'min:1'],
             'isRequired'   => ['sometimes', 'boolean'],
+            'taxCategory'  => ['sometimes', 'nullable', 'string', Rule::in(TaxCategory::pluck('slug')->unique())],
             'isActive'     => ['sometimes', 'boolean'],
             'options'      => ['sometimes', 'array', 'max:10'],
             'options.*.id'              => ['sometimes', 'integer'],
@@ -95,6 +100,7 @@ class ModifierGroupController extends Controller
         if (isset($data['minSelection'])) $group->min_selection = $data['minSelection'];
         if (isset($data['maxSelection'])) $group->max_selection = $data['maxSelection'];
         if (isset($data['isRequired']))   $group->is_required   = $data['isRequired'];
+        if (array_key_exists('taxCategory', $data)) $group->tax_category = $data['taxCategory'];
         if (isset($data['isActive']))     $group->is_active     = $data['isActive'];
 
         $group->save();
@@ -152,6 +158,7 @@ class ModifierGroupController extends Controller
             'minSelection' => $g->min_selection,
             'maxSelection' => $g->max_selection,
             'isRequired'   => $g->is_required,
+            'taxCategory'  => $g->tax_category,
             'sortOrder'    => $g->sort_order,
             'isActive'     => $g->is_active,
             'options'      => $g->options->map(fn (ModifierOption $o) => [

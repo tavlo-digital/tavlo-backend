@@ -233,20 +233,22 @@ class RestaurantBrowsingTest extends TestCase
         $response->assertOk()
             ->assertJsonCount(1)
             ->assertJsonPath('0.name', 'Schnitzel')
+            ->assertJsonPath('0.price', 16.39)
             ->assertJsonPath('0.vat_rate', 10)
             ->assertJsonPath('0.tax_category', 'food')
-            ->assertJsonPath('0.vat_amount', 1.49)
             ->assertJsonPath('0.calories', 640)
             ->assertJsonPath('0.fat', 28.5)
             ->assertJsonPath('0.carbs', 42.25)
             ->assertJsonPath('0.protein', 36)
             ->assertJsonPath('0.paid_addons.0.name', 'Extra cheese')
-            ->assertJsonPath('0.paid_addons.0.price', 1.5)
+            ->assertJsonPath('0.paid_addons.0.price', 1.65)
+            ->assertJsonPath('0.paid_addons.0.vat_rate', 10)
             ->assertJsonPath('0.free_addons.0', 'Ketchup')
             ->assertJsonPath('0.removable_items.0', 'Onions')
             ->assertJsonPath('0.modifier_groups.0.name', 'Choose your side')
+            ->assertJsonPath('0.modifier_groups.0.vat_rate', 10)
             ->assertJsonPath('0.modifier_groups.0.options.0.name', 'Onion Rings')
-            ->assertJsonPath('0.modifier_groups.0.options.0.price_adjustment', 1.5);
+            ->assertJsonPath('0.modifier_groups.0.options.0.price_adjustment', 1.65);
     }
 
     public function test_restaurant_menu_vat_amount_uses_discounted_price(): void
@@ -277,8 +279,8 @@ class RestaurantBrowsingTest extends TestCase
         $response = $this->getJson("/api/customer/restaurants/{$this->vendor->vendor_public_id}/menu");
 
         $response->assertOk()
-            ->assertJsonPath('0.discounted_price', 15)
-            ->assertJsonPath('0.vat_amount', 1.5);
+            ->assertJsonPath('0.discounted_price', 16.5)
+            ->assertJsonPath('0.vat_rate', 10);
     }
 
     public function test_unavailable_menu_items_are_not_browsable(): void
@@ -396,15 +398,17 @@ class RestaurantBrowsingTest extends TestCase
 
         $response->assertOk()
             ->assertJsonPath('name', 'Caesar Salad')
-            ->assertJsonPath('vat_rate', 20)
+            ->assertJsonPath('vat_rate', 10)
             ->assertJsonPath('tax_category', 'food')
-            ->assertJsonPath('vat_amount', 2.5)
+            ->assertJsonPath('price', 13.75)
             ->assertJsonPath('paid_addons.0.name', 'Grilled chicken')
-            ->assertJsonPath('paid_addons.0.price', 3)
+            ->assertJsonPath('paid_addons.0.price', 3.3)
+            ->assertJsonPath('paid_addons.0.vat_rate', 10)
             ->assertJsonPath('free_addons.0', 'Croutons')
             ->assertJsonPath('removable_items.0', 'Parmesan')
             ->assertJsonPath('modifier_groups.0.name', 'Choose your protein')
-            ->assertJsonPath('modifier_groups.0.options.0.price_adjustment', 3);
+            ->assertJsonPath('modifier_groups.0.vat_rate', 10)
+            ->assertJsonPath('modifier_groups.0.options.0.price_adjustment', 3.3);
     }
 
     public function test_menu_item_detail_returns_json_allergies_and_tags_without_pivot_rows(): void

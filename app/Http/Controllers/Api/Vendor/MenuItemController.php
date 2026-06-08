@@ -11,6 +11,7 @@ use App\Models\TaxCategory;
 use App\Services\MediaService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
 class MenuItemController extends Controller
@@ -288,6 +289,7 @@ class MenuItemController extends Controller
             'paidAddons' => ['sometimes', 'array'],
             'paidAddons.*.name' => ['required_with:paidAddons', 'string', 'max:255'],
             'paidAddons.*.price' => ['required_with:paidAddons', 'numeric', 'min:0'],
+            'paidAddons.*.taxCategory' => ['sometimes', 'nullable', 'string', Rule::in(TaxCategory::pluck('slug')->unique())],
             'freeAddons' => ['sometimes', 'array'],
             'freeAddons.*' => ['string', 'max:255'],
             'removableItems' => ['sometimes', 'array'],
@@ -424,7 +426,7 @@ class MenuItemController extends Controller
             'fat' => (float) $item->fat,
             'carbs' => (float) $item->carbs,
             'protein' => (float) $item->protein,
-            'vatRate' => (float) $item->vat_rate,
+            'vatRate' => $item->liveVatRate(),
             'taxCategory' => $item->tax_category,
             'dietaryPreference' => $item->dietary_preference,
             'allergies' => $item->allergies ?? [],

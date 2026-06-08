@@ -5,12 +5,15 @@ namespace App\Http\Controllers\Api\Customer;
 use App\Http\Controllers\Controller;
 use App\Models\CartItem;
 use App\Models\Order;
+use App\Models\OrderPayment;
 use App\Models\Vendor;
 use App\Services\MediaService;
+use App\Services\TaxCalculationService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 class OrderHistoryController extends Controller
 {
@@ -33,7 +36,7 @@ class OrderHistoryController extends Controller
 
         $orders = (clone $base)
             ->with([
-                'vendor.vendorSetting:id,vendor_id,logo_url,currency',
+                'vendor.vendorSetting:id,vendor_id,logo_url,currency,service_fee_rate',
                 'tableScanSession:id,customer_id',
             ])
             ->orderByDesc('created_at')
@@ -148,7 +151,7 @@ class OrderHistoryController extends Controller
         $order = Order::where('order_public_id', $orderPublicId)
             ->where(fn (Builder $query) => $this->scopeCustomerOrders($query, $customer->id))
             ->with([
-                'vendor.vendorSetting:id,vendor_id,logo_url,currency',
+                'vendor.vendorSetting:id,vendor_id,logo_url,currency,service_fee_rate',
                 'tableScanSession:id,customer_id',
             ])
             ->firstOrFail();
@@ -166,12 +169,187 @@ class OrderHistoryController extends Controller
         $order = Order::where('order_public_id', $orderPublicId)
             ->where(fn (Builder $query) => $this->scopeCustomerOrders($query, $customer->id))
             ->with([
-                'vendor.vendorSetting:id,vendor_id,currency,estimated_prep_time',
+                'vendor.vendorSetting:id,vendor_id,currency,estimated_prep_time,service_fee_rate',
                 'tableScanSession:id,customer_id',
             ])
             ->firstOrFail();
 
         return response()->json($this->formatTrackingOrder($order));
+    }
+
+    public function receipt(Request $request, string $orderPublicId): JsonResponse
+    {
+        $customer = $request->user();
+
+        $order = Order::where('order_public_id', $orderPublicId)
+            ->where(fn (Builder $query) => $this->scopeCustomerOrders($query, $customer->id))
+            ->with([
+                'vendor.vendorSetting',
+                'tableScanSession.restaurantTable:id,number,name',
+            ])
+            ->firstOrFail();
+
+        if (! $order->payment_received) {
+            return response()->json(['message' => 'Receipt is only available for paid orders.'], 422);
+        }
+
+        $vendor = $order->vendor;
+        $settings = $vendor?->vendorSetting;
+        $vendorCountry = $vendor?->country ?? 'AT';
+        $items = $this->linkedCartItems($order);
+        $serviceFeeRate = (float) ($settings?->service_fee_rate ?? 0);
+
+        $taxGroups = TaxCalculationService::computeTaxGroups($items, $vendorCountry);
+        $totals = TaxCalculationService::computeTotals($taxGroups, $serviceFeeRate);
+
+        $invoiceNumber = $this->resolveInvoiceNumber($order, $settings);
+
+        $payment = OrderPayment::where('order_id', $order->id)
+            ->whereNotNull('paid_at')
+            ->latest('paid_at')
+            ->first();
+
+        $table = $order->tableScanSession?->restaurantTable;
+        $tableName = $table ? ($table->name ?? 'Table '.$table->number) : null;
+
+        $countryCode = TaxCalculationService::countryCode($vendorCountry);
+        $defaultLang = $settings?->default_language ?? 'en';
+        $locale = $defaultLang.'-'.$countryCode;
+
+        $receiptItems = $items->map(function (CartItem $item) use ($vendorCountry) {
+            $menuItem = $item->menuItem;
+            $unitPrice = $this->cartItemUnitPrice($item, $vendorCountry);
+            $lineGross = round($unitPrice * $item->quantity, 2);
+            $taxCategory = $menuItem?->tax_category ?? 'food';
+            $vatRate = TaxCalculationService::itemVatRate($menuItem, $vendorCountry);
+
+            return [
+                'id' => $item->id,
+                'name' => $menuItem?->name,
+                'quantity' => $item->quantity,
+                'unit_price_gross' => $unitPrice,
+                'line_gross' => $lineGross,
+                'tax_category' => strtoupper($taxCategory),
+                'vat_rate' => $vatRate,
+            ];
+        })->values()->all();
+
+        $taxGroupsFormatted = array_map(fn (array $group) => array_merge($group, [
+            'tax_category' => strtoupper($group['tax_category']),
+        ]), $taxGroups);
+
+        return response()->json([
+            'data' => [
+                'restaurant' => [
+                    'name' => $vendor?->restaurant_name,
+                    'logo_url' => $this->media->url($settings?->logo_url),
+                    'address' => $this->formatFullAddress($vendor),
+                    'vat_id' => $vendor?->vat_number,
+                    'phone' => $vendor?->phone,
+                    'email' => $vendor?->email,
+                    'company_register_number' => $vendor?->business_registration_number,
+                ],
+                'receipt' => [
+                    'invoice_number' => $invoiceNumber,
+                    'date' => $order->created_at?->format('Y-m-d'),
+                    'time' => $order->created_at?->format('H:i'),
+                    'table' => $tableName,
+                    'order_id' => $order->order_public_id,
+                    'currency' => $settings?->currency ?? $order->currency ?? 'EUR',
+                    'locale' => $locale,
+                ],
+                'order' => [
+                    'items' => $receiptItems,
+                ],
+                'tax_groups' => $taxGroupsFormatted,
+                'totals' => $totals,
+                'payment' => [
+                    'method' => $order->payment_method,
+                    'status' => $order->payment_received ? 'CONFIRMED' : 'PENDING',
+                    'transaction_id' => $order->transaction_id ?? $payment?->stripe_payment_intent_id,
+                    'paid_at' => $order->payment_confirmed_at?->toIso8601String()
+                        ?? $payment?->paid_at?->toIso8601String(),
+                ],
+                'legal' => $this->legalBlock($countryCode, $vendor),
+            ],
+            'meta' => [
+                'generated_at' => now()->toIso8601String(),
+                'template' => 'tavlo-receipt-template',
+                'version' => '1.0',
+            ],
+        ]);
+    }
+
+    private function resolveInvoiceNumber(Order $order, $settings): string
+    {
+        if ($order->invoice_number) {
+            return $order->invoice_number;
+        }
+
+        $prefix = $settings?->invoice_prefix ?? 'INV';
+
+        $nextNumber = DB::table('vendor_settings')
+            ->where('vendor_id', $order->vendor_id)
+            ->lockForUpdate()
+            ->value('next_invoice_number') ?? 1001;
+
+        DB::table('vendor_settings')
+            ->where('vendor_id', $order->vendor_id)
+            ->increment('next_invoice_number');
+
+        $invoiceNumber = $prefix.'-'.str_pad((string) $nextNumber, 7, '0', STR_PAD_LEFT);
+
+        $order->update(['invoice_number' => $invoiceNumber]);
+
+        return $invoiceNumber;
+    }
+
+    private function formatFullAddress($vendor): ?string
+    {
+        if (! $vendor) {
+            return null;
+        }
+
+        $parts = array_filter([
+            $vendor->address,
+            $vendor->city,
+            $vendor->country,
+        ]);
+
+        return $parts ? implode(', ', $parts) : null;
+    }
+
+    private function legalBlock(string $countryCode, $vendor): array
+    {
+        $regNumber = $vendor?->business_registration_number;
+
+        $legalNotes = match ($countryCode) {
+            'AT' => [
+                'invoice_note' => 'This invoice was issued in accordance with § 11 UStG (Austria).',
+                'tax_note' => 'All prices include statutory VAT. The service date corresponds to the invoice date.',
+            ],
+            'DE' => [
+                'invoice_note' => 'This invoice was issued in accordance with § 14 UStG (Germany).',
+                'tax_note' => 'All prices include statutory VAT. The service date corresponds to the invoice date.',
+            ],
+            'GB' => [
+                'invoice_note' => 'This invoice was issued in accordance with UK VAT regulations.',
+                'tax_note' => 'All prices include VAT where applicable.',
+            ],
+            default => [
+                'invoice_note' => 'This invoice was issued in accordance with applicable tax regulations.',
+                'tax_note' => 'All prices include statutory VAT where applicable.',
+            ],
+        };
+
+        return [
+            'invoice_note' => $legalNotes['invoice_note'],
+            'tax_note' => $legalNotes['tax_note'],
+            'company_register_note' => $regNumber
+                ? 'Registration number: '.$regNumber
+                : null,
+            'rksv_required_check' => $countryCode === 'AT',
+        ];
     }
 
     private function scopeCustomerOrders(Builder $query, int $customerId): void
@@ -187,7 +365,11 @@ class OrderHistoryController extends Controller
     private function formatHistoryOrder(Order $order): array
     {
         $items = $this->linkedCartItems($order);
-        $subtotal = max(0, (float) $order->amount - (float) ($order->vat_amount ?? 0) - (float) ($order->service_fee ?? 0));
+        $vendorCountry = $order->vendor?->country ?? 'AT';
+        $serviceFeeRate = (float) ($order->vendor?->vendorSetting?->service_fee_rate ?? 0);
+
+        $taxGroups = TaxCalculationService::computeTaxGroups($items, $vendorCountry);
+        $totals = TaxCalculationService::computeTotals($taxGroups, $serviceFeeRate);
 
         return [
             'order_id' => $order->order_number ?? (string) $order->id,
@@ -197,19 +379,20 @@ class OrderHistoryController extends Controller
             'payment_status' => $this->paymentStatus($order),
             'payment_method' => $order->payment_method,
             'items_count' => (int) $items->sum('quantity'),
-            'subtotal' => round($subtotal, 2),
-            'vat' => round((float) ($order->vat_amount ?? 0), 2),
-            'service_fee' => round((float) ($order->service_fee ?? 0), 2),
             'total_amount' => round((float) $order->amount, 2),
-            'items' => $items->map(fn (CartItem $item) => $this->formatHistoryItem($item))->values()->all(),
+            'items' => $items->map(fn (CartItem $item) => $this->formatHistoryItem($item, $vendorCountry))->values()->all(),
+            'tax_groups' => $taxGroups,
+            'totals' => $totals,
         ];
     }
 
-    private function formatHistoryItem(CartItem $item): array
+    private function formatHistoryItem(CartItem $item, string $vendorCountry = 'AT'): array
     {
         $menuItem = $item->menuItem;
-        $unitPrice = $this->cartItemUnitPrice($item);
+        $itemTaxCategory = $menuItem?->tax_category ?? 'food';
+        $unitPrice = $this->cartItemUnitPrice($item, $vendorCountry);
         $lineTotal = round($unitPrice * $item->quantity, 2);
+        $vatRate = TaxCalculationService::itemVatRate($menuItem, $vendorCountry);
 
         return [
             'id' => $item->id,
@@ -218,13 +401,49 @@ class OrderHistoryController extends Controller
             'quantity' => $item->quantity,
             'unit_price' => $unitPrice,
             'line_total' => $lineTotal,
+            'vat_rate' => $vatRate,
+            'tax_category' => $itemTaxCategory,
             'image_url' => $this->media->url($menuItem?->image_url),
             'notes' => $item->notes,
-            'paid_addons' => $item->paid_addons ?? [],
+            'paid_addons' => $this->formatPaidAddons($item, $itemTaxCategory, $vendorCountry),
             'free_addons' => $item->free_addons ?? [],
             'removed_items' => $item->removed_items ?? [],
-            'selected_modifiers' => $item->selected_modifiers ?? [],
+            'selected_modifiers' => $this->formatSelectedModifiers($item, $itemTaxCategory, $vendorCountry),
         ];
+    }
+
+    private function formatPaidAddons(CartItem $item, string $itemTaxCategory, string $vendorCountry): array
+    {
+        return collect($item->paid_addons ?? [])->map(function ($addon) use ($itemTaxCategory, $vendorCountry) {
+            $vatRate = TaxCalculationService::addonVatRate($addon, $itemTaxCategory, $vendorCountry);
+
+            return [
+                'name' => $addon['name'],
+                'price' => TaxCalculationService::gross((float) ($addon['price'] ?? 0), $vatRate),
+                'vat_rate' => $vatRate,
+            ];
+        })->values()->all();
+    }
+
+    private function formatSelectedModifiers(CartItem $item, string $itemTaxCategory, string $vendorCountry): array
+    {
+        return collect($item->selected_modifiers ?? [])->map(function ($group) use ($itemTaxCategory, $vendorCountry) {
+            $groupTaxCategory = $group['tax_category'] ?? '';
+            $vatRate = TaxCalculationService::modifierGroupVatRate($groupTaxCategory, $itemTaxCategory, $vendorCountry);
+
+            $options = collect($group['options'] ?? [])->map(function ($option) use ($vatRate) {
+                return [
+                    'id' => $option['id'] ?? null,
+                    'name' => $option['name'] ?? null,
+                    'price_adjustment' => TaxCalculationService::gross((float) ($option['price_adjustment'] ?? 0), $vatRate),
+                ];
+            })->values()->all();
+
+            return array_merge($group, [
+                'vat_rate' => $vatRate,
+                'options' => $options,
+            ]);
+        })->values()->all();
     }
 
     private function formatOrderDetail(Order $order): array
@@ -232,7 +451,11 @@ class OrderHistoryController extends Controller
         $vendor = $order->vendor;
         $settings = $vendor?->vendorSetting;
         $items = $this->linkedCartItems($order);
-        $subtotal = max(0, (float) $order->amount - (float) ($order->vat_amount ?? 0) - (float) ($order->service_fee ?? 0));
+        $vendorCountry = $vendor?->country ?? 'AT';
+        $serviceFeeRate = (float) ($settings?->service_fee_rate ?? 0);
+
+        $taxGroups = TaxCalculationService::computeTaxGroups($items, $vendorCountry);
+        $totals = TaxCalculationService::computeTotals($taxGroups, $serviceFeeRate);
 
         return [
             'order_id' => $order->order_number ?? (string) $order->id,
@@ -247,27 +470,21 @@ class OrderHistoryController extends Controller
             'order_type' => $order->order_type,
             'payment_status' => $this->paymentStatus($order),
             'payment_method' => $order->payment_method,
-            'items' => $items->map(fn (CartItem $item) => $this->formatOrderDetailItem($item))->values()->all(),
-            'totals' => [
-                'subtotal' => round($subtotal, 2),
-                'vat' => round((float) ($order->vat_amount ?? 0), 2),
-                'service_fee' => round((float) ($order->service_fee ?? 0), 2),
-                'total' => round((float) $order->amount, 2),
+            'items' => $items->map(function (CartItem $item) use ($vendorCountry) {
+                $historyItem = $this->formatHistoryItem($item, $vendorCountry);
+                unset($historyItem['id']);
+                return $historyItem;
+            })->values()->all(),
+            'tax_groups' => $taxGroups,
+            'totals' => array_merge($totals, [
                 'currency' => $settings?->currency ?? $order->currency,
-            ],
+            ]),
         ];
-    }
-
-    private function formatOrderDetailItem(CartItem $item): array
-    {
-        $historyItem = $this->formatHistoryItem($item);
-        unset($historyItem['id']);
-
-        return $historyItem;
     }
 
     private function formatTrackingOrder(Order $order): array
     {
+        $vendorCountry = $order->vendor?->country ?? 'AT';
         $ownedItems = $this->ownedCartItems($order);
         $sharedIntoItems = $this->sharedIntoCartItems($order);
         $ownedSharedItems = $ownedItems
@@ -276,6 +493,11 @@ class OrderHistoryController extends Controller
         $sharedItems = $ownedSharedItems->merge($sharedIntoItems)->values();
         $ordersById = $this->sharingOrdersById($sharedItems);
         $sessionCustomerNames = $this->sessionCustomerNames($ordersById);
+
+        $allItems = $ownedItems->merge($sharedIntoItems);
+        $serviceFeeRate = (float) ($order->vendor?->vendorSetting?->service_fee_rate ?? 0);
+        $taxGroups = TaxCalculationService::computeTaxGroups($allItems, $vendorCountry);
+        $totals = TaxCalculationService::computeTotals($taxGroups, $serviceFeeRate);
 
         return [
             'id' => $order->id,
@@ -290,21 +512,25 @@ class OrderHistoryController extends Controller
             'payment_pending' => (bool) $order->payment_pending,
             'payment_received' => (bool) $order->payment_received,
             'items' => $ownedItems
-                ->map(fn (CartItem $item) => $this->formatTrackingItem($item))
+                ->map(fn (CartItem $item) => $this->formatTrackingItem($item, $vendorCountry))
                 ->values()
                 ->all(),
             'shared_items' => $sharedItems
-                ->map(fn (CartItem $item) => $this->formatTrackingSharedItem($item, $ordersById, $sessionCustomerNames))
+                ->map(fn (CartItem $item) => $this->formatTrackingSharedItem($item, $ordersById, $sessionCustomerNames, $vendorCountry))
                 ->values()
                 ->all(),
+            'tax_groups' => $taxGroups,
+            'totals' => $totals,
         ];
     }
 
-    private function formatTrackingItem(CartItem $item): array
+    private function formatTrackingItem(CartItem $item, string $vendorCountry = 'AT'): array
     {
         $menuItem = $item->menuItem;
-        $unitPrice = $this->cartItemUnitPrice($item);
+        $itemTaxCategory = $menuItem?->tax_category ?? 'food';
+        $unitPrice = $this->cartItemUnitPrice($item, $vendorCountry);
         $lineTotal = round($unitPrice * $item->quantity, 2);
+        $vatRate = TaxCalculationService::itemVatRate($menuItem, $vendorCountry);
 
         return [
             'cart_item_id' => $item->id,
@@ -314,44 +540,25 @@ class OrderHistoryController extends Controller
             'quantity' => $item->quantity,
             'unit_price' => $unitPrice,
             'line_total' => $lineTotal,
+            'vat_rate' => $vatRate,
+            'tax_category' => $itemTaxCategory,
             'status' => $this->cartItemStatus($item),
             'notes' => $item->notes,
-            'paid_addons' => $item->paid_addons ?? [],
+            'paid_addons' => $this->formatPaidAddons($item, $itemTaxCategory, $vendorCountry),
             'free_addons' => $item->free_addons ?? [],
             'removed_items' => $item->removed_items ?? [],
-            'selected_modifiers' => $item->selected_modifiers ?? [],
+            'selected_modifiers' => $this->formatSelectedModifiers($item, $itemTaxCategory, $vendorCountry),
         ];
     }
 
-    private function cartItemUnitPrice(CartItem $item): float
+    private function cartItemUnitPrice(CartItem $item, string $vendorCountry = 'AT'): float
     {
-        $basePrice = $this->cartItemBasePrice($item);
-        $addonsTotal = collect($item->paid_addons ?? [])->sum(fn ($addon) => (float) ($addon['price'] ?? 0));
-        $modifiersTotal = collect($item->selected_modifiers ?? [])
-            ->flatMap(fn ($group) => is_array($group) ? ($group['options'] ?? []) : [])
-            ->sum(fn ($option) => (float) ($option['price_adjustment'] ?? 0));
-
-        return round($basePrice + $addonsTotal + $modifiersTotal, 2);
+        return TaxCalculationService::cartItemUnitPriceGross($item, $vendorCountry);
     }
 
-    private function cartItemBasePrice(CartItem $item): float
+    private function formatTrackingSharedItem(CartItem $item, Collection $ordersById, Collection $sessionCustomerNames, string $vendorCountry = 'AT'): array
     {
-        $menuItem = $item->menuItem;
-
-        if (! $menuItem) {
-            return 0.0;
-        }
-
-        if ($menuItem->has_discount && $menuItem->discounted_price !== null) {
-            return (float) $menuItem->discounted_price;
-        }
-
-        return (float) $menuItem->price;
-    }
-
-    private function formatTrackingSharedItem(CartItem $item, Collection $ordersById, Collection $sessionCustomerNames): array
-    {
-        $payload = $this->formatTrackingItem($item);
+        $payload = $this->formatTrackingItem($item, $vendorCountry);
         $orderIds = array_values(array_map('intval', is_array($item->shared_order_ids) ? $item->shared_order_ids : []));
         $sharedBetween = 1 + count($orderIds);
 
@@ -383,7 +590,7 @@ class OrderHistoryController extends Controller
             return collect();
         }
 
-        return CartItem::with('menuItem:id,name,price,has_discount,discounted_price,image_url')
+        return CartItem::with('menuItem:id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category')
             ->where(function (Builder $query) use ($order) {
                 if ($order->status === 'draft') {
                     $query->where('table_scan_session_id', $order->table_scan_session_id)
@@ -404,7 +611,7 @@ class OrderHistoryController extends Controller
             return collect();
         }
 
-        return CartItem::with('menuItem:id,name,price,has_discount,discounted_price,image_url')
+        return CartItem::with('menuItem:id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category')
             ->whereJsonContains('shared_order_ids', $order->id)
             ->where('table_scan_session_id', '!=', $order->table_scan_session_id)
             ->orderBy('id')
@@ -459,7 +666,7 @@ class OrderHistoryController extends Controller
 
     private function linkedCartItems(Order $order): Collection
     {
-        $items = CartItem::with('menuItem:id,name,price,has_discount,discounted_price,image_url')
+        $items = CartItem::with('menuItem:id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category')
             ->where(function (Builder $query) use ($order) {
                 if ($order->status === 'draft' && $order->table_scan_session_id) {
                     $query->where('table_scan_session_id', $order->table_scan_session_id);
@@ -479,7 +686,7 @@ class OrderHistoryController extends Controller
 
         $orderedAt = $order->updated_at ?? $order->created_at;
 
-        return CartItem::with('menuItem:id,name,price,has_discount,discounted_price,image_url')
+        return CartItem::with('menuItem:id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category')
             ->where('table_scan_session_id', $order->table_scan_session_id)
             ->whereNull('order_id')
             ->when($orderedAt, fn (Builder $query) => $query->where('created_at', '<=', $orderedAt))

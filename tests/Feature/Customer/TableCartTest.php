@@ -160,15 +160,14 @@ class TableCartTest extends TestCase
         $myItem = $people[$this->session->id]['personal_items'][0];
         $otherItem = $people[$otherSession->id]['personal_items'][0];
 
-        $this->assertSame(3.5, $myItem['price']);
-        $this->assertSame(1.4, $myItem['vat_amount']);
-        $this->assertSame(7, $myItem['line_total']);
-        $this->assertSame(20, $myItem['menu_item']['vat_rate']);
-        $this->assertSame(1.4, $myItem['menu_item']['vat_amount']);
+        $this->assertSame(3.85, $myItem['price']);
+        $this->assertSame(0.7, $myItem['vat_amount']);
+        $this->assertSame(7.7, $myItem['line_total']);
+        $this->assertSame(10, $myItem['menu_item']['vat_rate']);
         $this->assertSame('food', $myItem['menu_item']['tax_category']);
 
-        $this->assertSame(0.7, $otherItem['vat_amount']);
-        $this->assertSame(20, $otherItem['menu_item']['vat_rate']);
+        $this->assertSame(0.35, $otherItem['vat_amount']);
+        $this->assertSame(10, $otherItem['menu_item']['vat_rate']);
     }
 
     public function test_get_cart_does_not_include_closed_sessions(): void
@@ -303,12 +302,11 @@ class TableCartTest extends TestCase
             ->assertJsonStructure(['id', 'quantity', 'notes', 'price', 'vat_amount', 'line_total', 'menu_item'])
             ->assertJsonPath('quantity', 2)
             ->assertJsonPath('notes', 'No salt')
-            ->assertJsonPath('price', 3.5)
-            ->assertJsonPath('vat_amount', 1.4)
-            ->assertJsonPath('line_total', 7)
+            ->assertJsonPath('price', 3.85)
+            ->assertJsonPath('vat_amount', 0.7)
+            ->assertJsonPath('line_total', 7.7)
             ->assertJsonPath('menu_item.name', 'Fries')
-            ->assertJsonPath('menu_item.vat_rate', 20)
-            ->assertJsonPath('menu_item.vat_amount', 1.4);
+            ->assertJsonPath('menu_item.vat_rate', 10);
 
         $this->assertDatabaseHas('cart_items', [
             'table_scan_session_id' => $this->session->id,
@@ -332,11 +330,11 @@ class TableCartTest extends TestCase
 
         $response->assertCreated()
             ->assertJsonPath('quantity', 2)
-            ->assertJsonPath('price', 5)
-            ->assertJsonPath('line_total', 10)
-            ->assertJsonPath('vat_amount', 2)
+            ->assertJsonPath('price', 5.5)
+            ->assertJsonPath('line_total', 11)
+            ->assertJsonPath('vat_amount', 1)
             ->assertJsonPath('paid_addons.0.name', 'Cheese sauce')
-            ->assertJsonPath('paid_addons.0.price', 1.5)
+            ->assertJsonPath('paid_addons.0.price', 1.65)
             ->assertJsonPath('free_addons.0', 'Ketchup')
             ->assertJsonPath('removed_items.0', 'Salt');
 
@@ -346,7 +344,7 @@ class TableCartTest extends TestCase
             ->assertJsonPath('people.0.personal_items.0.paid_addons.0.name', 'Cheese sauce')
             ->assertJsonPath('people.0.personal_items.0.free_addons.0', 'Ketchup')
             ->assertJsonPath('people.0.personal_items.0.removed_items.0', 'Salt')
-            ->assertJsonPath('people.0.personal_items.0.line_total', 10);
+            ->assertJsonPath('people.0.personal_items.0.line_total', 11);
     }
 
     public function test_add_item_accepts_selected_modifier_groups_and_prices_them(): void
@@ -381,18 +379,18 @@ class TableCartTest extends TestCase
             ]);
 
         $response->assertCreated()
-            ->assertJsonPath('price', 5)
-            ->assertJsonPath('line_total', 10)
-            ->assertJsonPath('vat_amount', 2)
+            ->assertJsonPath('price', 5.5)
+            ->assertJsonPath('line_total', 11)
+            ->assertJsonPath('vat_amount', 1)
             ->assertJsonPath('selected_modifiers.0.name', 'Choose your side')
             ->assertJsonPath('selected_modifiers.0.options.0.name', 'Onion Rings')
-            ->assertJsonPath('selected_modifiers.0.options.0.price_adjustment', 1.5);
+            ->assertJsonPath('selected_modifiers.0.options.0.price_adjustment', 1.65);
 
         $cart = $this->withHeaders($this->headers)->getJson('/api/customer/cart');
 
         $cart->assertOk()
             ->assertJsonPath('people.0.personal_items.0.selected_modifiers.0.options.0.name', 'Onion Rings')
-            ->assertJsonPath('people.0.personal_items.0.line_total', 10);
+            ->assertJsonPath('people.0.personal_items.0.line_total', 11);
     }
 
     public function test_add_item_rejects_missing_required_modifier_selection(): void
@@ -832,13 +830,13 @@ class TableCartTest extends TestCase
 
         $payload = collect($response->json('people.0.orders.0.items'))->keyBy('cart_item_id')[$item->id];
 
-        $this->assertSame(6.5, $payload['unit_price']);
-        $this->assertSame(13, $payload['line_total']);
-        $this->assertSame(20, $payload['vat_rate']);
+        $this->assertSame(7.15, $payload['unit_price']);
+        $this->assertSame(14.3, $payload['line_total']);
+        $this->assertSame(10, $payload['vat_rate']);
         $this->assertSame('food', $payload['tax_category']);
-        $this->assertSame(2.6, $payload['vat_amount']);
+        $this->assertSame(1.3, $payload['vat_amount']);
         $this->assertSame('Cheese sauce', $payload['paid_addons'][0]['name']);
-        $this->assertSame(1.5, $payload['paid_addons'][0]['price']);
+        $this->assertSame(1.65, $payload['paid_addons'][0]['price']);
         $this->assertSame('Ketchup', $payload['free_addons'][0]);
         $this->assertSame('Salt', $payload['removed_items'][0]);
         $this->assertSame('Choose your side', $payload['selected_modifiers'][0]['name']);
@@ -888,8 +886,8 @@ class TableCartTest extends TestCase
             ->assertJsonPath('payment_received', false)
             ->assertJsonPath('items.0.name', 'Fries')
             ->assertJsonPath('items.0.quantity', 2)
-            ->assertJsonPath('items.0.unit_price', 3.5)
-            ->assertJsonPath('items.0.line_total', 7)
+            ->assertJsonPath('items.0.unit_price', 3.85)
+            ->assertJsonPath('items.0.line_total', 7.7)
             ->assertJsonPath('items.0.notes', 'No salt')
             ->assertJsonPath('shared_items', []);
 
@@ -967,11 +965,11 @@ class TableCartTest extends TestCase
 
         $this->assertSame(2, $sharedItems->count());
         $this->assertSame(2, $sharedItems[$ownedShared->id]['shared_between']);
-        $this->assertSame(3.5, $sharedItems[$ownedShared->id]['my_share']);
+        $this->assertSame(3.85, $sharedItems[$ownedShared->id]['my_share']);
         $this->assertSame($otherOrder->id, $sharedItems[$ownedShared->id]['shared_with'][0]['order_id']);
         $this->assertSame($other->id, $sharedItems[$ownedShared->id]['shared_with'][0]['customer_id']);
         $this->assertSame('Bob Jones', $sharedItems[$ownedShared->id]['shared_with'][0]['customer_name']);
-        $this->assertSame(9.5, $sharedItems[$sharedInto->id]['my_share']);
+        $this->assertSame(10.45, $sharedItems[$sharedInto->id]['my_share']);
         $this->assertSame($order->id, $sharedItems[$sharedInto->id]['shared_with'][0]['order_id']);
         $this->assertSame($this->customer->id, $sharedItems[$sharedInto->id]['shared_with'][0]['customer_id']);
         $this->assertSame('Alice Smith', $sharedItems[$sharedInto->id]['shared_with'][0]['customer_name']);

@@ -1,5 +1,6 @@
 <?php
 
+use App\Models\Country;
 use App\Http\Controllers\Api\Vendor\AllergenController;
 use App\Http\Controllers\Api\Vendor\AnalyticsController;
 use App\Http\Controllers\Api\Vendor\AuthController;
@@ -32,6 +33,9 @@ Route::post('{vendorId}/takeaway/scan', [TableController::class, 'recordTakeaway
 // Authenticated vendor routes
 Route::middleware(['auth:vendor,team_member', 'vendor.staff.access'])->group(function () {
     Route::get('me',      [AuthController::class, 'me'])->name('me');
+    Route::get('countries', fn () => response()->json(
+        Country::where('is_active', true)->orderBy('name')->get(['code', 'name', 'flag', 'currency'])
+    ))->name('countries');
     Route::post('logout', [AuthController::class, 'logout'])->name('logout');
     Route::post('profile/password', [AuthController::class, 'changePassword'])->name('profile.password');
 

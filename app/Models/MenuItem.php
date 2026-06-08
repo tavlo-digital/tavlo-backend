@@ -101,4 +101,48 @@ class MenuItem extends Model
     {
         return $this->hasMany(MenuItemIngredient::class);
     }
+
+    /**
+     * Resolve the live VAT rate from tax_categories table
+     * based on the vendor's country and item's tax_category slug.
+     * Falls back to the stored vat_rate if no match is found.
+     *
+     * Pass $vendorCountry to avoid an extra query when the vendor is already loaded.
+     */
+    public function liveVatRate(?string $vendorCountry = null): float
+    {
+        if ($this->tax_category) {
+            if (! $vendorCountry) {
+                $vendor = $this->relationLoaded('vendor')
+                    ? $this->vendor
+                    : Vendor::find($this->vendor_id);
+                $vendorCountry = $vendor?->country ?? 'AT';
+            }
+
+            $country = $this->resolveCountryCode($vendorCountry);
+            $tc = TaxCategory::where('country', $country)
+                ->where('slug', $this->tax_category)
+                ->where('is_active', true)
+                ->first();
+
+            if ($tc) {
+                return (float) $tc->vat_rate;
+            }
+        }
+
+        return (float) ($this->vat_rate ?? 0);
+    }
+
+    private function resolveCountryCode(string $country): string
+    {
+        $map = [
+            'austria' => 'AT',
+            'germany' => 'DE',
+            'united kingdom' => 'GB',
+            'uk' => 'GB',
+            'great britain' => 'GB',
+        ];
+
+        return $map[strtolower(trim($country))] ?? strtoupper(substr($country, 0, 2));
+    }
 }

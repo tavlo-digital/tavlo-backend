@@ -16,6 +16,7 @@ class ModifierGroup extends Model
         'min_selection',
         'max_selection',
         'is_required',
+        'tax_category',
         'sort_order',
         'is_active',
     ];

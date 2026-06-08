@@ -2,7 +2,9 @@
 
 use App\Http\Controllers\Admin\CustomerController;
 use App\Http\Controllers\Admin\DiagnosticsController;
+use App\Http\Controllers\Admin\CountryController;
 use App\Http\Controllers\Admin\MenuCategoryController;
+use App\Http\Controllers\Admin\TaxCategoryController;
 use App\Http\Controllers\Admin\RoleController;
 use App\Http\Controllers\Admin\SubscriptionPlanController;
 use App\Http\Controllers\Admin\UserController;
@@ -30,6 +32,16 @@ Route::middleware(['auth', 'verified', 'admin'])->prefix('admin')->name('admin.'
     Route::post('menu-categories', [MenuCategoryController::class, 'store'])->name('menu-categories.store');
     Route::put('menu-categories/{category}', [MenuCategoryController::class, 'update'])->name('menu-categories.update');
     Route::delete('menu-categories/{category}', [MenuCategoryController::class, 'destroy'])->name('menu-categories.destroy');
+
+    Route::get('tax-categories', [TaxCategoryController::class, 'index'])->name('tax-categories.index');
+    Route::post('tax-categories', [TaxCategoryController::class, 'store'])->name('tax-categories.store');
+    Route::put('tax-categories/{taxCategory}', [TaxCategoryController::class, 'update'])->name('tax-categories.update');
+    Route::delete('tax-categories/{taxCategory}', [TaxCategoryController::class, 'destroy'])->name('tax-categories.destroy');
+
+    Route::get('countries', [CountryController::class, 'index'])->name('countries.index');
+    Route::post('countries', [CountryController::class, 'store'])->name('countries.store');
+    Route::put('countries/{country}', [CountryController::class, 'update'])->name('countries.update');
+    Route::delete('countries/{country}', [CountryController::class, 'destroy'])->name('countries.destroy');
     Route::get('customer/{customer}/{tab}', [CustomerController::class, 'show'])
         ->name('customer.show')
         ->where('tab', 'overview|orders|refunds|reviews|activity|gdpr');
