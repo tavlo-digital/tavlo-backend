@@ -32,7 +32,6 @@ jobs:
         with:
           switches: -avz --delete
             --exclude='.git/'
-            --exclude='node_modules/'
             --exclude='vendor/'
             --exclude='public/build/'
             --exclude='public/storage/'
@@ -69,7 +68,8 @@ jobs:
             php artisan view:clear
             php artisan event:clear
 
-            # Install Node dependencies and build frontend (client + SSR)
+            # Clean corrupted node_modules, then install and build frontend
+            rm -rf node_modules
             npm ci
             npm run build:ssr
 
