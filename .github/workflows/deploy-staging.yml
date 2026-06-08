@@ -70,6 +70,7 @@ jobs:
             php artisan event:clear
 
             # Clean corrupted node_modules, then install and build frontend
+            rm -rf node_modules
             npm ci
             npm run build
 
