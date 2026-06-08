@@ -52,15 +52,22 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: 22
           script: |
+            set -e
             cd ${{ secrets.STAGING_DEPLOY_PATH }}
 
-            php artisan key:generate --force
-
-            # Install PHP dependencies
+            # Install PHP dependencies first (updates autoloader for new classes)
             composer install --no-interaction --prefer-dist --optimize-autoloader --no-dev
 
             # Set permissions
             chmod -R 775 storage bootstrap/cache
+
+            php artisan key:generate --force
+
+            # Clear stale caches before building
+            php artisan config:clear
+            php artisan route:clear
+            php artisan view:clear
+            php artisan event:clear
 
             # Install Node dependencies and build frontend (client + SSR)
             npm ci
@@ -69,7 +76,7 @@ jobs:
             # Run database migrations
             php artisan migrate --force
 
-            # Clear and cache config/routes/views
+            # Rebuild caches
             php artisan config:cache
             php artisan route:cache
             php artisan view:cache
