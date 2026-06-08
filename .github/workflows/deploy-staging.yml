@@ -56,12 +56,15 @@ jobs:
 
             php artisan key:generate --force
 
+            # Install PHP dependencies
+            composer install --no-interaction --prefer-dist --optimize-autoloader --no-dev
+
             # Set permissions
             chmod -R 775 storage bootstrap/cache
 
-            # Install Node dependencies and build frontend
+            # Install Node dependencies and build frontend (client + SSR)
             npm ci
-            npm run build
+            npm run build:ssr
 
             # Run database migrations
             php artisan migrate --force
