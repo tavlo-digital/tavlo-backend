@@ -36,6 +36,7 @@ jobs:
             --exclude='vendor/'
             --exclude='public/build/'
             --exclude='public/storage/'
+            --exclude='.npm-cache/'
             --exclude='storage/'
 
           path: ./
@@ -69,8 +70,12 @@ jobs:
             php artisan view:clear
             php artisan event:clear
 
-            # Clean corrupted node_modules, then install and build frontend
-            npm ci
+            # Use a project-local cache because shared hosts can have a root-owned ~/.npm.
+            export npm_config_cache="$PWD/.npm-cache"
+            mkdir -p "$npm_config_cache"
+
+            # Install and build frontend
+            npm ci --no-audit --no-fund
             npm run build
 
             # Run database migrations
