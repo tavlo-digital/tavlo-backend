@@ -565,6 +565,8 @@ class OrderController extends Controller
                 'status' => $itemStatus,
                 'sharedBetween' => $sharedBetween,
                 'sharedWithOrderIds' => $orderIds,
+                'receivedAt' => $ci->received_at?->toISOString(),
+                'received_at' => $ci->received_at?->toISOString(),
                 'preparingStartAt' => $ci->preparing_start_at?->toISOString(),
                 'preparing_start_at' => $ci->preparing_start_at?->toISOString(),
                 'readyAt' => $ci->ready_at?->toISOString(),
@@ -764,6 +766,10 @@ class OrderController extends Controller
 
         if ($item->preparing_start_at) {
             return 'in_progress';
+        }
+
+        if ($item->received_at) {
+            return 'received';
         }
 
         return 'new';

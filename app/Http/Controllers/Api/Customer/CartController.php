@@ -620,7 +620,10 @@ class CartController extends Controller
         DB::transaction(function () use ($order, $mySession, $total) {
             CartItem::where('table_scan_session_id', $mySession->id)
                 ->whereNull('order_id')
-                ->update(['order_id' => $order->id]);
+                ->update([
+                    'order_id'    => $order->id,
+                    'received_at' => now(),
+                ]);
 
             $order->update([
                 'status' => 'confirmed',
@@ -876,6 +879,7 @@ class CartController extends Controller
             'shared_with'        => $sharedWith,
             'my_share'           => $myShare,
             'status'             => $this->cartItemStatus($ci),
+            'received_at'        => $ci->received_at?->toIso8601String(),
             'preparing_start_at' => $ci->preparing_start_at?->toIso8601String(),
             'ready_at'           => $ci->ready_at?->toIso8601String(),
             'served_at'          => $ci->served_at?->toIso8601String(),
@@ -894,6 +898,10 @@ class CartController extends Controller
 
         if ($item->preparing_start_at) {
             return 'Preparing';
+        }
+
+        if ($item->received_at) {
+            return 'Received';
         }
 
         return null;

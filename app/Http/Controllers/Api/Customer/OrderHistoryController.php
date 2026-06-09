@@ -735,6 +735,10 @@ class OrderHistoryController extends Controller
             return 'Preparing';
         }
 
+        if ($item->received_at) {
+            return 'Received';
+        }
+
         return null;
     }
 }
