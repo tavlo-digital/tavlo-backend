@@ -963,9 +963,10 @@ class CartController extends Controller
                     $data['removed_items'] ?? $data['removable_items'] ?? []
                 )
                 : ($existing?->removed_items ?? []),
-            'selected_modifiers' => (array_key_exists('selected_modifiers', $data) || array_key_exists('modifiers', $data))
-                ? $this->normalizeSelectedModifiers($menuItem, $data['selected_modifiers'] ?? $data['modifiers'] ?? [])
-                : ($existing?->selected_modifiers ?? []),
+            'selected_modifiers' => $this->normalizeSelectedModifiers(
+                $menuItem,
+                $data['selected_modifiers'] ?? $data['modifiers'] ?? $existing?->selected_modifiers ?? []
+            ),
         ];
     }
 
