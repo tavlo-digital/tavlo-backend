@@ -11,6 +11,8 @@ class SubscriptionPlan extends Model
         'description',
         'monthly_price',
         'yearly_price',
+        'stripe_monthly_price_id',
+        'stripe_yearly_price_id',
         'currency',
         'max_users',
         'parent_plan_id',

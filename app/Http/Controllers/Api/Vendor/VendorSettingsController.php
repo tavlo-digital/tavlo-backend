@@ -262,6 +262,18 @@ class VendorSettingsController extends Controller
             }
         }
 
+        if (($data['isLiveAndDiscoverable'] ?? false) === true) {
+            $hasApprovedLegal = $vendor->requestChanges()
+                ->where('status', 'approved')
+                ->exists();
+
+            if (!$hasApprovedLegal) {
+                return response()->json([
+                    'message' => 'Legal information must be submitted and approved before your restaurant can go live.',
+                ], 422);
+            }
+        }
+
         if (! empty($settingsData)) {
             $vendor->vendorSetting()->updateOrCreate(
                 ['vendor_id' => $vendor->id],

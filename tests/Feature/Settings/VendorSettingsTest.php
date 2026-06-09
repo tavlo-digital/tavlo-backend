@@ -78,6 +78,12 @@ class VendorSettingsTest extends TestCase
 
     public function test_can_update_basic_settings(): void
     {
+        VendorRequestChange::create([
+            'vendor_id' => $this->vendor->id,
+            'status'    => 'approved',
+            'changes'   => json_encode(['legalEntityName' => 'Test GmbH']),
+        ]);
+
         $response = $this->putJson(
             "/api/vendor/{$this->vendor->vendor_public_id}/settings",
             [

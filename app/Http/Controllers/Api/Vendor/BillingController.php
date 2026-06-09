@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\Vendor;
 
 use App\Http\Controllers\Controller;
+use App\Models\SubscriptionPlan;
 use App\Models\Vendor;
 use App\Services\BillingService;
 use Illuminate\Http\JsonResponse;
@@ -12,6 +13,37 @@ class BillingController extends Controller
 {
     public function __construct(private readonly BillingService $billingService)
     {
+    }
+
+    /**
+     * GET /api/vendor/billing/plans
+     */
+    public function plans(Request $request): JsonResponse
+    {
+        $plans = SubscriptionPlan::where('is_active', true)
+            ->with(['features' => function ($q) {
+                $q->orderBy('category')->orderBy('name');
+            }])
+            ->orderBy('monthly_price')
+            ->get()
+            ->map(fn (SubscriptionPlan $plan) => [
+                'id'           => $plan->id,
+                'name'         => $plan->name,
+                'description'  => $plan->description,
+                'monthlyPrice' => (float) $plan->monthly_price,
+                'yearlyPrice'  => (float) $plan->yearly_price,
+                'currency'     => $plan->currency ?? 'EUR',
+                'isPopular'    => (bool) $plan->is_popular,
+                'maxUsers'     => $plan->max_users,
+                'features'     => $plan->features->map(fn ($f) => [
+                    'name'        => $f->name,
+                    'description' => $f->description,
+                    'category'    => $f->category,
+                    'isInherited' => (bool) $f->pivot->is_inherited,
+                ])->values(),
+            ]);
+
+        return response()->json(['data' => $plans]);
     }
 
     /**
@@ -211,6 +243,63 @@ class BillingController extends Controller
         }
 
         return response()->json(['url' => $url]);
+    }
+
+    /**
+     * POST /api/vendor/{vendorId}/billing/checkout-session
+     */
+    public function checkoutSession(Request $request, string $vendorId): JsonResponse
+    {
+        $vendor = $this->resolveVendor($vendorId);
+        $this->authorizeVendor($request, $vendor);
+
+        $data = $request->validate([
+            'planId'       => ['required', 'integer', 'exists:subscription_plans,id'],
+            'billingCycle' => ['required', 'string', 'in:monthly,yearly'],
+        ]);
+
+        $plan = SubscriptionPlan::findOrFail($data['planId']);
+
+        $priceId = $data['billingCycle'] === 'yearly'
+            ? $plan->stripe_yearly_price_id
+            : $plan->stripe_monthly_price_id;
+
+        if (!$priceId) {
+            return response()->json([
+                'message' => 'Stripe pricing is not configured for this plan. Please contact support.',
+            ], 422);
+        }
+
+        $secret = config('services.stripe.secret') ?: env('STRIPE_SECRET');
+
+        if (!$secret) {
+            return response()->json([
+                'message' => 'Payment system is not configured.',
+            ], 503);
+        }
+
+        $stripe = new \Stripe\StripeClient($secret);
+
+        $frontendBase = rtrim(env('VENDOR_FRONTEND_URL', 'http://localhost:3000'), '/');
+
+        $session = $stripe->checkout->sessions->create([
+            'mode'        => 'subscription',
+            'line_items'  => [[
+                'price'    => $priceId,
+                'quantity' => 1,
+            ]],
+            'success_url' => $frontendBase . '/activate/success?plan=' . urlencode($plan->name) . '&session_id={CHECKOUT_SESSION_ID}',
+            'cancel_url'  => $frontendBase . '/activate/checkout',
+            'client_reference_id' => (string) $vendor->id,
+            'customer_email'      => $vendor->email,
+            'metadata'            => [
+                'vendor_id' => $vendor->id,
+                'plan_id'   => $plan->id,
+                'cycle'     => $data['billingCycle'],
+            ],
+        ]);
+
+        return response()->json(['checkoutUrl' => $session->url]);
     }
 
     // -------------------------------------------------------------------------

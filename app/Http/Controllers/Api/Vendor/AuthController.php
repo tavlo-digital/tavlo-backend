@@ -112,20 +112,25 @@ class AuthController extends Controller
 
     private function formatVendorUser(Vendor $vendor): array
     {
+        $vendor->loadMissing('vendorSetting');
+
         return [
-            'id'             => $vendor->id,
-            'vendorId'       => (string) $vendor->id,
-            'vendorPublicId' => $vendor->vendor_public_id,
+            'id'               => $vendor->id,
+            'vendorId'         => (string) $vendor->id,
+            'vendorPublicId'   => $vendor->vendor_public_id,
             'vendor_public_id' => $vendor->vendor_public_id,
-            'actorType'      => 'vendor',
-            'role'           => 'manager',
-            'name'           => $vendor->name,
-            'restaurantName' => $vendor->restaurant_name,
-            'country'        => $vendor->country,
-            'phone'          => $vendor->phone,
-            'email'          => $vendor->email,
-            'permissions'    => ['*'],
-            'created_at'     => $vendor->created_at?->toISOString(),
+            'actorType'        => 'vendor',
+            'role'             => 'manager',
+            'name'             => $vendor->name,
+            'restaurantName'   => $vendor->restaurant_name,
+            'country'          => $vendor->country,
+            'phone'            => $vendor->phone,
+            'email'            => $vendor->email,
+            'permissions'      => ['*'],
+            'created_at'       => $vendor->created_at?->toISOString(),
+            'status'                => $vendor->status ?? 'pending',
+            'liveStatus'            => $vendor->live_status ?? 'not-live',
+            'isLiveAndDiscoverable' => (bool) ($vendor->vendorSetting?->is_live_and_discoverable ?? false),
         ];
     }
 

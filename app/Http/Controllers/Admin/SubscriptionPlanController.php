@@ -54,6 +54,8 @@ class SubscriptionPlanController extends Controller
                     'previewFeatures' => $previewFeatures,
                     'moreCount' => max(0, count($allFeatures) - 3),
                     'featureNames' => $directFeatures,
+                    'stripeMonthlyPriceId' => $plan->stripe_monthly_price_id,
+                    'stripeYearlyPriceId' => $plan->stripe_yearly_price_id,
                 ];
             });
 
@@ -151,6 +153,8 @@ class SubscriptionPlanController extends Controller
             'max_users' => ['required', 'integer', 'min:1'],
             'parent_plan_id' => ['nullable', 'exists:subscription_plans,id'],
             'is_popular' => ['boolean'],
+            'stripe_monthly_price_id' => ['nullable', 'string', 'max:255'],
+            'stripe_yearly_price_id' => ['nullable', 'string', 'max:255'],
             'feature_ids' => ['array'],
             'feature_ids.*' => ['exists:features,id'],
         ]);
@@ -164,6 +168,8 @@ class SubscriptionPlanController extends Controller
                 'max_users' => $validated['max_users'],
                 'parent_plan_id' => $validated['parent_plan_id'] ?? null,
                 'is_popular' => $validated['is_popular'] ?? false,
+                'stripe_monthly_price_id' => $validated['stripe_monthly_price_id'] ?? null,
+                'stripe_yearly_price_id' => $validated['stripe_yearly_price_id'] ?? null,
             ]);
 
             $featureIds = $validated['feature_ids'] ?? [];
@@ -206,6 +212,8 @@ class SubscriptionPlanController extends Controller
             'max_users' => ['required', 'integer', 'min:1'],
             'parent_plan_id' => ['nullable', 'exists:subscription_plans,id'],
             'is_popular' => ['boolean'],
+            'stripe_monthly_price_id' => ['nullable', 'string', 'max:255'],
+            'stripe_yearly_price_id' => ['nullable', 'string', 'max:255'],
             'feature_ids' => ['array'],
             'feature_ids.*' => ['exists:features,id'],
         ]);
@@ -219,6 +227,8 @@ class SubscriptionPlanController extends Controller
                 'max_users' => $validated['max_users'],
                 'parent_plan_id' => $validated['parent_plan_id'] ?? null,
                 'is_popular' => $validated['is_popular'] ?? false,
+                'stripe_monthly_price_id' => $validated['stripe_monthly_price_id'] ?? null,
+                'stripe_yearly_price_id' => $validated['stripe_yearly_price_id'] ?? null,
             ]);
 
             // Remove old features and re-sync

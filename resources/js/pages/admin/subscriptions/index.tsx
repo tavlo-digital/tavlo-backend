@@ -35,6 +35,8 @@ interface Plan {
     previewFeatures: string[];
     moreCount: number;
     featureNames: string[];
+    stripeMonthlyPriceId: string | null;
+    stripeYearlyPriceId: string | null;
 }
 
 interface Feature {
@@ -419,6 +421,8 @@ function CreatePlanModal({ plans, featureCategories, onClose }: { plans: Plan[];
     const [maxUsers, setMaxUsers] = useState(5);
     const [parentPlanId, setParentPlanId] = useState('');
     const [isPopular, setIsPopular] = useState(false);
+    const [stripeMonthlyPriceId, setStripeMonthlyPriceId] = useState('');
+    const [stripeYearlyPriceId, setStripeYearlyPriceId] = useState('');
     const [selectedFeatures, setSelectedFeatures] = useState<Set<string>>(new Set());
     const [processing, setProcessing] = useState(false);
 
@@ -449,6 +453,8 @@ function CreatePlanModal({ plans, featureCategories, onClose }: { plans: Plan[];
             max_users: maxUsers,
             parent_plan_id: parentPlanId || null,
             is_popular: isPopular,
+            stripe_monthly_price_id: stripeMonthlyPriceId || null,
+            stripe_yearly_price_id: stripeYearlyPriceId || null,
             feature_ids: featureIds,
         }, {
             onFinish: () => setProcessing(false),
@@ -504,6 +510,34 @@ function CreatePlanModal({ plans, featureCategories, onClose }: { plans: Plan[];
                                 <p className="mt-1 text-xs text-gray-500">Yearly billing typically offers a discount (~20%)</p>
                             </div>
                         </div>
+                    </div>
+
+                    {/* Stripe Price IDs */}
+                    <div>
+                        <h3 className="mb-3 text-sm font-semibold tracking-wide text-gray-900 uppercase">Stripe Price IDs</h3>
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <label className="mb-2 block text-sm font-medium text-gray-900">Monthly Price ID</label>
+                                <input
+                                    type="text"
+                                    className="flex h-9 w-full rounded-md border border-gray-300 bg-white px-3 py-1 text-sm text-gray-900 placeholder:text-gray-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 focus:outline-none"
+                                    placeholder="price_xxx"
+                                    value={stripeMonthlyPriceId}
+                                    onChange={(e) => setStripeMonthlyPriceId(e.target.value)}
+                                />
+                            </div>
+                            <div>
+                                <label className="mb-2 block text-sm font-medium text-gray-900">Yearly Price ID</label>
+                                <input
+                                    type="text"
+                                    className="flex h-9 w-full rounded-md border border-gray-300 bg-white px-3 py-1 text-sm text-gray-900 placeholder:text-gray-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 focus:outline-none"
+                                    placeholder="price_xxx"
+                                    value={stripeYearlyPriceId}
+                                    onChange={(e) => setStripeYearlyPriceId(e.target.value)}
+                                />
+                            </div>
+                        </div>
+                        <p className="mt-1 text-xs text-gray-500">Copy from Stripe Dashboard &rarr; Products &rarr; Pricing. Required for checkout to work.</p>
                     </div>
 
                     {/* Limits */}
@@ -582,6 +616,8 @@ function EditPlanModal({ plan, plans, featureCategories, onClose }: { plan: Plan
     const [yearlyPrice, setYearlyPrice] = useState(plan.yearlyPrice);
     const [maxUsers, setMaxUsers] = useState(plan.maxUsers);
     const [isPopular, setIsPopular] = useState(plan.isPopular);
+    const [stripeMonthlyPriceId, setStripeMonthlyPriceId] = useState(plan.stripeMonthlyPriceId ?? '');
+    const [stripeYearlyPriceId, setStripeYearlyPriceId] = useState(plan.stripeYearlyPriceId ?? '');
     const [selectedFeatures, setSelectedFeatures] = useState<Set<string>>(
         new Set(plan.featureNames)
     );
@@ -633,6 +669,8 @@ function EditPlanModal({ plan, plans, featureCategories, onClose }: { plan: Plan
             max_users: maxUsers,
             parent_plan_id: plan.parentPlanId,
             is_popular: isPopular,
+            stripe_monthly_price_id: stripeMonthlyPriceId || null,
+            stripe_yearly_price_id: stripeYearlyPriceId || null,
             feature_ids: featureIds,
         }, {
             onFinish: () => setProcessing(false),
@@ -701,6 +739,34 @@ function EditPlanModal({ plan, plans, featureCategories, onClose }: { plan: Plan
                                 <p className="mt-1 text-xs text-gray-500">Yearly billing typically offers a discount (~20%)</p>
                             </div>
                         </div>
+                    </div>
+
+                    {/* Stripe Price IDs */}
+                    <div>
+                        <h3 className="mb-3 text-sm font-semibold tracking-wide text-gray-900 uppercase">Stripe Price IDs</h3>
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <label className="mb-2 block text-sm font-medium text-gray-900">Monthly Price ID</label>
+                                <input
+                                    type="text"
+                                    className="flex h-9 w-full rounded-md border border-gray-300 bg-white px-3 py-1 text-sm text-gray-900 placeholder:text-gray-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 focus:outline-none"
+                                    placeholder="price_xxx"
+                                    value={stripeMonthlyPriceId}
+                                    onChange={(e) => setStripeMonthlyPriceId(e.target.value)}
+                                />
+                            </div>
+                            <div>
+                                <label className="mb-2 block text-sm font-medium text-gray-900">Yearly Price ID</label>
+                                <input
+                                    type="text"
+                                    className="flex h-9 w-full rounded-md border border-gray-300 bg-white px-3 py-1 text-sm text-gray-900 placeholder:text-gray-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 focus:outline-none"
+                                    placeholder="price_xxx"
+                                    value={stripeYearlyPriceId}
+                                    onChange={(e) => setStripeYearlyPriceId(e.target.value)}
+                                />
+                            </div>
+                        </div>
+                        <p className="mt-1 text-xs text-gray-500">Copy from Stripe Dashboard &rarr; Products &rarr; Pricing. Required for checkout to work.</p>
                     </div>
 
                     {/* Limits */}
