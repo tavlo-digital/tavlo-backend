@@ -202,6 +202,10 @@ class OrderHistoryController extends Controller
         $taxGroups = TaxCalculationService::computeTaxGroups($items, $vendorCountry);
         $totals = TaxCalculationService::computeTotals($taxGroups, $serviceFeeRate);
 
+        $receiptTip = round((float) ($order->tip_amount ?? 0), 2);
+        $totals['total_tips'] = $receiptTip;
+        $totals['grand_total'] = round($totals['grand_total'] + $receiptTip, 2);
+
         $invoiceNumber = $this->resolveInvoiceNumber($order, $settings);
 
         $payment = OrderPayment::where('order_id', $order->id)
@@ -371,6 +375,10 @@ class OrderHistoryController extends Controller
         $taxGroups = TaxCalculationService::computeTaxGroups($items, $vendorCountry);
         $totals = TaxCalculationService::computeTotals($taxGroups, $serviceFeeRate);
 
+        $tipAmount = round((float) ($order->tip_amount ?? 0), 2);
+        $totals['total_tips'] = $tipAmount;
+        $totals['grand_total'] = round($totals['grand_total'] + $tipAmount, 2);
+
         return [
             'order_id' => $order->order_number ?? (string) $order->id,
             'order_public_id' => $order->order_public_id,
@@ -380,6 +388,7 @@ class OrderHistoryController extends Controller
             'payment_method' => $order->payment_method,
             'items_count' => (int) $items->sum('quantity'),
             'total_amount' => round((float) $order->amount, 2),
+            'tip_amount' => $tipAmount,
             'items' => $items->map(fn (CartItem $item) => $this->formatHistoryItem($item, $vendorCountry))->values()->all(),
             'tax_groups' => $taxGroups,
             'totals' => $totals,
@@ -457,6 +466,10 @@ class OrderHistoryController extends Controller
         $taxGroups = TaxCalculationService::computeTaxGroups($items, $vendorCountry);
         $totals = TaxCalculationService::computeTotals($taxGroups, $serviceFeeRate);
 
+        $tipAmount = round((float) ($order->tip_amount ?? 0), 2);
+        $totals['total_tips'] = $tipAmount;
+        $totals['grand_total'] = round($totals['grand_total'] + $tipAmount, 2);
+
         return [
             'order_id' => $order->order_number ?? (string) $order->id,
             'order_public_id' => $order->order_public_id,
@@ -470,6 +483,7 @@ class OrderHistoryController extends Controller
             'order_type' => $order->order_type,
             'payment_status' => $this->paymentStatus($order),
             'payment_method' => $order->payment_method,
+            'tip_amount' => $tipAmount,
             'items' => $items->map(function (CartItem $item) use ($vendorCountry) {
                 $historyItem = $this->formatHistoryItem($item, $vendorCountry);
                 unset($historyItem['id']);

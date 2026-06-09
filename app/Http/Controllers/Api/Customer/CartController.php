@@ -778,6 +778,10 @@ class CartController extends Controller
             $personTaxGroups = TaxCalculationService::computeTaxGroups($personCartItems, $vendorCountry);
             $personTotals = TaxCalculationService::computeTotals($personTaxGroups, $serviceFeeRate);
 
+            $totalTips = round((float) $personOrders->sum(fn(Order $o) => (float) ($o->tip_amount ?? 0)), 2);
+            $personTotals['total_tips'] = $totalTips;
+            $personTotals['grand_total'] = round($personTotals['grand_total'] + $totalTips, 2);
+
             return [
                 'session_id'   => $s->id,
                 'customer_id'  => $s->customer_id,
@@ -908,6 +912,7 @@ class CartController extends Controller
             'table_scan_session_id' => $o->table_scan_session_id,
             'status'                => $o->status,
             'amount'                => (float) $o->amount,
+            'tip_amount'            => (float) ($o->tip_amount ?? 0),
             'currency'              => $o->currency,
             'order_number'          => $o->order_number,
             'order_type'            => $o->order_type,
@@ -1054,10 +1059,12 @@ class CartController extends Controller
                 ->values();
 
             $count = $rawOptionIds->count();
+            $minRequired = max((int) $group->min_selection, $group->is_required ? 1 : 0);
+            $maxSelection = max(1, (int) $group->max_selection);
 
-            if ($group->is_required && $count < (int) $group->min_selection) {
+            if ($count < $minRequired) {
                 throw ValidationException::withMessages([
-                    'selected_modifiers' => ["Please choose at least {$group->min_selection} option(s) for {$group->name}."],
+                    'selected_modifiers' => ["Please choose at least {$minRequired} option(s) for {$group->name}."],
                 ]);
             }
 
@@ -1065,7 +1072,6 @@ class CartController extends Controller
                 continue;
             }
 
-            $maxSelection = max(1, (int) $group->max_selection);
             if ($group->type === 'single' && $count > 1) {
                 throw ValidationException::withMessages([
                     'selected_modifiers' => ["Only one option can be selected for {$group->name}."],
@@ -1075,12 +1081,6 @@ class CartController extends Controller
             if ($count > $maxSelection) {
                 throw ValidationException::withMessages([
                     'selected_modifiers' => ["You can choose at most {$maxSelection} option(s) for {$group->name}."],
-                ]);
-            }
-
-            if ($count < (int) $group->min_selection) {
-                throw ValidationException::withMessages([
-                    'selected_modifiers' => ["Please choose at least {$group->min_selection} option(s) for {$group->name}."],
                 ]);
             }
 
