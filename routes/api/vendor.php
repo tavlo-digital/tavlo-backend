@@ -29,13 +29,13 @@ Route::get('team/invitations/{token}', [TeamController::class, 'invitation'])->n
 Route::post('team/invitations/{token}/accept', [TeamController::class, 'acceptInvitation'])->name('team.invitations.accept');
 Route::post('{vendorId}/tables/{tableId}/scan', [TableController::class, 'recordScan'])->name('tables.scan');
 Route::post('{vendorId}/takeaway/scan', [TableController::class, 'recordTakeawayScan'])->name('takeaway.scan');
+Route::get('countries', fn () => response()->json(
+    Country::where('is_active', true)->orderBy('name')->get(['code', 'name', 'flag', 'currency'])
+))->name('countries');
 
 // Authenticated vendor routes
 Route::middleware(['auth:vendor,team_member', 'vendor.staff.access'])->group(function () {
     Route::get('me',      [AuthController::class, 'me'])->name('me');
-    Route::get('countries', fn () => response()->json(
-        Country::where('is_active', true)->orderBy('name')->get(['code', 'name', 'flag', 'currency'])
-    ))->name('countries');
     Route::post('logout', [AuthController::class, 'logout'])->name('logout');
     Route::post('profile/password', [AuthController::class, 'changePassword'])->name('profile.password');
 

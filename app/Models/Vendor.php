@@ -11,6 +11,18 @@ class Vendor extends Authenticatable
 {
     use HasApiTokens, HasFactory, Notifiable;
 
+    protected static function booted(): void
+    {
+        static::creating(function (Vendor $vendor) {
+            if (empty($vendor->vendor_public_id)) {
+                do {
+                    $id = 'VID-' . str_pad(random_int(1000, 9999), 4, '0', STR_PAD_LEFT);
+                } while (static::where('vendor_public_id', $id)->exists());
+                $vendor->vendor_public_id = $id;
+            }
+        });
+    }
+
     protected $fillable = [
         'vendor_public_id',
         'slug',
