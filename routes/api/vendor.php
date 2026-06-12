@@ -16,11 +16,15 @@ use App\Http\Controllers\Api\Vendor\ReviewController;
 use App\Http\Controllers\Api\Vendor\SeedController;
 use App\Http\Controllers\Api\Vendor\SpecialTagController;
 use App\Http\Controllers\Api\Vendor\StripeConnectController;
+use App\Http\Controllers\Api\Vendor\SubscriptionWebhookController;
 use App\Http\Controllers\Api\Vendor\TableController;
 use App\Http\Controllers\Api\Vendor\TeamController;
 use App\Http\Controllers\Api\Vendor\VendorSettingsController;
 use App\Models\Country;
 use Illuminate\Support\Facades\Route;
+
+// Stripe subscription webhook (no auth — verified by Stripe signature)
+Route::post('billing/webhook', [SubscriptionWebhookController::class, 'handle'])->name('billing.webhook');
 
 // Auth (public)
 Route::post('register', [AuthController::class, 'register'])->name('register');
