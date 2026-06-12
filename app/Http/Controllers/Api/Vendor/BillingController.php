@@ -302,6 +302,74 @@ class BillingController extends Controller
         return response()->json(['checkoutUrl' => $session->url]);
     }
 
+    /**
+     * POST /api/vendor/{vendorId}/billing/verify-checkout
+     */
+    public function verifyCheckout(Request $request, string $vendorId): JsonResponse
+    {
+        $vendor = $this->resolveVendor($vendorId);
+        $this->authorizeVendor($request, $vendor);
+
+        $data = $request->validate([
+            'sessionId' => ['required', 'string'],
+        ]);
+
+        $secret = config('services.stripe.secret');
+        if (!$secret) {
+            return response()->json(['message' => 'Payment system is not configured.'], 503);
+        }
+
+        $stripe = new \Stripe\StripeClient($secret);
+
+        try {
+            $session = $stripe->checkout->sessions->retrieve($data['sessionId']);
+        } catch (\Exception $e) {
+            return response()->json(['message' => 'Could not verify checkout session.'], 422);
+        }
+
+        if ($session->payment_status !== 'paid') {
+            return response()->json([
+                'verified' => false,
+                'message'  => 'Payment has not been completed yet.',
+            ]);
+        }
+
+        $metaVendorId = $session->metadata->vendor_id ?? $session->client_reference_id ?? null;
+        if ((string) $metaVendorId !== (string) $vendor->id) {
+            return response()->json(['message' => 'Session does not belong to this vendor.'], 403);
+        }
+
+        if (!$vendor->status || $vendor->status === 'pending') {
+            $vendor->update(['status' => 'active']);
+        }
+
+        $existing = $vendor->subscriptions()
+            ->where('stripe_subscription_id', $session->subscription)
+            ->first();
+
+        if (!$existing && $session->subscription) {
+            $planId = $session->metadata->plan_id ?? null;
+            $cycle = $session->metadata->cycle ?? 'monthly';
+
+            \App\Models\Subscription::create([
+                'vendor_id'              => $vendor->id,
+                'plan_id'                => $planId,
+                'status'                 => 'active',
+                'billing_cycle'          => $cycle,
+                'start_date'             => now(),
+                'next_billing_date'      => $cycle === 'yearly' ? now()->addYear() : now()->addMonth(),
+                'auto_renew'             => true,
+                'stripe_subscription_id' => $session->subscription,
+                'stripe_customer_id'     => $session->customer,
+            ]);
+        }
+
+        return response()->json([
+            'verified' => true,
+            'status'   => $vendor->fresh()->status,
+        ]);
+    }
+
     // -------------------------------------------------------------------------
     // Private helpers
     // -------------------------------------------------------------------------

@@ -105,6 +105,10 @@ class SubscriptionWebhookController extends Controller
             'stripe_customer_id'     => $session->customer,
         ]);
 
+        if (!$vendor->status || $vendor->status === 'pending') {
+            $vendor->update(['status' => 'active']);
+        }
+
         SubscriptionEvent::create([
             'subscription_id' => $subscription->id,
             'event_type'      => 'subscription_created',

@@ -164,6 +164,7 @@ Route::middleware(['auth:vendor,team_member', 'vendor.staff.access'])->group(fun
     Route::get('{vendorId}/billing/invoices/{invoiceId}/download', [BillingController::class, 'downloadInvoice'])->name('billing.downloadInvoice');
     Route::get('{vendorId}/billing/usage', [BillingController::class, 'usage'])->name('billing.usage');
     Route::post('{vendorId}/billing/checkout-session', [BillingController::class, 'checkoutSession'])->name('billing.checkoutSession');
+    Route::post('{vendorId}/billing/verify-checkout', [BillingController::class, 'verifyCheckout'])->name('billing.verifyCheckout');
     Route::post('{vendorId}/billing/upgrade', [BillingController::class, 'upgradePlan'])->name('billing.upgrade');
     Route::patch('{vendorId}/billing/cycle', [BillingController::class, 'changeCycle'])->name('billing.cycle');
     Route::post('{vendorId}/billing/payment-method', [BillingController::class, 'updatePaymentMethod'])->name('billing.paymentMethod');

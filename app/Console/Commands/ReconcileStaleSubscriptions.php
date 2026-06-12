@@ -71,6 +71,17 @@ class ReconcileStaleSubscriptions extends Command
 
             $subscription->update($updates);
 
+            $vendor = $subscription->vendor;
+            if ($vendor) {
+                if ($mappedStatus === 'active' && (!$vendor->status || $vendor->status === 'pending')) {
+                    $vendor->update(['status' => 'active']);
+                    $this->info("  → Activated vendor #{$vendor->id}");
+                } elseif (in_array($mappedStatus, ['cancelled', 'expired']) && $vendor->status === 'active') {
+                    $vendor->update(['status' => 'pending']);
+                    $this->info("  → Deactivated vendor #{$vendor->id}");
+                }
+            }
+
             SubscriptionEvent::create([
                 'subscription_id' => $subscription->id,
                 'event_type'      => 'status_reconciled',
