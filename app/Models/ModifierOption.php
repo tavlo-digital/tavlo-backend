@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class ModifierOption extends Model
 {
@@ -26,5 +27,10 @@ class ModifierOption extends Model
     public function group(): BelongsTo
     {
         return $this->belongsTo(ModifierGroup::class, 'modifier_group_id');
+    }
+
+    public function localizedTranslations(): HasMany
+    {
+        return $this->hasMany(ModifierOptionTranslation::class);
     }
 }

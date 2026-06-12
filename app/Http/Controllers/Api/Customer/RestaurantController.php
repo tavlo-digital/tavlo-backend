@@ -11,6 +11,7 @@ use App\Models\RestaurantTable;
 use App\Models\SpecialTag;
 use App\Models\Vendor;
 use App\Models\VendorSetting;
+use App\Services\LocaleService;
 use App\Services\TaxCalculationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -19,6 +20,8 @@ use Illuminate\Support\Str;
 
 class RestaurantController extends Controller
 {
+    public function __construct(private readonly LocaleService $locales) {}
+
     /**
      * List all active menu categories across discoverable restaurants.
      */
@@ -318,24 +321,32 @@ class RestaurantController extends Controller
     /**
      * Get menu categories for a restaurant.
      */
-    public function categories(string $vendorPublicId): JsonResponse
+    public function categories(Request $request, string $vendorPublicId): JsonResponse
     {
         $vendor = $this->discoverableVendor($vendorPublicId);
+        $locale = $this->locales->resolveCustomerLocale($request, $vendor);
 
         $categories = MenuCategory::where('vendor_id', $vendor->id)
             ->where('is_active', true)
-            ->with('masterCategory')
+            ->with(['masterCategory', 'localizedTranslations'])
             ->orderBy('sort_order')
             ->get()
             ->map(fn (MenuCategory $category) => [
                 'id' => $category->id,
-                'name' => $category->display_name,
+                'name' => $this->locales->translated(
+                    $category,
+                    'localizedTranslations',
+                    'name',
+                    $vendor,
+                    $locale,
+                    $category->display_name
+                ),
                 'slug' => $category->display_slug,
                 'icon' => $category->display_icon,
                 'sort_order' => $category->sort_order,
             ]);
 
-        return response()->json($categories);
+        return response()->json($categories)->header('Content-Language', $locale);
     }
 
     /**
@@ -344,17 +355,25 @@ class RestaurantController extends Controller
     public function menu(Request $request, string $vendorPublicId): JsonResponse
     {
         $vendor = $this->discoverableVendor($vendorPublicId);
+        $locale = $this->locales->resolveCustomerLocale($request, $vendor);
 
         $query = MenuItem::where('vendor_id', $vendor->id)
             ->where('is_active', true)
             ->where('available', true)
             ->with([
                 'category.masterCategory',
+                'category.localizedTranslations',
+                'itemTranslations',
                 'allergens:id,name',
                 'tags:id,slug,label',
                 'modifierGroups' => fn ($q) => $q->where('is_active', true)
                     ->orderByPivot('sort_order')
-                    ->with(['options' => fn ($o) => $o->where('is_active', true)->orderBy('sort_order')]),
+                    ->with([
+                        'localizedTranslations',
+                        'options' => fn ($o) => $o->where('is_active', true)
+                            ->with('localizedTranslations')
+                            ->orderBy('sort_order'),
+                    ]),
             ]);
 
         if ($request->filled('category_id')) {
@@ -362,7 +381,14 @@ class RestaurantController extends Controller
         }
 
         if ($request->filled('search')) {
-            $query->where('name', 'like', "%{$request->search}%");
+            $search = '%'.$request->search.'%';
+            $fallbackLanguages = $this->locales->fallbackChain($vendor, $locale);
+            $query->where(function ($itemQuery) use ($search, $fallbackLanguages) {
+                $itemQuery->where('name', 'like', $search)
+                    ->orWhereHas('itemTranslations', fn ($translationQuery) => $translationQuery
+                        ->whereIn('language', $fallbackLanguages)
+                        ->where('name', 'like', $search));
+            });
         }
 
         $items = $query->orderBy('sort_order')->get();
@@ -372,14 +398,28 @@ class RestaurantController extends Controller
 
         $vendorCountry = $vendor->country;
 
-        $data = $items->map(function ($item) use ($ranked, $vendorCountry) {
+        $data = $items->map(function ($item) use ($ranked, $vendorCountry, $vendor, $locale) {
             $rank = $ranked->search(fn ($r) => $r->id === $item->id);
             $vatRate = TaxCalculationService::itemVatRate($item, $vendorCountry);
 
             return [
                 'id' => $item->id,
-                'name' => $item->name,
-                'description' => $item->description,
+                'name' => $this->locales->translated(
+                    $item,
+                    'itemTranslations',
+                    'name',
+                    $vendor,
+                    $locale,
+                    $item->name
+                ),
+                'description' => $this->locales->translated(
+                    $item,
+                    'itemTranslations',
+                    'description',
+                    $vendor,
+                    $locale,
+                    $item->description
+                ),
                 'image_url' => $item->image_url,
                 'price' => TaxCalculationService::gross((float) $item->price, $vatRate),
                 'has_discount' => (bool) $item->has_discount,
@@ -403,25 +443,39 @@ class RestaurantController extends Controller
                 'removable_items' => $item->removable_items ?? [],
                 'category' => $item->category ? [
                     'id' => $item->category->id,
-                    'name' => $item->category->display_name,
+                    'name' => $this->locales->translated(
+                        $item->category,
+                        'localizedTranslations',
+                        'name',
+                        $vendor,
+                        $locale,
+                        $item->category->display_name
+                    ),
                     'slug' => $item->category->display_slug,
                     'icon' => $item->category->display_icon,
                 ] : null,
                 'allergens' => $this->menuItemAllergenNames($item),
                 'tags' => $this->menuItemTagLabels($item),
-                'modifier_groups' => $item->modifierGroups->map(fn ($g) => $this->formatModifierGroup($g, $item->tax_category ?? 'food', $vendorCountry))->values(),
+                'modifier_groups' => $item->modifierGroups->map(fn ($g) => $this->formatModifierGroup(
+                    $g,
+                    $vendor,
+                    $locale,
+                    $item->tax_category ?? 'food',
+                    $vendorCountry
+                ))->values(),
             ];
         });
 
-        return response()->json($data);
+        return response()->json($data)->header('Content-Language', $locale);
     }
 
     /**
      * Show a single menu item with full public details.
      */
-    public function menuItem(string $vendorPublicId, int $itemId): JsonResponse
+    public function menuItem(Request $request, string $vendorPublicId, int $itemId): JsonResponse
     {
         $vendor = $this->discoverableVendor($vendorPublicId);
+        $locale = $this->locales->resolveCustomerLocale($request, $vendor);
 
         $item = MenuItem::where('vendor_id', $vendor->id)
             ->where('id', $itemId)
@@ -429,11 +483,18 @@ class RestaurantController extends Controller
             ->where('available', true)
             ->with([
                 'category.masterCategory',
+                'category.localizedTranslations',
+                'itemTranslations',
                 'allergens:id,name,icon',
                 'tags:id,slug,label,icon',
                 'modifierGroups' => fn ($q) => $q->where('is_active', true)
                     ->orderByPivot('sort_order')
-                    ->with(['options' => fn ($o) => $o->where('is_active', true)->orderBy('sort_order')]),
+                    ->with([
+                        'localizedTranslations',
+                        'options' => fn ($o) => $o->where('is_active', true)
+                            ->with('localizedTranslations')
+                            ->orderBy('sort_order'),
+                    ]),
             ])
             ->firstOrFail();
 
@@ -442,8 +503,22 @@ class RestaurantController extends Controller
 
         return response()->json([
             'id' => $item->id,
-            'name' => $item->name,
-            'description' => $item->description,
+            'name' => $this->locales->translated(
+                $item,
+                'itemTranslations',
+                'name',
+                $vendor,
+                $locale,
+                $item->name
+            ),
+            'description' => $this->locales->translated(
+                $item,
+                'itemTranslations',
+                'description',
+                $vendor,
+                $locale,
+                $item->description
+            ),
             'image_url' => $item->image_url,
             'price' => TaxCalculationService::gross((float) $item->price, $vatRate),
             'has_discount' => (bool) $item->has_discount,
@@ -468,18 +543,36 @@ class RestaurantController extends Controller
             'ingredients' => $item->ingredients,
             'category' => $item->category ? [
                 'id' => $item->category->id,
-                'name' => $item->category->display_name,
+                'name' => $this->locales->translated(
+                    $item->category,
+                    'localizedTranslations',
+                    'name',
+                    $vendor,
+                    $locale,
+                    $item->category->display_name
+                ),
                 'slug' => $item->category->display_slug,
                 'icon' => $item->category->display_icon,
             ] : null,
             'allergens' => $this->formatMenuItemAllergens($item),
             'tags' => $this->formatMenuItemTags($item),
-            'modifier_groups' => $item->modifierGroups->map(fn ($g) => $this->formatModifierGroup($g, $item->tax_category ?? 'food', $vendorCountry))->values(),
-        ]);
+            'modifier_groups' => $item->modifierGroups->map(fn ($g) => $this->formatModifierGroup(
+                $g,
+                $vendor,
+                $locale,
+                $item->tax_category ?? 'food',
+                $vendorCountry
+            ))->values(),
+        ])->header('Content-Language', $locale);
     }
 
-    private function formatModifierGroup($group, string $itemTaxCategory = 'food', string $vendorCountry = 'AT'): array
-    {
+    private function formatModifierGroup(
+        $group,
+        Vendor $vendor,
+        string $locale,
+        string $itemTaxCategory = 'food',
+        string $vendorCountry = 'AT'
+    ): array {
         $groupVatRate = TaxCalculationService::modifierGroupVatRate(
             $group->tax_category ?? '',
             $itemTaxCategory,
@@ -488,7 +581,14 @@ class RestaurantController extends Controller
 
         return [
             'id' => $group->id,
-            'name' => $group->name,
+            'name' => $this->locales->translated(
+                $group,
+                'localizedTranslations',
+                'name',
+                $vendor,
+                $locale,
+                $group->name
+            ),
             'type' => $group->type,
             'is_required' => (bool) $group->is_required,
             'min_selection' => (int) $group->min_selection,
@@ -496,7 +596,14 @@ class RestaurantController extends Controller
             'vat_rate' => $groupVatRate,
             'options' => $group->options->map(fn ($option) => [
                 'id' => $option->id,
-                'name' => $option->name,
+                'name' => $this->locales->translated(
+                    $option,
+                    'localizedTranslations',
+                    'name',
+                    $vendor,
+                    $locale,
+                    $option->name
+                ),
                 'price_adjustment' => TaxCalculationService::gross((float) $option->price_adjustment, $groupVatRate),
             ])->values(),
         ];
@@ -661,13 +768,8 @@ class RestaurantController extends Controller
             ->firstOrFail();
 
         $setting = $vendor->vendorSetting;
-        $defaultLanguage = $this->normalizeLanguageCode($setting?->default_language) ?? 'en';
-        $availableLanguages = collect($setting?->supported_languages ?? [])
-            ->map(fn ($language) => $this->normalizeLanguageCode($language))
-            ->filter()
-            ->prepend($defaultLanguage)
-            ->unique()
-            ->values();
+        $defaultLanguage = $this->locales->defaultLanguage($vendor);
+        $availableLanguages = collect($this->locales->supportedLanguages($vendor));
 
         return response()->json([
             'vendor' => [
@@ -945,17 +1047,6 @@ class RestaurantController extends Controller
             ->firstOrFail();
     }
 
-    private function normalizeLanguageCode(mixed $language): ?string
-    {
-        if (! is_string($language)) {
-            return null;
-        }
-
-        $language = Str::lower(trim($language));
-
-        return $language !== '' ? $language : null;
-    }
-
     private function languageName(string $code): string
     {
         return [
@@ -970,6 +1061,7 @@ class RestaurantController extends Controller
             'sr' => 'Српски (Serbian)',
             'cs' => 'Čeština (Czech)',
             'es' => 'Español (Spanish)',
+            'nl' => 'Nederlands (Dutch)',
         ][$code] ?? Str::upper($code);
     }
 

@@ -254,7 +254,7 @@ class BillingService
             $stripe = new \Stripe\StripeClient($secret);
             $session = $stripe->billingPortal->sessions->create([
                 'customer'   => $subscription->stripe_customer_id,
-                'return_url' => config('app.url') . '/vendor/billing?payment_updated=success',
+                'return_url' => rtrim(env('VENDOR_FRONTEND_URL', config('app.url')), '/') . '/billing?payment_updated=success',
             ]);
             return $session->url;
         } catch (\Exception $e) {

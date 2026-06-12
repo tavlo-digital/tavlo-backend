@@ -4,8 +4,8 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class ModifierGroup extends Model
 {
@@ -44,5 +44,10 @@ class ModifierGroup extends Model
         return $this->belongsToMany(MenuItem::class, 'menu_item_modifier_groups')
             ->withPivot('sort_order')
             ->withTimestamps();
+    }
+
+    public function localizedTranslations(): HasMany
+    {
+        return $this->hasMany(ModifierGroupTranslation::class);
     }
 }

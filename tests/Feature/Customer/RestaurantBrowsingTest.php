@@ -513,7 +513,7 @@ class RestaurantBrowsingTest extends TestCase
         $this->getJson("/api/customer/restaurants/{$this->vendor->vendor_public_id}/languages")
             ->assertOk()
             ->assertJsonPath('default_language', 'fr')
-            ->assertJsonPath('available_languages', ['fr'])
+            ->assertJsonPath('available_languages', ['fr', 'en'])
             ->assertJsonPath('languages.0.is_default', true);
     }
 

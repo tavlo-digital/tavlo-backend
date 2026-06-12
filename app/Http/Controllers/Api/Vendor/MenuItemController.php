@@ -8,6 +8,7 @@ use App\Models\ModifierGroup;
 use App\Models\ModifierOption;
 use App\Models\OrderItem;
 use App\Models\TaxCategory;
+use App\Services\LocaleService;
 use App\Services\MediaService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -16,7 +17,10 @@ use Illuminate\Validation\ValidationException;
 
 class MenuItemController extends Controller
 {
-    public function __construct(private readonly MediaService $media) {}
+    public function __construct(
+        private readonly MediaService $media,
+        private readonly LocaleService $locales,
+    ) {}
 
     /**
      * GET /api/vendor/menu/items
@@ -27,7 +31,13 @@ class MenuItemController extends Controller
 
         $query = $vendor->menuItems()
             ->where('is_active', true)
-            ->with(['category.masterCategory', 'modifierGroups.options']);
+            ->with([
+                'itemTranslations',
+                'category.masterCategory',
+                'category.localizedTranslations',
+                'modifierGroups.localizedTranslations',
+                'modifierGroups.options.localizedTranslations',
+            ]);
 
         // Accept both `categoryId` and legacy `category_id`
         $categoryId = $request->input('categoryId') ?? $request->input('category_id');
@@ -53,7 +63,11 @@ class MenuItemController extends Controller
         ];
 
         return response()->json([
-            'data' => $items->map(fn (MenuItem $item) => $this->formatItem($item)),
+            'data' => $items->map(fn (MenuItem $item) => $this->formatItem(
+                $item,
+                $vendor,
+                $this->locales->dashboardLanguage($vendor)
+            )),
             'stats' => $stats,
         ]);
     }
@@ -66,6 +80,15 @@ class MenuItemController extends Controller
         $vendor = $request->user();
 
         $data = $this->validatePayload($request, true);
+        $translations = $this->locales->normalizeTranslationPayload(
+            $data['translations'] ?? [],
+            ['name', 'description']
+        );
+        $name = $this->baseName($vendor, $data['name'] ?? null, $translations);
+        $description = $data['description']
+            ?? $translations['en']['description']
+            ?? $translations[$this->locales->defaultLanguage($vendor)]['description']
+            ?? null;
 
         $category = $vendor->menuCategories()->findOrFail($data['categoryId']);
 
@@ -82,8 +105,8 @@ class MenuItemController extends Controller
 
         $item = $vendor->menuItems()->create([
             'menu_category_id' => $category->id,
-            'name' => $data['name'],
-            'description' => $data['description'] ?? null,
+            'name' => $name,
+            'description' => $description,
             'price' => $price,
             'image_url' => $data['imageUrl'] ?? null,
             'available' => $data['available'] ?? true,
@@ -107,12 +130,32 @@ class MenuItemController extends Controller
             'ingredients' => $data['ingredients'] ?? [],
             'sort_order' => $maxSort + 1,
         ]);
+        $this->locales->syncTranslations(
+            $item,
+            'itemTranslations',
+            array_merge([
+                'en' => ['name' => $name, 'description' => $description],
+            ], $translations),
+            ['name', 'description']
+        );
 
         $this->syncModifierGroups($item, $vendor, $data['modifierGroupIds'] ?? []);
 
-        $item->load(['category.masterCategory', 'modifierGroups.options']);
+        $item->load([
+            'itemTranslations',
+            'category.masterCategory',
+            'category.localizedTranslations',
+            'modifierGroups.localizedTranslations',
+            'modifierGroups.options.localizedTranslations',
+        ]);
 
-        return response()->json(['data' => $this->formatItem($item)], 201);
+        return response()->json([
+            'data' => $this->formatItem(
+                $item,
+                $vendor,
+                $this->locales->dashboardLanguage($vendor)
+            ),
+        ], 201);
     }
 
     /**
@@ -123,10 +166,22 @@ class MenuItemController extends Controller
         $vendor = $request->user();
         $item = $vendor->menuItems()
             ->where('is_active', true)
-            ->with(['category.masterCategory', 'modifierGroups.options'])
+            ->with([
+                'itemTranslations',
+                'category.masterCategory',
+                'category.localizedTranslations',
+                'modifierGroups.localizedTranslations',
+                'modifierGroups.options.localizedTranslations',
+            ])
             ->findOrFail($itemId);
 
-        return response()->json(['data' => $this->formatItem($item)]);
+        return response()->json([
+            'data' => $this->formatItem(
+                $item,
+                $vendor,
+                $this->locales->dashboardLanguage($vendor)
+            ),
+        ]);
     }
 
     /**
@@ -178,6 +233,13 @@ class MenuItemController extends Controller
             $existing = $item->translations ?? [];
             $incoming = $this->normalizeTranslations($data['translations']);
             $mapped['translations'] = array_merge($existing, $incoming);
+            if (! array_key_exists('name', $mapped) && ! empty($incoming['en']['name'])) {
+                $mapped['name'] = $incoming['en']['name'];
+            }
+            if (! array_key_exists('description', $mapped)
+                && array_key_exists('description', $incoming['en'] ?? [])) {
+                $mapped['description'] = $incoming['en']['description'];
+            }
         }
 
         // Tax: prefer explicit slug, then explicit ID, else inherit
@@ -196,14 +258,45 @@ class MenuItemController extends Controller
             : null;
 
         $item->update($mapped);
+        if (array_key_exists('translations', $data)) {
+            $this->locales->syncTranslations(
+                $item,
+                'itemTranslations',
+                $data['translations'],
+                ['name', 'description']
+            );
+        }
+        if (array_key_exists('name', $data) || array_key_exists('description', $data)) {
+            $this->locales->syncTranslations(
+                $item,
+                'itemTranslations',
+                ['en' => array_filter([
+                    'name' => $data['name'] ?? null,
+                    'description' => $data['description'] ?? null,
+                ], fn ($value) => $value !== null)],
+                ['name', 'description']
+            );
+        }
 
         if (array_key_exists('modifierGroupIds', $data)) {
             $this->syncModifierGroups($item, $vendor, $data['modifierGroupIds'] ?? []);
         }
 
-        $item->load(['category.masterCategory', 'modifierGroups.options']);
+        $item->load([
+            'itemTranslations',
+            'category.masterCategory',
+            'category.localizedTranslations',
+            'modifierGroups.localizedTranslations',
+            'modifierGroups.options.localizedTranslations',
+        ]);
 
-        return response()->json(['data' => $this->formatItem($item)]);
+        return response()->json([
+            'data' => $this->formatItem(
+                $item,
+                $vendor,
+                $this->locales->dashboardLanguage($vendor)
+            ),
+        ]);
     }
 
     /**
@@ -237,9 +330,21 @@ class MenuItemController extends Controller
         $item = $vendor->menuItems()->where('is_active', true)->findOrFail($itemId);
 
         $item->update(['available' => ! $item->available]);
-        $item->load('category.masterCategory');
+        $item->load([
+            'itemTranslations',
+            'category.masterCategory',
+            'category.localizedTranslations',
+            'modifierGroups.localizedTranslations',
+            'modifierGroups.options.localizedTranslations',
+        ]);
 
-        return response()->json(['data' => $this->formatItem($item)]);
+        return response()->json([
+            'data' => $this->formatItem(
+                $item,
+                $vendor,
+                $this->locales->dashboardLanguage($vendor)
+            ),
+        ]);
     }
 
     /**
@@ -268,7 +373,7 @@ class MenuItemController extends Controller
     {
         $rules = [
             'categoryId' => [$isCreate ? 'required' : 'sometimes', 'integer', 'exists:menu_categories,id'],
-            'name' => [$isCreate ? 'required' : 'sometimes', 'string', 'max:255'],
+            'name' => [$isCreate ? 'required_without:translations' : 'sometimes', 'nullable', 'string', 'max:255'],
             'description' => ['nullable', 'string', 'max:5000'],
             'price' => [$isCreate ? 'required' : 'sometimes', 'numeric', 'min:0'],
             'imageUrl' => ['nullable', 'string', 'max:2000'],
@@ -290,10 +395,9 @@ class MenuItemController extends Controller
             'paidAddons.*.name' => ['required_with:paidAddons', 'string', 'max:255'],
             'paidAddons.*.price' => ['required_with:paidAddons', 'numeric', 'min:0'],
             'paidAddons.*.taxCategory' => ['sometimes', 'nullable', 'string', Rule::in(TaxCategory::pluck('slug')->unique())],
+            'paidAddons.*.translations' => ['sometimes', 'array'],
             'freeAddons' => ['sometimes', 'array'],
-            'freeAddons.*' => ['string', 'max:255'],
             'removableItems' => ['sometimes', 'array'],
-            'removableItems.*' => ['string', 'max:255'],
             'modifierGroupIds' => ['sometimes', 'array'],
             'modifierGroupIds.*' => ['integer'],
             // translations: accept either a nested map { en: {name, description}, ... }
@@ -406,18 +510,44 @@ class MenuItemController extends Controller
         return $map[$lower] ?? strtoupper(substr($country, 0, 2));
     }
 
-    private function formatItem(MenuItem $item): array
+    private function formatItem(MenuItem $item, $vendor, string $locale): array
     {
         if (! $item->relationLoaded('modifierGroups')) {
-            $item->load('modifierGroups.options');
+            $item->load([
+                'modifierGroups.localizedTranslations',
+                'modifierGroups.options.localizedTranslations',
+            ]);
         }
 
         return [
             'id' => $item->id,
             'categoryId' => $item->menu_category_id,
-            'categoryName' => $item->category?->display_name ?? 'Unknown',
-            'name' => $item->name,
-            'description' => $item->description,
+            'categoryName' => $item->category
+                ? $this->locales->translated(
+                    $item->category,
+                    'localizedTranslations',
+                    'name',
+                    $vendor,
+                    $locale,
+                    $item->category->display_name
+                )
+                : 'Unknown',
+            'name' => $this->locales->translated(
+                $item,
+                'itemTranslations',
+                'name',
+                $vendor,
+                $locale,
+                $item->name
+            ),
+            'description' => $this->locales->translated(
+                $item,
+                'itemTranslations',
+                'description',
+                $vendor,
+                $locale,
+                $item->description
+            ),
             'price' => (float) $item->price,
             'imageUrl' => $this->media->url($item->image_url),
             'available' => (bool) $item->available,
@@ -435,14 +565,29 @@ class MenuItemController extends Controller
             'discountPercent' => (float) $item->discount_percent,
             'discountedPrice' => $item->discounted_price !== null ? (float) $item->discounted_price : null,
             'paidAddons' => $item->paid_addons ?? [],
-            'freeAddons' => $item->free_addons ?? [],
-            'removableItems' => $item->removable_items ?? [],
+            'freeAddons' => array_map(
+                fn ($entry) => is_string($entry) ? ['name' => $entry, 'translations' => []] : $entry,
+                $item->free_addons ?? []
+            ),
+            'removableItems' => array_map(
+                fn ($entry) => is_string($entry) ? ['name' => $entry, 'translations' => []] : $entry,
+                $item->removable_items ?? []
+            ),
             'modifierGroupIds' => $item->modifierGroups->pluck('id')->values()->all(),
             'modifierGroups' => $item->modifierGroups
-                ->map(fn (ModifierGroup $group) => $this->formatModifierGroup($group))
+                ->map(fn (ModifierGroup $group) => $this->formatModifierGroup(
+                    $group,
+                    $vendor,
+                    $locale
+                ))
                 ->values()
                 ->all(),
-            'translations' => $item->translations ?? new \stdClass,
+            'translations' => $this->locales->translationMap(
+                $item,
+                'itemTranslations',
+                ['name', 'description'],
+                ['name' => $item->name, 'description' => $item->description]
+            ),
             'ingredients' => $item->ingredients ?? [],
             'rating' => (float) $item->rating,
             'reviewCount' => (int) $item->review_count,
@@ -485,11 +630,24 @@ class MenuItemController extends Controller
         $item->modifierGroups()->sync($sync);
     }
 
-    private function formatModifierGroup(ModifierGroup $group): array
+    private function formatModifierGroup(ModifierGroup $group, $vendor, string $locale): array
     {
         return [
             'id' => $group->id,
-            'name' => $group->name,
+            'name' => $this->locales->translated(
+                $group,
+                'localizedTranslations',
+                'name',
+                $vendor,
+                $locale,
+                $group->name
+            ),
+            'translations' => $this->locales->translationMap(
+                $group,
+                'localizedTranslations',
+                ['name'],
+                ['name' => $group->name]
+            ),
             'type' => $group->type,
             'minSelection' => (int) $group->min_selection,
             'maxSelection' => (int) $group->max_selection,
@@ -499,7 +657,20 @@ class MenuItemController extends Controller
             'options' => $group->options
                 ->map(fn (ModifierOption $option) => [
                     'id' => $option->id,
-                    'name' => $option->name,
+                    'name' => $this->locales->translated(
+                        $option,
+                        'localizedTranslations',
+                        'name',
+                        $vendor,
+                        $locale,
+                        $option->name
+                    ),
+                    'translations' => $this->locales->translationMap(
+                        $option,
+                        'localizedTranslations',
+                        ['name'],
+                        ['name' => $option->name]
+                    ),
                     'priceAdjustment' => (float) $option->price_adjustment,
                     'sortOrder' => (int) $option->sort_order,
                     'isActive' => (bool) $option->is_active,
@@ -507,5 +678,22 @@ class MenuItemController extends Controller
                 ->values()
                 ->all(),
         ];
+    }
+
+    private function baseName($vendor, mixed $name, array $translations): string
+    {
+        $name = is_string($name) ? trim($name) : '';
+        $default = $this->locales->defaultLanguage($vendor);
+        $name = $name
+            ?: ($translations['en']['name'] ?? '')
+            ?: ($translations[$default]['name'] ?? '');
+
+        if ($name === '') {
+            throw ValidationException::withMessages([
+                'name' => ['A name is required in English or the default language.'],
+            ]);
+        }
+
+        return $name;
     }
 }

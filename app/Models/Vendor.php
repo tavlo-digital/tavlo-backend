@@ -16,7 +16,7 @@ class Vendor extends Authenticatable
         static::creating(function (Vendor $vendor) {
             if (empty($vendor->vendor_public_id)) {
                 do {
-                    $id = 'VID-' . str_pad(random_int(1000, 9999), 4, '0', STR_PAD_LEFT);
+                    $id = 'VID-'.str_pad(random_int(1000, 9999), 4, '0', STR_PAD_LEFT);
                 } while (static::where('vendor_public_id', $id)->exists());
                 $vendor->vendor_public_id = $id;
             }
@@ -100,6 +100,11 @@ class Vendor extends Authenticatable
     public function inventoryItems(): \Illuminate\Database\Eloquent\Relations\HasMany
     {
         return $this->hasMany(InventoryItem::class);
+    }
+
+    public function inventoryCategories(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(InventoryCategory::class);
     }
 
     public function inventorySettings(): \Illuminate\Database\Eloquent\Relations\HasOne

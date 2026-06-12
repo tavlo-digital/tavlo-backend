@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Vendor;
 use App\Models\VendorRequestChange;
 use App\Models\VendorSetting;
+use App\Services\LocaleService;
 use App\Services\MediaService;
 use App\Services\VendorMediaService;
 use Illuminate\Http\JsonResponse;
@@ -16,8 +17,8 @@ class VendorSettingsController extends Controller
     public function __construct(
         private readonly VendorMediaService $mediaService,
         private readonly MediaService $media,
-    ) {
-    }
+        private readonly LocaleService $locales,
+    ) {}
 
     /**
      * GET /api/vendor/{vendorId}/settings
@@ -25,7 +26,7 @@ class VendorSettingsController extends Controller
      */
     public function show(string $vendorId): JsonResponse
     {
-        $vendor  = $this->resolveVendor($vendorId);
+        $vendor = $this->resolveVendor($vendorId);
         $settings = $vendor->vendorSetting ?? new VendorSetting(['business_hours' => VendorSetting::defaultBusinessHours()]);
 
         return response()->json($this->buildResponse($vendor, $settings));
@@ -56,177 +57,194 @@ class VendorSettingsController extends Controller
         // on unrelated fields.
         $data = $request->validate([
             // core vendor fields
-            'restaurantName'         => ['sometimes', 'nullable', 'string', 'max:255'],
-            'website'                => ['sometimes', 'nullable', 'url', 'max:255'],
-            'city'                   => ['sometimes', 'nullable', 'string', 'max:255'],
-            'address'                => ['sometimes', 'nullable', 'string', 'max:500'],
-            'latitude'               => ['sometimes', 'nullable', 'numeric', 'between:-90,90'],
-            'longitude'              => ['sometimes', 'nullable', 'numeric', 'between:-180,180'],
-            'phone'                  => ['sometimes', 'nullable', 'string', 'max:30'],
+            'restaurantName' => ['sometimes', 'nullable', 'string', 'max:255'],
+            'website' => ['sometimes', 'nullable', 'url', 'max:255'],
+            'city' => ['sometimes', 'nullable', 'string', 'max:255'],
+            'address' => ['sometimes', 'nullable', 'string', 'max:500'],
+            'latitude' => ['sometimes', 'nullable', 'numeric', 'between:-90,90'],
+            'longitude' => ['sometimes', 'nullable', 'numeric', 'between:-180,180'],
+            'phone' => ['sometimes', 'nullable', 'string', 'max:30'],
             // vendor_settings fields
-            'description'            => ['sometimes', 'nullable', 'string', 'max:1000'],
-            'logoUrl'                => ['sometimes', 'nullable', 'string', 'max:500'],
-            'coverPhotoUrl'          => ['sometimes', 'nullable', 'string', 'max:500'],
-            'isLiveAndDiscoverable'  => ['sometimes', 'nullable', 'boolean'],
-            'businessHours'          => ['sometimes', 'nullable', 'array'],
+            'description' => ['sometimes', 'nullable', 'string', 'max:1000'],
+            'logoUrl' => ['sometimes', 'nullable', 'string', 'max:500'],
+            'coverPhotoUrl' => ['sometimes', 'nullable', 'string', 'max:500'],
+            'isLiveAndDiscoverable' => ['sometimes', 'nullable', 'boolean'],
+            'businessHours' => ['sometimes', 'nullable', 'array'],
             // payment
-            'acceptOnSite'           => ['sometimes', 'nullable', 'boolean'],
-            'stripeEnabled'          => ['sometimes', 'nullable', 'boolean'],
-            'currency'               => ['sometimes', 'nullable', 'string', 'size:3'],
+            'acceptOnSite' => ['sometimes', 'nullable', 'boolean'],
+            'stripeEnabled' => ['sometimes', 'nullable', 'boolean'],
+            'currency' => ['sometimes', 'nullable', 'string', 'size:3'],
             // tax & receipts
-            'serviceFeeRate'         => ['sometimes', 'nullable', 'numeric', 'min:0', 'max:100'],
-            'invoicePrefix'          => ['sometimes', 'nullable', 'string', 'max:20'],
-            'nextInvoiceNumber'      => ['sometimes', 'nullable', 'integer', 'min:1'],
-            'autoGenerateReceipts'   => ['sometimes', 'nullable', 'boolean'],
-            'companyType'            => ['sometimes', 'nullable', 'string', 'max:50'],
-            'firstInvoiceIssued'     => ['sometimes', 'nullable', 'boolean'],
+            'serviceFeeRate' => ['sometimes', 'nullable', 'numeric', 'min:0', 'max:100'],
+            'invoicePrefix' => ['sometimes', 'nullable', 'string', 'max:20'],
+            'nextInvoiceNumber' => ['sometimes', 'nullable', 'integer', 'min:1'],
+            'autoGenerateReceipts' => ['sometimes', 'nullable', 'boolean'],
+            'companyType' => ['sometimes', 'nullable', 'string', 'max:50'],
+            'firstInvoiceIssued' => ['sometimes', 'nullable', 'boolean'],
             // table / QR
-            'numberOfTables'         => ['sometimes', 'nullable', 'integer', 'min:0'],
-            'tablePrefix'            => ['sometimes', 'nullable', 'string', 'max:20'],
-            'enableSharedBasket'     => ['sometimes', 'nullable', 'boolean'],
-            'maxGuestsPerTable'      => ['sometimes', 'nullable', 'integer', 'min:1'],
-            'enableReservations'     => ['sometimes', 'nullable', 'boolean'],
+            'numberOfTables' => ['sometimes', 'nullable', 'integer', 'min:0'],
+            'tablePrefix' => ['sometimes', 'nullable', 'string', 'max:20'],
+            'enableSharedBasket' => ['sometimes', 'nullable', 'boolean'],
+            'maxGuestsPerTable' => ['sometimes', 'nullable', 'integer', 'min:1'],
+            'enableReservations' => ['sometimes', 'nullable', 'boolean'],
             'totalTablesForReservations' => ['sometimes', 'nullable', 'integer', 'min:0'],
-            'maxTableCapacity'       => ['sometimes', 'nullable', 'integer', 'min:1'],
+            'maxTableCapacity' => ['sometimes', 'nullable', 'integer', 'min:1'],
             // ordering
-            'autoAcceptOrders'       => ['sometimes', 'nullable', 'boolean'],
-            'estimatedPrepTime'      => ['sometimes', 'nullable', 'integer', 'min:1'],
-            'maxOrdersPerSlot'       => ['sometimes', 'nullable', 'integer', 'min:1'],
-            'allowGuestOrdering'     => ['sometimes', 'nullable', 'boolean'],
-            'requirePhoneNumber'     => ['sometimes', 'nullable', 'boolean'],
-            'minOrderAmount'         => ['sometimes', 'nullable', 'numeric', 'min:0'],
-            'maxOrderAmount'         => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'autoAcceptOrders' => ['sometimes', 'nullable', 'boolean'],
+            'estimatedPrepTime' => ['sometimes', 'nullable', 'integer', 'min:1'],
+            'maxOrdersPerSlot' => ['sometimes', 'nullable', 'integer', 'min:1'],
+            'allowGuestOrdering' => ['sometimes', 'nullable', 'boolean'],
+            'requirePhoneNumber' => ['sometimes', 'nullable', 'boolean'],
+            'minOrderAmount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'maxOrderAmount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             // inventory
-            'inventoryTrackingEnabled'    => ['sometimes', 'nullable', 'boolean'],
-            'autoStockDeduction'          => ['sometimes', 'nullable', 'boolean'],
-            'allowNegativeStock'          => ['sometimes', 'nullable', 'boolean'],
+            'inventoryTrackingEnabled' => ['sometimes', 'nullable', 'boolean'],
+            'autoStockDeduction' => ['sometimes', 'nullable', 'boolean'],
+            'allowNegativeStock' => ['sometimes', 'nullable', 'boolean'],
             'autoMarkUnavailableCritical' => ['sometimes', 'nullable', 'boolean'],
             // notifications
-            'notifyEmailNewOrder'         => ['sometimes', 'nullable', 'boolean'],
-            'notifyEmailReview'           => ['sometimes', 'nullable', 'boolean'],
-            'notifySmsNewOrder'           => ['sometimes', 'nullable', 'boolean'],
-            'notifyPushNewOrder'          => ['sometimes', 'nullable', 'boolean'],
-            'notifyPushOrderReady'        => ['sometimes', 'nullable', 'boolean'],
-            'notificationEmail'           => ['sometimes', 'nullable', 'email', 'max:255'],
+            'notifyEmailNewOrder' => ['sometimes', 'nullable', 'boolean'],
+            'notifyEmailReview' => ['sometimes', 'nullable', 'boolean'],
+            'notifySmsNewOrder' => ['sometimes', 'nullable', 'boolean'],
+            'notifyPushNewOrder' => ['sometimes', 'nullable', 'boolean'],
+            'notifyPushOrderReady' => ['sometimes', 'nullable', 'boolean'],
+            'notificationEmail' => ['sometimes', 'nullable', 'email', 'max:255'],
             // reviews
-            'enableReviews'               => ['sometimes', 'nullable', 'boolean'],
-            'enableMenuReviews'           => ['sometimes', 'nullable', 'boolean'],
-            'allowAnonymousReviews'       => ['sometimes', 'nullable', 'boolean'],
+            'enableReviews' => ['sometimes', 'nullable', 'boolean'],
+            'enableMenuReviews' => ['sometimes', 'nullable', 'boolean'],
+            'allowAnonymousReviews' => ['sometimes', 'nullable', 'boolean'],
             // language
-            'defaultLanguage'             => ['sometimes', 'nullable', 'string', 'max:10'],
-            'supportedLanguages'          => ['sometimes', 'nullable', 'array'],
+            'dashboardLanguage' => ['sometimes', 'nullable', 'string', 'max:10'],
+            'defaultLanguage' => ['sometimes', 'nullable', 'string', 'max:10'],
+            'supportedLanguages' => ['sometimes', 'nullable', 'array'],
+            'supportedLanguages.*' => ['string', 'max:10'],
             // loyalty
-            'loyaltyEnabled'              => ['sometimes', 'nullable', 'boolean'],
-            'pointsPerEuro'               => ['sometimes', 'nullable', 'integer', 'min:0'],
-            'minimumRedemptionPoints'     => ['sometimes', 'nullable', 'integer', 'min:0'],
-            'pointValue'                  => ['sometimes', 'nullable', 'numeric', 'min:0'],
-            'redemptionRate'              => ['sometimes', 'nullable', 'numeric', 'min:0'],
-            'pointsExpiryDays'            => ['sometimes', 'nullable', 'integer', 'min:0'],
-            'showInTopCustomers'          => ['sometimes', 'nullable', 'boolean'],
+            'loyaltyEnabled' => ['sometimes', 'nullable', 'boolean'],
+            'pointsPerEuro' => ['sometimes', 'nullable', 'integer', 'min:0'],
+            'minimumRedemptionPoints' => ['sometimes', 'nullable', 'integer', 'min:0'],
+            'pointValue' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'redemptionRate' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'pointsExpiryDays' => ['sometimes', 'nullable', 'integer', 'min:0'],
+            'showInTopCustomers' => ['sometimes', 'nullable', 'boolean'],
             // appearance
-            'menuTheme'                   => ['sometimes', 'nullable', 'string', 'max:50'],
-            'primaryColor'                => ['sometimes', 'nullable', 'string', 'max:20'],
-            'accentColor'                 => ['sometimes', 'nullable', 'string', 'max:20'],
-            'menuLayout'                  => ['sometimes', 'nullable', 'string', 'max:50'],
-            'backgroundImageUrl'          => ['sometimes', 'nullable', 'string', 'max:500'],
+            'menuTheme' => ['sometimes', 'nullable', 'string', 'max:50'],
+            'primaryColor' => ['sometimes', 'nullable', 'string', 'max:20'],
+            'accentColor' => ['sometimes', 'nullable', 'string', 'max:20'],
+            'menuLayout' => ['sometimes', 'nullable', 'string', 'max:50'],
+            'backgroundImageUrl' => ['sometimes', 'nullable', 'string', 'max:500'],
             // date / time formatting
-            'dateFormat'                  => ['sometimes', 'nullable', 'string', 'max:20'],
-            'timeFormat'                  => ['sometimes', 'nullable', 'string', 'max:5'],
+            'dateFormat' => ['sometimes', 'nullable', 'string', 'max:20'],
+            'timeFormat' => ['sometimes', 'nullable', 'string', 'max:5'],
             // data retention
-            'dataRetentionDays'           => ['sometimes', 'nullable', 'integer', 'min:0'],
+            'dataRetentionDays' => ['sometimes', 'nullable', 'integer', 'min:0'],
             // about page
-            'yearsOfExperience'           => ['sometimes', 'nullable', 'integer', 'min:0'],
-            'signatureRecipesCount'       => ['sometimes', 'nullable', 'integer', 'min:0'],
-            'happyCustomersCount'         => ['sometimes', 'nullable', 'integer', 'min:0'],
-            'restaurantFeatures'          => ['sometimes', 'nullable', 'array'],
-            'restaurantFeatures.*.title'        => ['required', 'string', 'max:100'],
-            'restaurantFeatures.*.description'  => ['nullable', 'string', 'max:500'],
-            'showPhonePublic'             => ['sometimes', 'nullable', 'boolean'],
-            'showEmailPublic'             => ['sometimes', 'nullable', 'boolean'],
-            'showWebsitePublic'           => ['sometimes', 'nullable', 'boolean'],
+            'yearsOfExperience' => ['sometimes', 'nullable', 'integer', 'min:0'],
+            'signatureRecipesCount' => ['sometimes', 'nullable', 'integer', 'min:0'],
+            'happyCustomersCount' => ['sometimes', 'nullable', 'integer', 'min:0'],
+            'restaurantFeatures' => ['sometimes', 'nullable', 'array'],
+            'restaurantFeatures.*.title' => ['required', 'string', 'max:100'],
+            'restaurantFeatures.*.description' => ['nullable', 'string', 'max:500'],
+            'showPhonePublic' => ['sometimes', 'nullable', 'boolean'],
+            'showEmailPublic' => ['sometimes', 'nullable', 'boolean'],
+            'showWebsitePublic' => ['sometimes', 'nullable', 'boolean'],
         ]);
 
         // ---- Update core vendor fields ----
         $vendorFields = [];
-        if (isset($data['restaurantName'])) $vendorFields['restaurant_name'] = $data['restaurantName'];
-        if (array_key_exists('website', $data)) $vendorFields['website'] = $data['website'];
-        if (isset($data['city'])) $vendorFields['city'] = $data['city'];
-        if (isset($data['address'])) $vendorFields['address'] = $data['address'];
-        if (array_key_exists('latitude', $data)) $vendorFields['latitude'] = $data['latitude'];
-        if (array_key_exists('longitude', $data)) $vendorFields['longitude'] = $data['longitude'];
-        if (isset($data['phone'])) $vendorFields['phone'] = $data['phone'];
+        if (isset($data['restaurantName'])) {
+            $vendorFields['restaurant_name'] = $data['restaurantName'];
+        }
+        if (array_key_exists('website', $data)) {
+            $vendorFields['website'] = $data['website'];
+        }
+        if (isset($data['city'])) {
+            $vendorFields['city'] = $data['city'];
+        }
+        if (isset($data['address'])) {
+            $vendorFields['address'] = $data['address'];
+        }
+        if (array_key_exists('latitude', $data)) {
+            $vendorFields['latitude'] = $data['latitude'];
+        }
+        if (array_key_exists('longitude', $data)) {
+            $vendorFields['longitude'] = $data['longitude'];
+        }
+        if (isset($data['phone'])) {
+            $vendorFields['phone'] = $data['phone'];
+        }
         if (! empty($vendorFields)) {
             $vendor->update($vendorFields);
         }
 
         // ---- Update vendor_settings ----
         $settingsMap = [
-            'description'                 => 'description',
-            'logoUrl'                     => 'logo_url',
-            'coverPhotoUrl'               => 'cover_photo_url',
-            'isLiveAndDiscoverable'       => 'is_live_and_discoverable',
-            'businessHours'               => 'business_hours',
-            'acceptOnSite'                => 'accept_on_site',
-            'stripeEnabled'               => 'stripe_enabled',
-            'currency'                    => 'currency',
-            'serviceFeeRate'              => 'service_fee_rate',
-            'invoicePrefix'               => 'invoice_prefix',
-            'nextInvoiceNumber'           => 'next_invoice_number',
-            'autoGenerateReceipts'        => 'auto_generate_receipts',
-            'companyType'                 => 'company_type',
-            'firstInvoiceIssued'          => 'first_invoice_issued',
-            'numberOfTables'              => 'number_of_tables',
-            'tablePrefix'                 => 'table_prefix',
-            'enableSharedBasket'          => 'enable_shared_basket',
-            'maxGuestsPerTable'           => 'max_guests_per_table',
-            'enableReservations'          => 'enable_reservations',
-            'totalTablesForReservations'  => 'total_tables_for_reservations',
-            'maxTableCapacity'            => 'max_table_capacity',
-            'autoAcceptOrders'            => 'auto_accept_orders',
-            'estimatedPrepTime'           => 'estimated_prep_time',
-            'maxOrdersPerSlot'            => 'max_orders_per_slot',
-            'allowGuestOrdering'          => 'allow_guest_ordering',
-            'requirePhoneNumber'          => 'require_phone_number',
-            'minOrderAmount'              => 'min_order_amount',
-            'maxOrderAmount'              => 'max_order_amount',
-            'inventoryTrackingEnabled'    => 'inventory_tracking_enabled',
-            'autoStockDeduction'          => 'auto_stock_deduction',
-            'allowNegativeStock'          => 'allow_negative_stock',
+            'description' => 'description',
+            'logoUrl' => 'logo_url',
+            'coverPhotoUrl' => 'cover_photo_url',
+            'isLiveAndDiscoverable' => 'is_live_and_discoverable',
+            'businessHours' => 'business_hours',
+            'acceptOnSite' => 'accept_on_site',
+            'stripeEnabled' => 'stripe_enabled',
+            'currency' => 'currency',
+            'serviceFeeRate' => 'service_fee_rate',
+            'invoicePrefix' => 'invoice_prefix',
+            'nextInvoiceNumber' => 'next_invoice_number',
+            'autoGenerateReceipts' => 'auto_generate_receipts',
+            'companyType' => 'company_type',
+            'firstInvoiceIssued' => 'first_invoice_issued',
+            'numberOfTables' => 'number_of_tables',
+            'tablePrefix' => 'table_prefix',
+            'enableSharedBasket' => 'enable_shared_basket',
+            'maxGuestsPerTable' => 'max_guests_per_table',
+            'enableReservations' => 'enable_reservations',
+            'totalTablesForReservations' => 'total_tables_for_reservations',
+            'maxTableCapacity' => 'max_table_capacity',
+            'autoAcceptOrders' => 'auto_accept_orders',
+            'estimatedPrepTime' => 'estimated_prep_time',
+            'maxOrdersPerSlot' => 'max_orders_per_slot',
+            'allowGuestOrdering' => 'allow_guest_ordering',
+            'requirePhoneNumber' => 'require_phone_number',
+            'minOrderAmount' => 'min_order_amount',
+            'maxOrderAmount' => 'max_order_amount',
+            'inventoryTrackingEnabled' => 'inventory_tracking_enabled',
+            'autoStockDeduction' => 'auto_stock_deduction',
+            'allowNegativeStock' => 'allow_negative_stock',
             'autoMarkUnavailableCritical' => 'auto_mark_unavailable_critical',
-            'notifyEmailNewOrder'         => 'notify_email_new_order',
-            'notifyEmailReview'           => 'notify_email_review',
-            'notifySmsNewOrder'           => 'notify_sms_new_order',
-            'notifyPushNewOrder'          => 'notify_push_new_order',
-            'notifyPushOrderReady'        => 'notify_push_order_ready',
-            'notificationEmail'           => 'notification_email',
-            'enableReviews'               => 'enable_reviews',
-            'enableMenuReviews'           => 'enable_menu_reviews',
-            'allowAnonymousReviews'       => 'allow_anonymous_reviews',
-            'defaultLanguage'             => 'default_language',
-            'supportedLanguages'          => 'supported_languages',
-            'loyaltyEnabled'              => 'loyalty_enabled',
-            'pointsPerEuro'               => 'points_per_euro',
-            'minimumRedemptionPoints'     => 'minimum_redemption_points',
-            'pointValue'                  => 'point_value',
-            'redemptionRate'              => 'redemption_rate',
-            'pointsExpiryDays'            => 'points_expiry_days',
-            'showInTopCustomers'          => 'show_in_top_customers',
-            'menuTheme'                   => 'menu_theme',
-            'primaryColor'                => 'primary_color',
-            'accentColor'                 => 'accent_color',
-            'menuLayout'                  => 'menu_layout',
-            'backgroundImageUrl'          => 'background_image_url',
-            'dateFormat'                  => 'date_format',
-            'timeFormat'                  => 'time_format',
-            'dataRetentionDays'           => 'data_retention_days',
+            'notifyEmailNewOrder' => 'notify_email_new_order',
+            'notifyEmailReview' => 'notify_email_review',
+            'notifySmsNewOrder' => 'notify_sms_new_order',
+            'notifyPushNewOrder' => 'notify_push_new_order',
+            'notifyPushOrderReady' => 'notify_push_order_ready',
+            'notificationEmail' => 'notification_email',
+            'enableReviews' => 'enable_reviews',
+            'enableMenuReviews' => 'enable_menu_reviews',
+            'allowAnonymousReviews' => 'allow_anonymous_reviews',
+            'dashboardLanguage' => 'dashboard_language',
+            'defaultLanguage' => 'default_language',
+            'supportedLanguages' => 'supported_languages',
+            'loyaltyEnabled' => 'loyalty_enabled',
+            'pointsPerEuro' => 'points_per_euro',
+            'minimumRedemptionPoints' => 'minimum_redemption_points',
+            'pointValue' => 'point_value',
+            'redemptionRate' => 'redemption_rate',
+            'pointsExpiryDays' => 'points_expiry_days',
+            'showInTopCustomers' => 'show_in_top_customers',
+            'menuTheme' => 'menu_theme',
+            'primaryColor' => 'primary_color',
+            'accentColor' => 'accent_color',
+            'menuLayout' => 'menu_layout',
+            'backgroundImageUrl' => 'background_image_url',
+            'dateFormat' => 'date_format',
+            'timeFormat' => 'time_format',
+            'dataRetentionDays' => 'data_retention_days',
             // about page
-            'yearsOfExperience'           => 'years_of_experience',
-            'signatureRecipesCount'       => 'signature_recipes_count',
-            'happyCustomersCount'         => 'happy_customers_count',
-            'restaurantFeatures'          => 'restaurant_features',
-            'showPhonePublic'             => 'show_phone_public',
-            'showEmailPublic'             => 'show_email_public',
-            'showWebsitePublic'           => 'show_website_public',
+            'yearsOfExperience' => 'years_of_experience',
+            'signatureRecipesCount' => 'signature_recipes_count',
+            'happyCustomersCount' => 'happy_customers_count',
+            'restaurantFeatures' => 'restaurant_features',
+            'showPhonePublic' => 'show_phone_public',
+            'showEmailPublic' => 'show_email_public',
+            'showWebsitePublic' => 'show_website_public',
         ];
 
         $settingsData = [];
@@ -234,6 +252,39 @@ class VendorSettingsController extends Controller
             if (array_key_exists($requestKey, $data)) {
                 $settingsData[$dbKey] = $data[$requestKey];
             }
+        }
+
+        foreach (['dashboard_language', 'default_language'] as $languageField) {
+            if (array_key_exists($languageField, $settingsData)) {
+                $normalized = $this->locales->normalize($settingsData[$languageField]);
+                if ($normalized === null) {
+                    return response()->json([
+                        'message' => 'The selected language is not supported.',
+                        'errors' => [$languageField => ['The selected language is not supported.']],
+                    ], 422);
+                }
+                $settingsData[$languageField] = $normalized;
+            }
+        }
+
+        if (array_key_exists('supported_languages', $settingsData)
+            || array_key_exists('default_language', $settingsData)) {
+            $currentSettings = $vendor->vendorSetting;
+            $defaultLanguage = $settingsData['default_language']
+                ?? $this->locales->normalize($currentSettings?->default_language)
+                ?? 'en';
+            $supportedLanguages = $settingsData['supported_languages']
+                ?? $currentSettings?->supported_languages
+                ?? [];
+
+            $settingsData['supported_languages'] = collect(
+                $this->locales->normalizeList($supportedLanguages)
+            )
+                ->prepend('en')
+                ->prepend($defaultLanguage)
+                ->unique()
+                ->values()
+                ->all();
         }
 
         // Normalise restaurant_features to a list of { title, description } objects.
@@ -245,6 +296,7 @@ class VendorSettingsController extends Controller
                 $settingsData['restaurant_features'] = array_values(array_filter(array_map(function ($item) {
                     if (is_string($item)) {
                         $title = trim($item);
+
                         return $title === '' ? null : ['title' => $title, 'description' => null];
                     }
                     if (is_array($item)) {
@@ -255,8 +307,10 @@ class VendorSettingsController extends Controller
                         $description = isset($item['description']) && $item['description'] !== ''
                             ? (string) $item['description']
                             : null;
+
                         return ['title' => $title, 'description' => $description];
                     }
+
                     return null;
                 }, $features)));
             }
@@ -267,7 +321,7 @@ class VendorSettingsController extends Controller
                 ->where('status', 'approved')
                 ->exists();
 
-            if (!$hasApprovedLegal) {
+            if (! $hasApprovedLegal) {
                 return response()->json([
                     'message' => 'Legal information must be submitted and approved before your restaurant can go live.',
                 ], 422);
@@ -301,13 +355,13 @@ class VendorSettingsController extends Controller
         }
 
         return response()->json([
-            'id'                 => (string) $subscription->id,
-            'planName'           => $subscription->plan?->name,
-            'billingCycle'       => $subscription->billing_cycle,
-            'status'             => $subscription->status,
+            'id' => (string) $subscription->id,
+            'planName' => $subscription->plan?->name,
+            'billingCycle' => $subscription->billing_cycle,
+            'status' => $subscription->status,
             'currentPeriodStart' => $subscription->current_period_start?->toISOString(),
-            'currentPeriodEnd'   => $subscription->current_period_end?->toISOString(),
-            'autoRenew'          => $subscription->auto_renew,
+            'currentPeriodEnd' => $subscription->current_period_end?->toISOString(),
+            'autoRenew' => $subscription->auto_renew,
         ]);
     }
 
@@ -329,27 +383,27 @@ class VendorSettingsController extends Controller
         }
 
         $data = $request->validate([
-            'restaurantName'             => ['sometimes', 'string', 'max:255'],
-            'legalEntityName'            => ['required', 'string', 'max:255'],
+            'restaurantName' => ['sometimes', 'string', 'max:255'],
+            'legalEntityName' => ['required', 'string', 'max:255'],
             'businessRegistrationNumber' => ['required', 'string', 'max:100'],
-            'vatNumber'                  => ['required', 'string', 'max:50'],
-            'country'                    => ['sometimes', 'string', 'max:100'],
-            'city'                       => ['sometimes', 'string', 'max:255'],
-            'address'                    => ['sometimes', 'string', 'max:500'],
-            'vendorNotes'                => ['nullable', 'string', 'max:1000'],
+            'vatNumber' => ['required', 'string', 'max:50'],
+            'country' => ['sometimes', 'string', 'max:100'],
+            'city' => ['sometimes', 'string', 'max:255'],
+            'address' => ['sometimes', 'string', 'max:500'],
+            'vendorNotes' => ['nullable', 'string', 'max:1000'],
         ]);
 
         VendorRequestChange::create([
-            'vendor_id'                      => $vendor->id,
-            'restaurant_name'                => $data['restaurantName'] ?? $vendor->restaurant_name,
-            'legal_entity_name'              => $data['legalEntityName'],
-            'business_registration_number'   => $data['businessRegistrationNumber'],
-            'vat_number'                     => $data['vatNumber'],
-            'country'                        => $data['country'] ?? $vendor->country,
-            'city'                           => $data['city'] ?? $vendor->city,
-            'address'                        => $data['address'] ?? $vendor->address,
-            'vendor_notes'                   => $data['vendorNotes'] ?? null,
-            'status'                         => 'pending',
+            'vendor_id' => $vendor->id,
+            'restaurant_name' => $data['restaurantName'] ?? $vendor->restaurant_name,
+            'legal_entity_name' => $data['legalEntityName'],
+            'business_registration_number' => $data['businessRegistrationNumber'],
+            'vat_number' => $data['vatNumber'],
+            'country' => $data['country'] ?? $vendor->country,
+            'city' => $data['city'] ?? $vendor->city,
+            'address' => $data['address'] ?? $vendor->address,
+            'vendor_notes' => $data['vendorNotes'] ?? null,
+            'status' => 'pending',
         ]);
 
         return response()->json(['message' => 'Legal info submitted for approval.'], 201);
@@ -371,12 +425,12 @@ class VendorSettingsController extends Controller
         }
 
         return response()->json([
-            'id'          => $latest->id,
-            'status'      => $latest->status,
-            'adminNotes'  => $latest->admin_notes,
+            'id' => $latest->id,
+            'status' => $latest->status,
+            'adminNotes' => $latest->admin_notes,
             'vendorNotes' => $latest->vendor_notes,
-            'reviewedAt'  => $latest->reviewed_at?->toISOString(),
-            'createdAt'   => $latest->created_at?->toISOString(),
+            'reviewedAt' => $latest->reviewed_at?->toISOString(),
+            'createdAt' => $latest->created_at?->toISOString(),
         ]);
     }
 
@@ -460,18 +514,17 @@ class VendorSettingsController extends Controller
      */
     public function exportData(string $vendorId): JsonResponse
     {
-        $vendor   = $this->resolveVendor($vendorId);
+        $vendor = $this->resolveVendor($vendorId);
         $settings = $vendor->vendorSetting;
 
         $payload = [
             'exportedAt' => now()->toISOString(),
-            'vendor'     => $this->buildResponse($vendor, $settings ?? new VendorSetting()),
+            'vendor' => $this->buildResponse($vendor, $settings ?? new VendorSetting),
         ];
 
         return response()->json($payload)
             ->header('Content-Disposition', "attachment; filename=\"vendor-{$vendorId}-data.json\"");
     }
-
 
     // ----------------------------------------------------------------
 
@@ -479,104 +532,110 @@ class VendorSettingsController extends Controller
     {
         return [
             // ---- core vendor ----
-            'id'                        => (string) $vendor->id,
-            'vendorPublicId'            => $vendor->vendor_public_id,
-            'name'                      => $vendor->name,
-            'restaurantName'            => $vendor->restaurant_name,
-            'legalEntityName'           => $vendor->legal_entity_name,
+            'id' => (string) $vendor->id,
+            'vendorPublicId' => $vendor->vendor_public_id,
+            'name' => $vendor->name,
+            'restaurantName' => $vendor->restaurant_name,
+            'legalEntityName' => $vendor->legal_entity_name,
             'businessRegistrationNumber' => $vendor->business_registration_number,
-            'vatNumber'                  => $vendor->vat_number,
-            'website'                    => $vendor->website,
-            'country'                    => $vendor->country,
-            'city'                       => $vendor->city,
-            'address'                    => $vendor->address,
-            'latitude'                   => $vendor->latitude !== null ? (float) $vendor->latitude : null,
-            'longitude'                  => $vendor->longitude !== null ? (float) $vendor->longitude : null,
-            'phone'                      => $vendor->phone,
-            'email'                      => $vendor->email,
-            'status'                     => $vendor->status,
-            'liveStatus'                 => $vendor->live_status,
+            'vatNumber' => $vendor->vat_number,
+            'website' => $vendor->website,
+            'country' => $vendor->country,
+            'city' => $vendor->city,
+            'address' => $vendor->address,
+            'latitude' => $vendor->latitude !== null ? (float) $vendor->latitude : null,
+            'longitude' => $vendor->longitude !== null ? (float) $vendor->longitude : null,
+            'phone' => $vendor->phone,
+            'email' => $vendor->email,
+            'status' => $vendor->status,
+            'liveStatus' => $vendor->live_status,
             // ---- vendor_settings ----
-            'description'                => $settings->description,
-            'logo'                       => $this->media->url($settings->getRawOriginal('logo_url')),
-            'coverPhoto'                 => $this->media->url($settings->getRawOriginal('cover_photo_url')),
-            'backgroundImageUrl'         => $settings->background_image_url,
-            'isLiveAndDiscoverable'      => (bool) $settings->is_live_and_discoverable,
-            'businessHours'              => $settings->business_hours ?? VendorSetting::defaultBusinessHours(),
+            'description' => $settings->description,
+            'logo' => $this->media->url($settings->getRawOriginal('logo_url')),
+            'coverPhoto' => $this->media->url($settings->getRawOriginal('cover_photo_url')),
+            'backgroundImageUrl' => $settings->background_image_url,
+            'isLiveAndDiscoverable' => (bool) $settings->is_live_and_discoverable,
+            'businessHours' => $settings->business_hours ?? VendorSetting::defaultBusinessHours(),
             // payment
-            'acceptOnSite'               => $settings->accept_on_site ?? true,
-            'stripeEnabled'              => (bool) $settings->stripe_enabled,
-            'stripeAccountId'            => $settings->stripe_account_id,
-            'stripeOnboardingComplete'   => (bool) $settings->stripe_onboarding_complete,
-            'currency'                   => $settings->currency ?? 'EUR',
+            'acceptOnSite' => $settings->accept_on_site ?? true,
+            'stripeEnabled' => (bool) $settings->stripe_enabled,
+            'stripeAccountId' => $settings->stripe_account_id,
+            'stripeOnboardingComplete' => (bool) $settings->stripe_onboarding_complete,
+            'currency' => $settings->currency ?? 'EUR',
             // tax & receipts
-            'serviceFeeRate'             => (float) ($settings->service_fee_rate ?? 0),
-            'invoicePrefix'              => $settings->invoice_prefix ?? 'INV',
-            'nextInvoiceNumber'          => (int) ($settings->next_invoice_number ?? 1),
-            'autoGenerateReceipts'       => (bool) $settings->auto_generate_receipts,
-            'companyType'                => $settings->company_type,
-            'firstInvoiceIssued'         => (bool) $settings->first_invoice_issued,
+            'serviceFeeRate' => (float) ($settings->service_fee_rate ?? 0),
+            'invoicePrefix' => $settings->invoice_prefix ?? 'INV',
+            'nextInvoiceNumber' => (int) ($settings->next_invoice_number ?? 1),
+            'autoGenerateReceipts' => (bool) $settings->auto_generate_receipts,
+            'companyType' => $settings->company_type,
+            'firstInvoiceIssued' => (bool) $settings->first_invoice_issued,
             // table / QR
-            'numberOfTables'             => (int) ($settings->number_of_tables ?? 20),
-            'tablePrefix'                => $settings->table_prefix ?? 'T',
-            'enableSharedBasket'         => (bool) $settings->enable_shared_basket,
-            'maxGuestsPerTable'          => (int) ($settings->max_guests_per_table ?? 8),
-            'enableReservations'         => $settings->enable_reservations ?? true,
-            'totalTables'                => (int) ($settings->total_tables_for_reservations ?? 20),
-            'maxTableCapacity'           => (int) ($settings->max_table_capacity ?? 6),
+            'numberOfTables' => (int) ($settings->number_of_tables ?? 20),
+            'tablePrefix' => $settings->table_prefix ?? 'T',
+            'enableSharedBasket' => (bool) $settings->enable_shared_basket,
+            'maxGuestsPerTable' => (int) ($settings->max_guests_per_table ?? 8),
+            'enableReservations' => $settings->enable_reservations ?? true,
+            'totalTables' => (int) ($settings->total_tables_for_reservations ?? 20),
+            'maxTableCapacity' => (int) ($settings->max_table_capacity ?? 6),
             // ordering
-            'autoAcceptOrders'           => (bool) $settings->auto_accept_orders,
-            'estimatedPrepTime'          => (int) ($settings->estimated_prep_time ?? 20),
-            'maxOrdersPerSlot'           => (int) ($settings->max_orders_per_slot ?? 10),
-            'allowGuestOrdering'         => $settings->allow_guest_ordering ?? true,
-            'requirePhoneNumber'         => (bool) $settings->require_phone_number,
-            'minOrderAmount'             => (float) ($settings->min_order_amount ?? 0),
-            'maxOrderAmount'             => $settings->max_order_amount ? (float) $settings->max_order_amount : null,
+            'autoAcceptOrders' => (bool) $settings->auto_accept_orders,
+            'estimatedPrepTime' => (int) ($settings->estimated_prep_time ?? 20),
+            'maxOrdersPerSlot' => (int) ($settings->max_orders_per_slot ?? 10),
+            'allowGuestOrdering' => $settings->allow_guest_ordering ?? true,
+            'requirePhoneNumber' => (bool) $settings->require_phone_number,
+            'minOrderAmount' => (float) ($settings->min_order_amount ?? 0),
+            'maxOrderAmount' => $settings->max_order_amount ? (float) $settings->max_order_amount : null,
             // inventory
-            'inventoryTrackingEnabled'   => $settings->inventory_tracking_enabled ?? true,
-            'autoStockDeduction'         => $settings->auto_stock_deduction ?? true,
-            'allowNegativeStock'         => (bool) $settings->allow_negative_stock,
+            'inventoryTrackingEnabled' => $settings->inventory_tracking_enabled ?? true,
+            'autoStockDeduction' => $settings->auto_stock_deduction ?? true,
+            'allowNegativeStock' => (bool) $settings->allow_negative_stock,
             'autoMarkUnavailableCritical' => $settings->auto_mark_unavailable_critical ?? true,
             // notifications
-            'notifyEmailNewOrder'        => $settings->notify_email_new_order ?? true,
-            'notifyEmailReview'          => (bool) $settings->notify_email_review,
-            'notifySmsNewOrder'          => (bool) $settings->notify_sms_new_order,
-            'notifyPushNewOrder'         => $settings->notify_push_new_order ?? true,
-            'notifyPushOrderReady'       => (bool) $settings->notify_push_order_ready,
-            'notificationEmail'          => $settings->notification_email ?? $vendor->email,
+            'notifyEmailNewOrder' => $settings->notify_email_new_order ?? true,
+            'notifyEmailReview' => (bool) $settings->notify_email_review,
+            'notifySmsNewOrder' => (bool) $settings->notify_sms_new_order,
+            'notifyPushNewOrder' => $settings->notify_push_new_order ?? true,
+            'notifyPushOrderReady' => (bool) $settings->notify_push_order_ready,
+            'notificationEmail' => $settings->notification_email ?? $vendor->email,
             // reviews
-            'enableReviews'              => $settings->enable_reviews ?? true,
-            'enableMenuReviews'          => $settings->enable_menu_reviews ?? true,
-            'allowAnonymousReviews'      => (bool) $settings->allow_anonymous_reviews,
+            'enableReviews' => $settings->enable_reviews ?? true,
+            'enableMenuReviews' => $settings->enable_menu_reviews ?? true,
+            'allowAnonymousReviews' => (bool) $settings->allow_anonymous_reviews,
             // language
-            'defaultLanguage'            => $settings->default_language ?? 'en',
-            'supportedLanguages'         => $settings->supported_languages ?? ['en'],
+            'dashboardLanguage' => $settings->dashboard_language ?? 'en',
+            'defaultLanguage' => $settings->default_language ?? 'en',
+            'supportedLanguages' => collect($settings->supported_languages ?? [])
+                ->prepend('en')
+                ->prepend($settings->default_language ?? 'en')
+                ->unique()
+                ->values()
+                ->all(),
             // loyalty
-            'loyaltyEnabled'             => (bool) $settings->loyalty_enabled,
-            'pointsPerEuro'              => (int) ($settings->points_per_euro ?? 10),
-            'minimumRedemptionPoints'    => (int) ($settings->minimum_redemption_points ?? 100),
-            'pointValue'                 => (float) ($settings->point_value ?? 0.01),
-            'redemptionRate'             => (float) ($settings->redemption_rate ?? 0.01),
-            'pointsExpiryDays'           => $settings->points_expiry_days ? (int) $settings->points_expiry_days : null,
-            'showInTopCustomers'         => (bool) $settings->show_in_top_customers,
+            'loyaltyEnabled' => (bool) $settings->loyalty_enabled,
+            'pointsPerEuro' => (int) ($settings->points_per_euro ?? 10),
+            'minimumRedemptionPoints' => (int) ($settings->minimum_redemption_points ?? 100),
+            'pointValue' => (float) ($settings->point_value ?? 0.01),
+            'redemptionRate' => (float) ($settings->redemption_rate ?? 0.01),
+            'pointsExpiryDays' => $settings->points_expiry_days ? (int) $settings->points_expiry_days : null,
+            'showInTopCustomers' => (bool) $settings->show_in_top_customers,
             // appearance
-            'menuTheme'                  => $settings->menu_theme ?? 'default',
-            'primaryColor'               => $settings->primary_color ?? '#000000',
-            'accentColor'                => $settings->accent_color ?? '#F97316',
-            'menuLayout'                 => $settings->menu_layout ?? 'grid',
+            'menuTheme' => $settings->menu_theme ?? 'default',
+            'primaryColor' => $settings->primary_color ?? '#000000',
+            'accentColor' => $settings->accent_color ?? '#F97316',
+            'menuLayout' => $settings->menu_layout ?? 'grid',
             // date / time formatting
-            'dateFormat'                 => $settings->date_format ?? 'DD.MM.YYYY',
-            'timeFormat'                 => $settings->time_format ?? '24h',
+            'dateFormat' => $settings->date_format ?? 'DD.MM.YYYY',
+            'timeFormat' => $settings->time_format ?? '24h',
             // data retention
-            'dataRetentionDays'          => $settings->data_retention_days ? (int) $settings->data_retention_days : null,
+            'dataRetentionDays' => $settings->data_retention_days ? (int) $settings->data_retention_days : null,
             // about page
-            'yearsOfExperience'          => $settings->years_of_experience !== null ? (int) $settings->years_of_experience : null,
-            'signatureRecipesCount'      => $settings->signature_recipes_count !== null ? (int) $settings->signature_recipes_count : null,
-            'happyCustomersCount'        => $settings->happy_customers_count !== null ? (int) $settings->happy_customers_count : null,
-            'restaurantFeatures'         => $settings->restaurant_features ?? [],
-            'showPhonePublic'            => $settings->show_phone_public ?? true,
-            'showEmailPublic'            => $settings->show_email_public ?? false,
-            'showWebsitePublic'          => $settings->show_website_public ?? true,
+            'yearsOfExperience' => $settings->years_of_experience !== null ? (int) $settings->years_of_experience : null,
+            'signatureRecipesCount' => $settings->signature_recipes_count !== null ? (int) $settings->signature_recipes_count : null,
+            'happyCustomersCount' => $settings->happy_customers_count !== null ? (int) $settings->happy_customers_count : null,
+            'restaurantFeatures' => $settings->restaurant_features ?? [],
+            'showPhonePublic' => $settings->show_phone_public ?? true,
+            'showEmailPublic' => $settings->show_email_public ?? false,
+            'showWebsitePublic' => $settings->show_website_public ?? true,
         ];
     }
 

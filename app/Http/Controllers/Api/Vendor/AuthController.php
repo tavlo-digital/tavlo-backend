@@ -15,10 +15,10 @@ class AuthController extends Controller
     public function register(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'name'     => ['required', 'string', 'max:255'],
-            'country'  => ['required', 'string', 'exists:countries,code'],
-            'phone'    => ['required', 'string', 'max:30', 'unique:vendors,phone'],
-            'email'    => ['required', 'email', 'max:255', 'unique:vendors,email'],
+            'name' => ['required', 'string', 'max:255'],
+            'country' => ['required', 'string', 'exists:countries,code'],
+            'phone' => ['required', 'string', 'max:30', 'unique:vendors,phone'],
+            'email' => ['required', 'email', 'max:255', 'unique:vendors,email'],
             'password' => ['required', 'string', 'min:8', 'confirmed'],
         ]);
 
@@ -27,7 +27,7 @@ class AuthController extends Controller
         $token = $vendor->createToken('vendor-token', ['role:vendor', 'role:manager'])->plainTextToken;
 
         return response()->json([
-            'user'  => $this->formatVendorUser($vendor),
+            'user' => $this->formatVendorUser($vendor),
             'token' => $token,
         ], 201);
     }
@@ -35,7 +35,7 @@ class AuthController extends Controller
     public function login(Request $request): JsonResponse
     {
         $request->validate([
-            'email'    => ['required', 'email'],
+            'email' => ['required', 'email'],
             'password' => ['required', 'string'],
         ]);
 
@@ -45,7 +45,7 @@ class AuthController extends Controller
             $token = $vendor->createToken('vendor-token', ['role:vendor', 'role:manager'])->plainTextToken;
 
             return response()->json([
-                'user'  => $this->formatVendorUser($vendor),
+                'user' => $this->formatVendorUser($vendor),
                 'token' => $token,
             ]);
         }
@@ -67,7 +67,7 @@ class AuthController extends Controller
         ])->plainTextToken;
 
         return response()->json([
-            'user'  => $this->formatTeamMemberUser($member),
+            'user' => $this->formatTeamMemberUser($member),
             'token' => $token,
         ]);
     }
@@ -94,7 +94,7 @@ class AuthController extends Controller
     {
         $validated = $request->validate([
             'current_password' => ['required', 'string'],
-            'password'         => ['required', 'string', 'min:8', 'confirmed'],
+            'password' => ['required', 'string', 'min:8', 'confirmed'],
         ]);
 
         $user = $request->user();
@@ -115,43 +115,60 @@ class AuthController extends Controller
         $vendor->loadMissing('vendorSetting');
 
         return [
-            'id'               => $vendor->id,
-            'vendorId'         => (string) $vendor->id,
-            'vendorPublicId'   => $vendor->vendor_public_id,
+            'id' => $vendor->id,
+            'vendorId' => (string) $vendor->id,
+            'vendorPublicId' => $vendor->vendor_public_id,
             'vendor_public_id' => $vendor->vendor_public_id,
-            'actorType'        => 'vendor',
-            'role'             => 'manager',
-            'name'             => $vendor->name,
-            'restaurantName'   => $vendor->restaurant_name,
-            'country'          => $vendor->country,
-            'phone'            => $vendor->phone,
-            'email'            => $vendor->email,
-            'permissions'      => ['*'],
-            'created_at'       => $vendor->created_at?->toISOString(),
-            'status'                => $vendor->status ?? 'pending',
-            'liveStatus'            => $vendor->live_status ?? 'not-live',
+            'actorType' => 'vendor',
+            'role' => 'manager',
+            'name' => $vendor->name,
+            'restaurantName' => $vendor->restaurant_name,
+            'country' => $vendor->country,
+            'phone' => $vendor->phone,
+            'email' => $vendor->email,
+            'permissions' => ['*'],
+            'created_at' => $vendor->created_at?->toISOString(),
+            'status' => $vendor->status ?? 'pending',
+            'liveStatus' => $vendor->live_status ?? 'not-live',
             'isLiveAndDiscoverable' => (bool) ($vendor->vendorSetting?->is_live_and_discoverable ?? false),
+            'dashboardLanguage' => $vendor->vendorSetting?->dashboard_language ?? 'en',
+            'defaultLanguage' => $vendor->vendorSetting?->default_language ?? 'en',
+            'supportedLanguages' => collect($vendor->vendorSetting?->supported_languages ?? [])
+                ->prepend('en')
+                ->prepend($vendor->vendorSetting?->default_language ?? 'en')
+                ->unique()
+                ->values()
+                ->all(),
         ];
     }
 
     private function formatTeamMemberUser(TeamMember $member): array
     {
         $vendor = $member->vendor;
+        $vendor?->loadMissing('vendorSetting');
 
         return [
-            'id'             => $member->id,
-            'vendorId'       => $vendor ? (string) $vendor->id : null,
+            'id' => $member->id,
+            'vendorId' => $vendor ? (string) $vendor->id : null,
             'vendorPublicId' => $vendor?->vendor_public_id,
             'vendor_public_id' => $vendor?->vendor_public_id,
-            'actorType'      => 'team_member',
-            'role'           => $member->role,
-            'name'           => $member->name,
+            'actorType' => 'team_member',
+            'role' => $member->role,
+            'name' => $member->name,
             'restaurantName' => $vendor?->restaurant_name,
-            'country'        => $vendor?->country,
-            'phone'          => null,
-            'email'          => $member->email,
-            'permissions'    => $member->permissions ?? [],
-            'created_at'     => $member->created_at?->toISOString(),
+            'country' => $vendor?->country,
+            'phone' => null,
+            'email' => $member->email,
+            'permissions' => $member->permissions ?? [],
+            'created_at' => $member->created_at?->toISOString(),
+            'dashboardLanguage' => $vendor?->vendorSetting?->dashboard_language ?? 'en',
+            'defaultLanguage' => $vendor?->vendorSetting?->default_language ?? 'en',
+            'supportedLanguages' => collect($vendor?->vendorSetting?->supported_languages ?? [])
+                ->prepend('en')
+                ->prepend($vendor?->vendorSetting?->default_language ?? 'en')
+                ->unique()
+                ->values()
+                ->all(),
         ];
     }
 }

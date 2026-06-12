@@ -6,22 +6,29 @@ use App\Http\Controllers\Controller;
 use App\Models\MasterMenuCategory;
 use App\Models\MenuCategory;
 use App\Models\TaxCategory;
+use App\Services\LocaleService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 
 class MenuCategoryController extends Controller
 {
+    public function __construct(private readonly LocaleService $locales) {}
+
     public function index(Request $request): JsonResponse
     {
         $vendor = $request->user();
 
         $categories = $vendor->menuCategories()
-            ->with(['masterCategory', 'taxCategory'])
+            ->with(['masterCategory', 'taxCategory', 'localizedTranslations'])
             ->withCount(['items' => fn ($q) => $q->where('is_active', true)])
             ->orderBy('sort_order')
             ->get()
-            ->map(fn (MenuCategory $cat) => $this->formatCategory($cat));
+            ->map(fn (MenuCategory $cat) => $this->formatCategory(
+                $cat,
+                $vendor,
+                $this->locales->dashboardLanguage($vendor)
+            ));
 
         return response()->json(['data' => $categories]);
     }
@@ -70,6 +77,7 @@ class MenuCategoryController extends Controller
             'masterCategoryId' => ['required', 'integer', Rule::exists('master_menu_categories', 'id')->where('is_active', true)],
             'taxCategoryId' => ['sometimes', 'nullable', 'integer', 'exists:tax_categories,id'],
             'defaultTaxCategory' => ['sometimes', 'nullable', 'string', 'max:64'],
+            'translations' => ['sometimes', 'array'],
         ]);
 
         $masterCategory = MasterMenuCategory::where('is_active', true)->findOrFail($data['masterCategoryId']);
@@ -91,10 +99,22 @@ class MenuCategoryController extends Controller
             'is_active' => true,
         ]);
 
-        $category->load(['masterCategory', 'taxCategory']);
+        $this->locales->syncTranslations(
+            $category,
+            'localizedTranslations',
+            $data['translations'] ?? [],
+            ['name']
+        );
+        $category->load(['masterCategory', 'taxCategory', 'localizedTranslations']);
         $category->loadCount(['items' => fn ($q) => $q->where('is_active', true)]);
 
-        return response()->json(['data' => $this->formatCategory($category)], 201);
+        return response()->json([
+            'data' => $this->formatCategory(
+                $category,
+                $vendor,
+                $this->locales->dashboardLanguage($vendor)
+            ),
+        ], 201);
     }
 
     public function update(Request $request, int $categoryId): JsonResponse
@@ -108,6 +128,7 @@ class MenuCategoryController extends Controller
             'defaultTaxCategory' => ['sometimes', 'nullable', 'string', 'max:64'],
             'sortOrder' => ['sometimes', 'integer', 'min:0'],
             'isActive' => ['sometimes', 'boolean'],
+            'translations' => ['sometimes', 'array'],
         ]);
 
         if (! isset($data['taxCategoryId']) && array_key_exists('defaultTaxCategory', $data)) {
@@ -139,10 +160,24 @@ class MenuCategoryController extends Controller
         }
 
         $category->save();
-        $category->load(['masterCategory', 'taxCategory']);
+        if (array_key_exists('translations', $data)) {
+            $this->locales->syncTranslations(
+                $category,
+                'localizedTranslations',
+                $data['translations'],
+                ['name']
+            );
+        }
+        $category->load(['masterCategory', 'taxCategory', 'localizedTranslations']);
         $category->loadCount(['items' => fn ($q) => $q->where('is_active', true)]);
 
-        return response()->json(['data' => $this->formatCategory($category)]);
+        return response()->json([
+            'data' => $this->formatCategory(
+                $category,
+                $vendor,
+                $this->locales->dashboardLanguage($vendor)
+            ),
+        ]);
     }
 
     public function destroy(Request $request, int $categoryId): JsonResponse
@@ -163,14 +198,21 @@ class MenuCategoryController extends Controller
 
     // ----------------------------------------------------------------
 
-    private function formatCategory(MenuCategory $cat): array
+    private function formatCategory(MenuCategory $cat, $vendor, string $locale): array
     {
         $tc = $cat->taxCategory;
 
         return [
             'id' => $cat->id,
             'masterCategoryId' => $cat->master_menu_category_id,
-            'name' => $cat->display_name,
+            'name' => $this->locales->translated(
+                $cat,
+                'localizedTranslations',
+                'name',
+                $vendor,
+                $locale,
+                $cat->display_name
+            ),
             'slug' => $cat->display_slug,
             'icon' => $cat->display_icon,
             'defaultTaxCategory' => $cat->default_tax_category ?? ($tc?->slug ?? 'food'),
@@ -183,6 +225,12 @@ class MenuCategoryController extends Controller
             'sortOrder' => $cat->sort_order,
             'isActive' => $cat->is_active,
             'itemCount' => $cat->items_count ?? 0,
+            'translations' => $this->locales->translationMap(
+                $cat,
+                'localizedTranslations',
+                ['name'],
+                ['name' => $cat->display_name]
+            ),
         ];
     }
 

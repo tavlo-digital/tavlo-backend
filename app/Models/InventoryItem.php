@@ -4,11 +4,13 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class InventoryItem extends Model
 {
     protected $fillable = [
         'vendor_id',
+        'inventory_category_id',
         'name',
         'category',
         'quantity',
@@ -40,5 +42,15 @@ class InventoryItem extends Model
     public function vendor(): BelongsTo
     {
         return $this->belongsTo(Vendor::class);
+    }
+
+    public function inventoryCategory(): BelongsTo
+    {
+        return $this->belongsTo(InventoryCategory::class);
+    }
+
+    public function localizedTranslations(): HasMany
+    {
+        return $this->hasMany(InventoryItemTranslation::class);
     }
 }

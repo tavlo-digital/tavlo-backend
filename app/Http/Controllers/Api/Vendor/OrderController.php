@@ -9,6 +9,7 @@ use App\Models\TableScanSession;
 use App\Models\TableSession;
 use App\Models\TeamMember;
 use App\Models\Vendor;
+use App\Services\NotificationService;
 use App\Services\TaxCalculationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -133,6 +134,8 @@ class OrderController extends Controller
 
         $order->update($mapped);
 
+        $this->notifySessionCustomers($order, 'order_updated', 'Your order status has been updated.');
+
         return response()->json($this->formatOrder($order->fresh()->load('customer')));
     }
 
@@ -151,6 +154,8 @@ class OrderController extends Controller
             'waiter_confirmed_at' => now(),
         ]);
 
+        $this->notifySessionCustomers($order, 'order_updated', 'Your order has been confirmed by the waiter.');
+
         return response()->json($this->formatOrder($order->fresh()->load('customer')));
     }
 
@@ -168,6 +173,8 @@ class OrderController extends Controller
             'payment_confirmed_at' => now(),
             'payment_pending' => false,
         ]);
+
+        $this->notifySessionCustomers($order, 'payment_updated', 'Your cash payment has been confirmed.');
 
         return response()->json($this->formatOrder($order->fresh()->load('customer')));
     }
@@ -194,6 +201,8 @@ class OrderController extends Controller
             ->update(['ready_at' => $now]);
 
         $order->update(['status' => 'ready']);
+
+        $this->notifySessionCustomers($order, 'order_updated', 'Your order is ready!');
 
         return response()->json($this->formatOrder($order->fresh()->load('customer')));
     }
@@ -247,6 +256,15 @@ class OrderController extends Controller
         $item->update($updates);
         $this->syncOrderStatusFromCartItems($order);
 
+        $statusLabel = match ($data['status']) {
+            'preparing' => 'is now being prepared',
+            'ready' => 'is ready',
+            'served' => 'has been served',
+            default => 'has been updated',
+        };
+        $itemName = $item->menuItem?->name ?? 'An item';
+        $this->notifySessionCustomers($order, 'cart_item_updated', "{$itemName} {$statusLabel}.");
+
         return response()->json($this->formatOrder(
             $order->fresh()->load(['customer', 'tableScanSession.restaurantTable'])
         ));
@@ -261,6 +279,8 @@ class OrderController extends Controller
         $this->authorizeVendor($request, $order->vendor);
 
         $order->update(['status' => 'picked_up']);
+
+        $this->notifySessionCustomers($order, 'order_updated', 'Your order has been picked up.');
 
         return response()->json($this->formatOrder($order->fresh()->load('customer')));
     }
@@ -288,6 +308,8 @@ class OrderController extends Controller
             'served_at' => $now,
         ]);
 
+        $this->notifySessionCustomers($order, 'order_updated', 'Your order has been served. Enjoy!');
+
         return response()->json($this->formatOrder($order->fresh()->load('customer')));
     }
 
@@ -308,6 +330,8 @@ class OrderController extends Controller
             'cancelled_at' => now(),
             'cancelled_reason' => $data['reason'] ?? null,
         ]);
+
+        $this->notifySessionCustomers($order, 'order_updated', 'Your order has been cancelled.');
 
         return response()->json($this->formatOrder($order->fresh()->load('customer')));
     }
@@ -699,6 +723,21 @@ class OrderController extends Controller
             ->filter(fn (array $modifier) => $modifier['name'] !== '')
             ->values()
             ->all();
+    }
+
+    private function notifySessionCustomers(Order $order, string $event, string $message): void
+    {
+        if (! $order->table_scan_session_id) {
+            return;
+        }
+
+        $session = $order->relationLoaded('tableScanSession')
+            ? $order->tableScanSession
+            : TableScanSession::find($order->table_scan_session_id);
+
+        if ($session) {
+            NotificationService::notifyTableCustomers($session->restaurant_table_id, $event, $message);
+        }
     }
 
     private function resolveVendor(string $vendorId): Vendor

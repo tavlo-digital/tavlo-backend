@@ -4,6 +4,7 @@ use App\Http\Controllers\Api\Customer\AuthController;
 use App\Http\Controllers\Api\Customer\CartController;
 use App\Http\Controllers\Api\Customer\FavoriteController;
 use App\Http\Controllers\Api\Customer\LoyaltyController;
+use App\Http\Controllers\Api\Customer\NotificationController;
 use App\Http\Controllers\Api\Customer\OrderHistoryController;
 use App\Http\Controllers\Api\Customer\PaymentController;
 use App\Http\Controllers\Api\Customer\PrivacyController;
@@ -129,6 +130,11 @@ Route::middleware(['auth:customer', 'track.session.activity'])->group(function (
     Route::post('reviews',                      [ReviewController::class, 'store'])->name('reviews.store');
     Route::patch('reviews/{reviewPublicId}',    [ReviewController::class, 'update'])->name('reviews.update');
     Route::delete('reviews/{reviewPublicId}',   [ReviewController::class, 'destroy'])->name('reviews.destroy');
+
+    // Notifications
+    Route::get('notifications',                      [NotificationController::class, 'index'])->name('notifications.index');
+    Route::patch('notifications/{id}/read',          [NotificationController::class, 'markRead'])->name('notifications.read');
+    Route::post('notifications/read-all',            [NotificationController::class, 'markAllRead'])->name('notifications.readAll');
 
     // Privacy & Data
     Route::post('privacy/export',       [PrivacyController::class, 'requestDataExport'])->name('privacy.export');

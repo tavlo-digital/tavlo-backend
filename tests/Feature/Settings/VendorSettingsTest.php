@@ -4,7 +4,6 @@ namespace Tests\Feature\Settings;
 
 use App\Models\Vendor;
 use App\Models\VendorRequestChange;
-use App\Models\VendorSetting;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
@@ -25,6 +24,7 @@ class VendorSettingsTest extends TestCase
     private function authHeaders(): array
     {
         $token = $this->vendor->createToken('test')->plainTextToken;
+
         return ['Authorization' => "Bearer {$token}", 'Accept' => 'application/json'];
     }
 
@@ -80,15 +80,15 @@ class VendorSettingsTest extends TestCase
     {
         VendorRequestChange::create([
             'vendor_id' => $this->vendor->id,
-            'status'    => 'approved',
-            'changes'   => json_encode(['legalEntityName' => 'Test GmbH']),
+            'status' => 'approved',
+            'changes' => json_encode(['legalEntityName' => 'Test GmbH']),
         ]);
 
         $response = $this->putJson(
             "/api/vendor/{$this->vendor->vendor_public_id}/settings",
             [
-                'restaurantName'     => 'New Name',
-                'description'        => 'A great place',
+                'restaurantName' => 'New Name',
+                'description' => 'A great place',
                 'isLiveAndDiscoverable' => true,
             ],
             $this->authHeaders()
@@ -98,11 +98,11 @@ class VendorSettingsTest extends TestCase
             ->assertJsonFragment(['restaurantName' => 'New Name']);
 
         $this->assertDatabaseHas('vendors', [
-            'id'              => $this->vendor->id,
+            'id' => $this->vendor->id,
             'restaurant_name' => 'New Name',
         ]);
         $this->assertDatabaseHas('vendor_settings', [
-            'vendor_id'   => $this->vendor->id,
+            'vendor_id' => $this->vendor->id,
             'description' => 'A great place',
         ]);
     }
@@ -112,7 +112,7 @@ class VendorSettingsTest extends TestCase
         $response = $this->putJson(
             "/api/vendor/{$this->vendor->vendor_public_id}/settings",
             [
-                'acceptOnSite'  => false,
+                'acceptOnSite' => false,
                 'stripeEnabled' => true,
             ],
             $this->authHeaders()
@@ -120,14 +120,14 @@ class VendorSettingsTest extends TestCase
 
         $response->assertOk()
             ->assertJsonFragment([
-                'acceptOnSite'  => false,
+                'acceptOnSite' => false,
                 'stripeEnabled' => true,
             ]);
 
         $this->assertDatabaseHas('vendor_settings', [
-            'vendor_id'       => $this->vendor->id,
-            'accept_on_site'  => false,
-            'stripe_enabled'  => true,
+            'vendor_id' => $this->vendor->id,
+            'accept_on_site' => false,
+            'stripe_enabled' => true,
         ]);
     }
 
@@ -136,9 +136,9 @@ class VendorSettingsTest extends TestCase
         $response = $this->putJson(
             "/api/vendor/{$this->vendor->vendor_public_id}/settings",
             [
-                'loyaltyEnabled'  => true,
-                'pointsPerEuro'   => 20,
-                'redemptionRate'  => 0.05,
+                'loyaltyEnabled' => true,
+                'pointsPerEuro' => 20,
+                'redemptionRate' => 0.05,
             ],
             $this->authHeaders()
         );
@@ -148,6 +148,30 @@ class VendorSettingsTest extends TestCase
                 'loyaltyEnabled' => true,
                 'redemptionRate' => 0.05,
             ]);
+    }
+
+    public function test_language_settings_are_independent_and_keep_english_enabled(): void
+    {
+        $this->putJson(
+            "/api/vendor/{$this->vendor->vendor_public_id}/settings",
+            [
+                'dashboardLanguage' => 'de',
+                'defaultLanguage' => 'it',
+                'supportedLanguages' => ['it'],
+            ],
+            $this->authHeaders()
+        )
+            ->assertOk()
+            ->assertJsonPath('dashboardLanguage', 'de')
+            ->assertJsonPath('defaultLanguage', 'it')
+            ->assertJsonPath('supportedLanguages.0', 'it')
+            ->assertJsonPath('supportedLanguages.1', 'en');
+
+        $this->assertDatabaseHas('vendor_settings', [
+            'vendor_id' => $this->vendor->id,
+            'dashboard_language' => 'de',
+            'default_language' => 'it',
+        ]);
     }
 
     public function test_cannot_update_another_vendors_settings(): void
@@ -170,9 +194,9 @@ class VendorSettingsTest extends TestCase
         $response = $this->postJson(
             "/api/vendor/{$this->vendor->vendor_public_id}/legal-info",
             [
-                'legalEntityName'            => 'My GmbH',
+                'legalEntityName' => 'My GmbH',
                 'businessRegistrationNumber' => 'FN123456a',
-                'vatNumber'                  => 'ATU12345678',
+                'vatNumber' => 'ATU12345678',
             ],
             $this->authHeaders()
         );
@@ -181,30 +205,30 @@ class VendorSettingsTest extends TestCase
             ->assertJsonFragment(['message' => 'Legal info submitted for approval.']);
 
         $this->assertDatabaseHas('vendor_request_changes', [
-            'vendor_id'          => $this->vendor->id,
-            'legal_entity_name'  => 'My GmbH',
-            'vat_number'         => 'ATU12345678',
-            'status'             => 'pending',
+            'vendor_id' => $this->vendor->id,
+            'legal_entity_name' => 'My GmbH',
+            'vat_number' => 'ATU12345678',
+            'status' => 'pending',
         ]);
     }
 
     public function test_cannot_submit_legal_info_while_pending(): void
     {
         VendorRequestChange::create([
-            'vendor_id'                      => $this->vendor->id,
-            'restaurant_name'                => 'Old Name',
-            'legal_entity_name'              => 'Old GmbH',
-            'business_registration_number'   => 'FN000001a',
-            'vat_number'                     => 'ATU00000001',
-            'status'                         => 'pending',
+            'vendor_id' => $this->vendor->id,
+            'restaurant_name' => 'Old Name',
+            'legal_entity_name' => 'Old GmbH',
+            'business_registration_number' => 'FN000001a',
+            'vat_number' => 'ATU00000001',
+            'status' => 'pending',
         ]);
 
         $this->postJson(
             "/api/vendor/{$this->vendor->vendor_public_id}/legal-info",
             [
-                'legalEntityName'            => 'New GmbH',
+                'legalEntityName' => 'New GmbH',
                 'businessRegistrationNumber' => 'FN999999b',
-                'vatNumber'                  => 'ATU99999999',
+                'vatNumber' => 'ATU99999999',
             ],
             $this->authHeaders()
         )->assertStatus(422);
@@ -217,12 +241,12 @@ class VendorSettingsTest extends TestCase
     public function test_can_get_legal_change_status(): void
     {
         VendorRequestChange::create([
-            'vendor_id'                      => $this->vendor->id,
-            'restaurant_name'                => 'Test',
-            'legal_entity_name'              => 'Test GmbH',
-            'business_registration_number'   => 'FN123456a',
-            'vat_number'                     => 'ATU12345678',
-            'status'                         => 'pending',
+            'vendor_id' => $this->vendor->id,
+            'restaurant_name' => 'Test',
+            'legal_entity_name' => 'Test GmbH',
+            'business_registration_number' => 'FN123456a',
+            'vat_number' => 'ATU12345678',
+            'status' => 'pending',
         ]);
 
         $this->getJson(
