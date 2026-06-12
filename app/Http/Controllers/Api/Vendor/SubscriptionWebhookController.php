@@ -42,6 +42,7 @@ class SubscriptionWebhookController extends Controller
 
         $result = match ($type) {
             'checkout.session.completed'        => $this->handleCheckoutCompleted($object),
+            'checkout.session.expired'          => $this->handleCheckoutExpired($object),
             'customer.subscription.updated'     => $this->handleSubscriptionUpdated($object),
             'customer.subscription.deleted'     => $this->handleSubscriptionDeleted($object),
             'invoice.paid'                      => $this->handleInvoicePaid($object),
@@ -122,6 +123,25 @@ class SubscriptionWebhookController extends Controller
         return 'subscription_created';
     }
 
+    private function handleCheckoutExpired(object $session): string
+    {
+        $vendorId = $session->metadata->vendor_id ?? $session->client_reference_id ?? null;
+        $planId = $session->metadata->plan_id ?? null;
+
+        StripeWebhookLog::create([
+            'event_type'      => 'checkout.session.expired',
+            'stripe_event_id' => $session->id,
+            'http_status'     => 200,
+            'outcome'         => 'checkout_expired',
+            'metadata'        => [
+                'vendor_id' => $vendorId,
+                'plan_id'   => $planId,
+            ],
+        ]);
+
+        return 'checkout_expired';
+    }
+
     private function handleSubscriptionUpdated(object $stripeSubscription): string
     {
         $subscription = Subscription::where('stripe_subscription_id', $stripeSubscription->id)->first();
@@ -174,6 +194,18 @@ class SubscriptionWebhookController extends Controller
             'cancelled_at' => Carbon::now(),
             'auto_renew'   => false,
         ]);
+
+        $vendor = $subscription->vendor;
+        if ($vendor && $vendor->status === 'active') {
+            $hasOtherActive = $vendor->subscriptions()
+                ->where('id', '!=', $subscription->id)
+                ->where('status', 'active')
+                ->exists();
+
+            if (!$hasOtherActive) {
+                $vendor->update(['status' => 'pending']);
+            }
+        }
 
         SubscriptionEvent::create([
             'subscription_id' => $subscription->id,

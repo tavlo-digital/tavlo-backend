@@ -225,6 +225,15 @@ class BillingService
             'auto_renew'   => false,
         ]);
 
+        $hasOtherActive = $vendor->subscriptions()
+            ->where('id', '!=', $subscription->id)
+            ->where('status', 'active')
+            ->exists();
+
+        if (!$hasOtherActive && $vendor->status === 'active') {
+            $vendor->update(['status' => 'pending']);
+        }
+
         SubscriptionEvent::create([
             'subscription_id' => $subscription->id,
             'event_type'      => 'subscription_cancelled',

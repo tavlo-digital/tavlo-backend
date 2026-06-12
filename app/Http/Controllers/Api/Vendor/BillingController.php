@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\Vendor;
 
 use App\Http\Controllers\Controller;
+use App\Models\StripeWebhookLog;
 use App\Models\SubscriptionPlan;
 use App\Models\Vendor;
 use App\Services\BillingService;
@@ -118,6 +119,55 @@ class BillingController extends Controller
         return response()->json(
             $this->billingService->getUsageStats($vendor)
         );
+    }
+
+    /**
+     * GET /api/vendor/{vendorId}/billing/history
+     */
+    public function history(Request $request, string $vendorId): JsonResponse
+    {
+        $vendor = $this->resolveVendor($vendorId);
+        $this->authorizeVendor($request, $vendor);
+
+        $subscriptionIds = $vendor->subscriptions()->pluck('id');
+
+        $events = \App\Models\SubscriptionEvent::whereIn('subscription_id', $subscriptionIds)
+            ->latest()
+            ->take(20)
+            ->get()
+            ->map(fn ($e) => [
+                'id'        => $e->id,
+                'type'      => $e->event_type,
+                'metadata'  => $e->metadata,
+                'createdAt' => $e->created_at->toISOString(),
+            ]);
+
+        $checkoutLogs = StripeWebhookLog::whereIn('event_type', [
+                    'checkout.session.created',
+                    'checkout.session.cancelled',
+                    'checkout.session.expired',
+                ])
+                ->where(function ($q) use ($vendor) {
+                    $q->whereJsonContains('metadata->vendor_id', $vendor->id)
+                      ->orWhereJsonContains('metadata->vendor_id', (string) $vendor->id);
+                })
+            ->latest()
+            ->take(20)
+            ->get()
+            ->map(fn ($l) => [
+                'id'        => $l->id,
+                'type'      => $l->event_type,
+                'outcome'   => $l->outcome,
+                'metadata'  => $l->metadata,
+                'createdAt' => $l->created_at->toISOString(),
+            ]);
+
+        $history = $events->concat($checkoutLogs)
+            ->sortByDesc('createdAt')
+            ->values()
+            ->take(20);
+
+        return response()->json(['data' => $history]);
     }
 
     /**
@@ -289,7 +339,7 @@ class BillingController extends Controller
                 'quantity' => 1,
             ]],
             'success_url' => $frontendBase . '/activate/success?plan=' . urlencode($plan->name) . '&session_id={CHECKOUT_SESSION_ID}',
-            'cancel_url'  => $frontendBase . '/activate/checkout',
+            'cancel_url'  => $frontendBase . '/activate/checkout?cancelled=1&session_id={CHECKOUT_SESSION_ID}',
             'client_reference_id' => (string) $vendor->id,
             'customer_email'      => $vendor->email,
             'metadata'            => [
@@ -299,7 +349,45 @@ class BillingController extends Controller
             ],
         ]);
 
+        StripeWebhookLog::create([
+            'event_type'      => 'checkout.session.created',
+            'stripe_event_id' => $session->id,
+            'http_status'     => 200,
+            'outcome'         => 'checkout_started',
+            'metadata'        => [
+                'vendor_id' => $vendor->id,
+                'plan_id'   => $plan->id,
+                'plan_name' => $plan->name,
+                'cycle'     => $data['billingCycle'],
+            ],
+        ]);
+
         return response()->json(['checkoutUrl' => $session->url]);
+    }
+
+    /**
+     * POST /api/vendor/{vendorId}/billing/cancel-checkout
+     */
+    public function cancelCheckout(Request $request, string $vendorId): JsonResponse
+    {
+        $vendor = $this->resolveVendor($vendorId);
+        $this->authorizeVendor($request, $vendor);
+
+        $data = $request->validate([
+            'sessionId' => ['required', 'string'],
+        ]);
+
+        StripeWebhookLog::create([
+            'event_type'      => 'checkout.session.cancelled',
+            'stripe_event_id' => $data['sessionId'],
+            'http_status'     => 200,
+            'outcome'         => 'checkout_abandoned',
+            'metadata'        => [
+                'vendor_id' => $vendor->id,
+            ],
+        ]);
+
+        return response()->json(['received' => true]);
     }
 
     /**

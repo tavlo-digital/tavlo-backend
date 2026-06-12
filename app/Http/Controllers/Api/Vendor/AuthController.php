@@ -114,6 +114,16 @@ class AuthController extends Controller
     {
         $vendor->loadMissing('vendorSetting');
 
+        $status = $vendor->status ?? 'pending';
+        if ($status === 'active') {
+            $hasActiveSubscription = $vendor->subscriptions()
+                ->whereIn('status', ['active', 'trialing'])
+                ->exists();
+            if (!$hasActiveSubscription) {
+                $status = 'pending';
+            }
+        }
+
         return [
             'id' => $vendor->id,
             'vendorId' => (string) $vendor->id,
@@ -128,7 +138,7 @@ class AuthController extends Controller
             'email' => $vendor->email,
             'permissions' => ['*'],
             'created_at' => $vendor->created_at?->toISOString(),
-            'status' => $vendor->status ?? 'pending',
+            'status' => $status,
             'liveStatus' => $vendor->live_status ?? 'not-live',
             'isLiveAndDiscoverable' => (bool) ($vendor->vendorSetting?->is_live_and_discoverable ?? false),
             'dashboardLanguage' => $vendor->vendorSetting?->dashboard_language ?? 'en',
