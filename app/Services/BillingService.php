@@ -2,7 +2,6 @@
 
 namespace App\Services;
 
-use App\Models\Invoice;
 use App\Models\PaymentMethod;
 use App\Models\Subscription;
 use App\Models\SubscriptionEvent;
@@ -10,9 +9,189 @@ use App\Models\SubscriptionPlan;
 use App\Models\Vendor;
 use Carbon\Carbon;
 use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Facades\DB;
 
 class BillingService
 {
+    /**
+     * Persist a checkout attempt before redirecting the vendor to Stripe.
+     */
+    public function createPendingSubscription(Vendor $vendor, SubscriptionPlan $plan, string $cycle): Subscription
+    {
+        return Subscription::create([
+            'vendor_id' => $vendor->id,
+            'plan_id' => $plan->id,
+            'status' => 'pending',
+            'billing_cycle' => $cycle,
+            'start_date' => Carbon::today(),
+            'next_billing_date' => $cycle === 'yearly'
+                ? Carbon::today()->addYear()
+                : Carbon::today()->addMonth(),
+            'auto_renew' => false,
+        ]);
+    }
+
+    /**
+     * Activate the local checkout row. This is safe to call from both the
+     * webhook and the browser verification fallback.
+     */
+    public function activateCheckoutSession(object $session): string
+    {
+        if (($session->mode ?? null) !== 'subscription') {
+            return 'ignored_non_subscription';
+        }
+
+        $vendorId = $session->metadata->vendor_id ?? $session->client_reference_id ?? null;
+        $localSubscriptionId = $session->metadata->local_subscription_id ?? null;
+        $planId = $session->metadata->plan_id ?? null;
+        $cycle = $session->metadata->cycle ?? 'monthly';
+
+        if (! $vendorId) {
+            return 'missing_vendor_id';
+        }
+
+        $vendor = Vendor::find($vendorId);
+        if (! $vendor) {
+            return 'vendor_not_found';
+        }
+
+        return DB::transaction(function () use (
+            $session,
+            $vendor,
+            $localSubscriptionId,
+            $planId,
+            $cycle
+        ): string {
+            $subscription = null;
+
+            if ($localSubscriptionId || isset($session->id)) {
+                $subscription = Subscription::query()
+                    ->where('vendor_id', $vendor->id)
+                    ->where(function ($query) use ($localSubscriptionId, $session) {
+                        if ($localSubscriptionId) {
+                            $query->whereKey($localSubscriptionId);
+                        }
+
+                        if (isset($session->id)) {
+                            $method = $localSubscriptionId ? 'orWhere' : 'where';
+                            $query->{$method}('stripe_checkout_session_id', $session->id);
+                        }
+                    })
+                    ->lockForUpdate()
+                    ->first();
+            }
+
+            if (! $subscription && isset($session->subscription)) {
+                $subscription = Subscription::where(
+                    'stripe_subscription_id',
+                    $session->subscription
+                )
+                    ->where('vendor_id', $vendor->id)
+                    ->lockForUpdate()
+                    ->first();
+            }
+
+            if (
+                $subscription
+                && $subscription->status === 'active'
+                && $subscription->stripe_subscription_id === ($session->subscription ?? null)
+            ) {
+                return 'already_processed';
+            }
+
+            if (! $subscription) {
+                if (! $planId) {
+                    return 'missing_plan_id';
+                }
+
+                $subscription = new Subscription([
+                    'vendor_id' => $vendor->id,
+                    'plan_id' => $planId,
+                    'billing_cycle' => $cycle,
+                ]);
+            }
+
+            $vendor->subscriptions()
+                ->where('id', '!=', $subscription->id ?? 0)
+                ->where('status', 'active')
+                ->update([
+                    'status' => 'superseded',
+                    'cancelled_at' => Carbon::now(),
+                    'auto_renew' => false,
+                ]);
+
+            $subscription->fill([
+                'plan_id' => $planId ?: $subscription->plan_id,
+                'status' => 'active',
+                'billing_cycle' => $cycle,
+                'start_date' => Carbon::now(),
+                'next_billing_date' => $cycle === 'yearly'
+                    ? Carbon::now()->addYear()
+                    : Carbon::now()->addMonth(),
+                'auto_renew' => true,
+                'stripe_checkout_session_id' => $session->id ?? $subscription->stripe_checkout_session_id,
+                'stripe_subscription_id' => $session->subscription ?? null,
+                'stripe_customer_id' => $session->customer ?? null,
+                'cancelled_at' => null,
+            ])->save();
+
+            if (! $vendor->status || $vendor->status === 'pending') {
+                $vendor->update(['status' => 'active']);
+            }
+
+            SubscriptionEvent::firstOrCreate(
+                [
+                    'subscription_id' => $subscription->id,
+                    'event_type' => 'subscription_created',
+                ],
+                [
+                    'new_plan_id' => $subscription->plan_id,
+                    'metadata' => [
+                        'source' => 'stripe_checkout',
+                        'checkout_session_id' => $session->id ?? null,
+                    ],
+                ]
+            );
+
+            return 'subscription_activated';
+        });
+    }
+
+    public function expireCheckoutSession(object $session): string
+    {
+        $localSubscriptionId = $session->metadata->local_subscription_id ?? null;
+
+        if (! $localSubscriptionId && ! isset($session->id)) {
+            return 'pending_subscription_not_found';
+        }
+
+        $subscription = Subscription::query()
+            ->where(function ($query) use ($localSubscriptionId, $session) {
+                if ($localSubscriptionId) {
+                    $query->whereKey($localSubscriptionId);
+                }
+
+                if (isset($session->id)) {
+                    $method = $localSubscriptionId ? 'orWhere' : 'where';
+                    $query->{$method}('stripe_checkout_session_id', $session->id);
+                }
+            })
+            ->where('status', 'pending')
+            ->first();
+
+        if (! $subscription) {
+            return 'pending_subscription_not_found';
+        }
+
+        $subscription->update([
+            'status' => 'expired',
+            'cancelled_at' => Carbon::now(),
+            'auto_renew' => false,
+        ]);
+
+        return 'checkout_expired';
+    }
+
     /**
      * Return the full billing details shape consumed by the frontend.
      */
@@ -33,24 +212,24 @@ class BillingService
             : collect();
 
         return [
-            'subscriptionId'       => $subscription ? (string) $subscription->id : null,
-            'planName'             => $subscription?->plan?->name,
-            'billingCycle'         => $subscription?->billing_cycle ?? 'monthly',
-            'status'               => $subscription?->status ?? 'none',
-            'price'                => $this->resolvePrice($subscription),
-            'interval'             => $subscription?->billing_cycle === 'yearly' ? 'year' : 'month',
-            'nextBillingDate'      => $subscription?->next_billing_date?->format('M j, Y'),
-            'autoRenew'            => $subscription?->auto_renew ?? false,
+            'subscriptionId' => $subscription ? (string) $subscription->id : null,
+            'planName' => $subscription?->plan?->name,
+            'billingCycle' => $subscription?->billing_cycle ?? 'monthly',
+            'status' => $subscription?->status ?? 'none',
+            'price' => $this->resolvePrice($subscription),
+            'interval' => $subscription?->billing_cycle === 'yearly' ? 'year' : 'month',
+            'nextBillingDate' => $subscription?->next_billing_date?->format('M j, Y'),
+            'autoRenew' => $subscription?->auto_renew ?? false,
             'stripeSubscriptionId' => $subscription?->stripe_subscription_id,
-            'paymentMethod'        => $paymentMethod ? [
-                'brand'      => $paymentMethod->card_brand,
-                'last4'      => $paymentMethod->last4,
-                'expMonth'   => $paymentMethod->exp_month,
-                'expYear'    => $paymentMethod->exp_year,
-                'isDefault'  => $paymentMethod->is_default,
+            'paymentMethod' => $paymentMethod ? [
+                'brand' => $paymentMethod->card_brand,
+                'last4' => $paymentMethod->last4,
+                'expMonth' => $paymentMethod->exp_month,
+                'expYear' => $paymentMethod->exp_year,
+                'isDefault' => $paymentMethod->is_default,
             ] : null,
-            'billingEmail'          => $paymentMethod?->billing_email ?? $vendor->email,
-            'paymentMethodUpdated'  => $paymentMethod?->updated_at?->format('M j, Y'),
+            'billingEmail' => $paymentMethod?->billing_email ?? $vendor->email,
+            'paymentMethodUpdated' => $paymentMethod?->updated_at?->format('M j, Y'),
         ];
     }
 
@@ -63,7 +242,7 @@ class BillingService
 
         if (! $subscription) {
             return [
-                'data'  => [],
+                'data' => [],
                 'total' => 0,
             ];
         }
@@ -97,10 +276,10 @@ class BillingService
         $qrCodes = $activeTables + $takeawayCount;
 
         return [
-            'activeTables'    => $activeTables,
+            'activeTables' => $activeTables,
             'ordersThisMonth' => $ordersThisMonth,
-            'staffAccounts'   => $staffAccounts,
-            'qrCodes'         => $qrCodes,
+            'staffAccounts' => $staffAccounts,
+            'qrCodes' => $qrCodes,
         ];
     }
 
@@ -127,22 +306,22 @@ class BillingService
             $subscription->update(['plan_id' => $newPlanId]);
         } else {
             $subscription = Subscription::create([
-                'vendor_id'         => $vendor->id,
-                'plan_id'           => $newPlanId,
-                'status'            => 'active',
-                'billing_cycle'     => 'monthly',
-                'start_date'        => Carbon::today(),
+                'vendor_id' => $vendor->id,
+                'plan_id' => $newPlanId,
+                'status' => 'active',
+                'billing_cycle' => 'monthly',
+                'start_date' => Carbon::today(),
                 'next_billing_date' => Carbon::today()->addMonth(),
-                'auto_renew'        => true,
+                'auto_renew' => true,
             ]);
         }
 
         SubscriptionEvent::create([
-            'subscription_id'  => $subscription->id,
-            'event_type'       => 'plan_changed',
+            'subscription_id' => $subscription->id,
+            'event_type' => 'plan_changed',
             'previous_plan_id' => $previousPlanId,
-            'new_plan_id'      => $newPlanId,
-            'metadata'         => ['changed_by' => 'vendor'],
+            'new_plan_id' => $newPlanId,
+            'metadata' => ['changed_by' => 'vendor'],
         ]);
 
         return $subscription->fresh(['plan']);
@@ -170,14 +349,14 @@ class BillingService
             : Carbon::parse($subscription->next_billing_date)->addMonth();
 
         $subscription->update([
-            'billing_cycle'     => $cycle,
+            'billing_cycle' => $cycle,
             'next_billing_date' => $nextDate,
         ]);
 
         SubscriptionEvent::create([
             'subscription_id' => $subscription->id,
-            'event_type'      => 'cycle_changed',
-            'metadata'        => ['new_cycle' => $cycle],
+            'event_type' => 'cycle_changed',
+            'metadata' => ['new_cycle' => $cycle],
         ]);
 
         return $subscription->fresh(['plan']);
@@ -194,14 +373,14 @@ class BillingService
         return PaymentMethod::updateOrCreate(
             ['vendor_id' => $vendor->id, 'stripe_payment_method_id' => $data['stripePaymentMethodId'] ?? null],
             [
-                'vendor_id'                 => $vendor->id,
-                'card_brand'                => $data['cardBrand'] ?? null,
-                'last4'                     => $data['last4'] ?? null,
-                'exp_month'                 => $data['expMonth'] ?? null,
-                'exp_year'                  => $data['expYear'] ?? null,
-                'stripe_payment_method_id'  => $data['stripePaymentMethodId'] ?? null,
-                'billing_email'             => $data['billingEmail'] ?? $vendor->email,
-                'is_default'                => true,
+                'vendor_id' => $vendor->id,
+                'card_brand' => $data['cardBrand'] ?? null,
+                'last4' => $data['last4'] ?? null,
+                'exp_month' => $data['expMonth'] ?? null,
+                'exp_year' => $data['expYear'] ?? null,
+                'stripe_payment_method_id' => $data['stripePaymentMethodId'] ?? null,
+                'billing_email' => $data['billingEmail'] ?? $vendor->email,
+                'is_default' => true,
             ]
         );
     }
@@ -220,9 +399,9 @@ class BillingService
         }
 
         $subscription->update([
-            'status'       => 'cancelled',
+            'status' => 'cancelled',
             'cancelled_at' => Carbon::now(),
-            'auto_renew'   => false,
+            'auto_renew' => false,
         ]);
 
         $hasOtherActive = $vendor->subscriptions()
@@ -230,14 +409,14 @@ class BillingService
             ->where('status', 'active')
             ->exists();
 
-        if (!$hasOtherActive && $vendor->status === 'active') {
+        if (! $hasOtherActive && $vendor->status === 'active') {
             $vendor->update(['status' => 'pending']);
         }
 
         SubscriptionEvent::create([
             'subscription_id' => $subscription->id,
-            'event_type'      => 'subscription_cancelled',
-            'metadata'        => ['cancelled_by' => 'vendor'],
+            'event_type' => 'subscription_cancelled',
+            'metadata' => ['cancelled_by' => 'vendor'],
         ]);
 
         return $subscription->fresh();
@@ -262,12 +441,14 @@ class BillingService
         try {
             $stripe = new \Stripe\StripeClient($secret);
             $session = $stripe->billingPortal->sessions->create([
-                'customer'   => $subscription->stripe_customer_id,
-                'return_url' => rtrim(config('services.vendor_frontend.url'), '/') . '/billing?payment_updated=success',
+                'customer' => $subscription->stripe_customer_id,
+                'return_url' => rtrim(config('services.vendor_frontend.url'), '/').'/billing?payment_updated=success',
             ]);
+
             return $session->url;
         } catch (\Exception $e) {
-            \Log::warning('Stripe portal session failed: ' . $e->getMessage());
+            \Log::warning('Stripe portal session failed: '.$e->getMessage());
+
             return null;
         }
     }
@@ -284,7 +465,7 @@ class BillingService
     // Private helpers
     // -------------------------------------------------------------------------
 
-    private function resolvePrice(?Subscription $subscription): float|null
+    private function resolvePrice(?Subscription $subscription): ?float
     {
         if (! $subscription?->plan) {
             return null;

@@ -10,4 +10,4 @@ Artisan::command('inspire', function () {
 
 Schedule::command('table-sessions:close-stale')->everyMinute();
 Schedule::command('payments:reconcile-stale')->everyMinute();
-Schedule::command('subscriptions:reconcile-stale')->everyFiveMinutes();
+Schedule::command('subscriptions:reconcile-stale')->everyMinute();

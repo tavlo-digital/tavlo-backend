@@ -4,10 +4,10 @@ namespace App\Console\Commands;
 
 use App\Models\Subscription;
 use App\Models\SubscriptionEvent;
+use App\Services\BillingService;
+use App\Services\StripeSubscriptionService;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
-use Stripe\StripeClient;
-use Symfony\Component\HttpKernel\Exception\ServiceUnavailableHttpException;
 
 class ReconcileStaleSubscriptions extends Command
 {
@@ -15,9 +15,16 @@ class ReconcileStaleSubscriptions extends Command
 
     protected $description = 'Poll Stripe for subscriptions whose status may be out of sync after a missed webhook.';
 
+    public function __construct(
+        private readonly StripeSubscriptionService $stripe,
+        private readonly BillingService $billingService,
+    ) {
+        parent::__construct();
+    }
+
     public function handle(): int
     {
-        $stripe = $this->stripe();
+        $reconciled = $this->reconcilePendingCheckouts();
 
         $staleSubscriptions = Subscription::query()
             ->whereNotNull('stripe_subscription_id')
@@ -25,27 +32,26 @@ class ReconcileStaleSubscriptions extends Command
             ->where('updated_at', '<', now()->subMinutes(10))
             ->get();
 
-        $reconciled = 0;
-
         foreach ($staleSubscriptions as $subscription) {
             try {
-                $stripeSub = $stripe->subscriptions->retrieve($subscription->stripe_subscription_id);
+                $stripeSub = $this->stripe->retrieveSubscription($subscription->stripe_subscription_id);
             } catch (\Throwable $e) {
                 $this->warn("Could not retrieve {$subscription->stripe_subscription_id}: {$e->getMessage()}");
+
                 continue;
             }
 
             $stripeStatus = $stripeSub->status;
 
             $statusMap = [
-                'active'            => 'active',
-                'past_due'          => 'past_due',
-                'unpaid'            => 'unpaid',
-                'canceled'          => 'cancelled',
-                'incomplete'        => 'incomplete',
+                'active' => 'active',
+                'past_due' => 'past_due',
+                'unpaid' => 'unpaid',
+                'canceled' => 'cancelled',
+                'incomplete' => 'incomplete',
                 'incomplete_expired' => 'expired',
-                'trialing'          => 'trialing',
-                'paused'            => 'paused',
+                'trialing' => 'trialing',
+                'paused' => 'paused',
             ];
 
             $mappedStatus = $statusMap[$stripeStatus] ?? $stripeStatus;
@@ -57,11 +63,11 @@ class ReconcileStaleSubscriptions extends Command
             $previousStatus = $subscription->status;
 
             $updates = [
-                'status'            => $mappedStatus,
+                'status' => $mappedStatus,
                 'next_billing_date' => isset($stripeSub->current_period_end)
                     ? Carbon::createFromTimestamp($stripeSub->current_period_end)
                     : $subscription->next_billing_date,
-                'auto_renew'        => !($stripeSub->cancel_at_period_end ?? false),
+                'auto_renew' => ! ($stripeSub->cancel_at_period_end ?? false),
             ];
 
             if (in_array($mappedStatus, ['cancelled', 'expired'])) {
@@ -73,7 +79,7 @@ class ReconcileStaleSubscriptions extends Command
 
             $vendor = $subscription->vendor;
             if ($vendor) {
-                if ($mappedStatus === 'active' && (!$vendor->status || $vendor->status === 'pending')) {
+                if ($mappedStatus === 'active' && (! $vendor->status || $vendor->status === 'pending')) {
                     $vendor->update(['status' => 'active']);
                     $this->info("  → Activated vendor #{$vendor->id}");
                 } elseif (in_array($mappedStatus, ['cancelled', 'expired']) && $vendor->status === 'active') {
@@ -84,12 +90,12 @@ class ReconcileStaleSubscriptions extends Command
 
             SubscriptionEvent::create([
                 'subscription_id' => $subscription->id,
-                'event_type'      => 'status_reconciled',
-                'metadata'        => [
+                'event_type' => 'status_reconciled',
+                'metadata' => [
                     'previous_status' => $previousStatus,
-                    'new_status'      => $mappedStatus,
-                    'stripe_status'   => $stripeStatus,
-                    'source'          => 'reconcile_command',
+                    'new_status' => $mappedStatus,
+                    'stripe_status' => $stripeStatus,
+                    'source' => 'reconcile_command',
                 ],
             ]);
 
@@ -102,17 +108,57 @@ class ReconcileStaleSubscriptions extends Command
         return self::SUCCESS;
     }
 
-    private function stripe(): StripeClient
+    private function reconcilePendingCheckouts(): int
     {
-        $secret = trim((string) config('services.stripe.secret'));
+        $pendingCheckouts = Subscription::query()
+            ->where('status', 'pending')
+            ->whereNotNull('stripe_checkout_session_id')
+            ->where('updated_at', '<', now()->subMinutes(10))
+            ->get();
 
-        if ($secret === '') {
-            throw new ServiceUnavailableHttpException(
-                null,
-                'Stripe is not configured. Set STRIPE_SECRET and clear Laravel config cache.'
-            );
+        $reconciled = 0;
+
+        foreach ($pendingCheckouts as $subscription) {
+            try {
+                $session = $this->stripe->retrieveCheckoutSession(
+                    $subscription->stripe_checkout_session_id
+                );
+            } catch (\Throwable $e) {
+                $this->warn(
+                    "Could not retrieve checkout {$subscription->stripe_checkout_session_id}: {$e->getMessage()}"
+                );
+
+                continue;
+            }
+
+            if (
+                ($session->status ?? null) === 'complete'
+                && in_array($session->payment_status ?? null, ['paid', 'no_payment_required'], true)
+            ) {
+                $result = $this->billingService->activateCheckoutSession($session);
+
+                if (in_array($result, ['subscription_activated', 'already_processed'], true)) {
+                    $reconciled++;
+                    $this->info(
+                        "Recovered checkout {$subscription->stripe_checkout_session_id} for subscription #{$subscription->id}."
+                    );
+                }
+
+                continue;
+            }
+
+            if (($session->status ?? null) === 'expired') {
+                $result = $this->billingService->expireCheckoutSession($session);
+
+                if ($result === 'checkout_expired') {
+                    $reconciled++;
+                    $this->info(
+                        "Expired checkout {$subscription->stripe_checkout_session_id} for subscription #{$subscription->id}."
+                    );
+                }
+            }
         }
 
-        return new StripeClient($secret);
+        return $reconciled;
     }
 }

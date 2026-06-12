@@ -4,17 +4,20 @@ namespace App\Http\Controllers\Api\Vendor;
 
 use App\Http\Controllers\Controller;
 use App\Models\StripeWebhookLog;
+use App\Models\Subscription;
 use App\Models\SubscriptionPlan;
 use App\Models\Vendor;
 use App\Services\BillingService;
+use App\Services\StripeSubscriptionService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class BillingController extends Controller
 {
-    public function __construct(private readonly BillingService $billingService)
-    {
-    }
+    public function __construct(
+        private readonly BillingService $billingService,
+        private readonly StripeSubscriptionService $stripe,
+    ) {}
 
     /**
      * GET /api/vendor/billing/plans
@@ -28,18 +31,18 @@ class BillingController extends Controller
             ->orderBy('monthly_price')
             ->get()
             ->map(fn (SubscriptionPlan $plan) => [
-                'id'           => $plan->id,
-                'name'         => $plan->name,
-                'description'  => $plan->description,
+                'id' => $plan->id,
+                'name' => $plan->name,
+                'description' => $plan->description,
                 'monthlyPrice' => (float) $plan->monthly_price,
-                'yearlyPrice'  => (float) $plan->yearly_price,
-                'currency'     => $plan->currency ?? 'EUR',
-                'isPopular'    => (bool) $plan->is_popular,
-                'maxUsers'     => $plan->max_users,
-                'features'     => $plan->features->map(fn ($f) => [
-                    'name'        => $f->name,
+                'yearlyPrice' => (float) $plan->yearly_price,
+                'currency' => $plan->currency ?? 'EUR',
+                'isPopular' => (bool) $plan->is_popular,
+                'maxUsers' => $plan->max_users,
+                'features' => $plan->features->map(fn ($f) => [
+                    'name' => $f->name,
                     'description' => $f->description,
-                    'category'    => $f->category,
+                    'category' => $f->category,
                     'isInherited' => (bool) $f->pivot->is_inherited,
                 ])->values(),
             ]);
@@ -65,9 +68,9 @@ class BillingController extends Controller
      */
     public function invoices(Request $request, string $vendorId): JsonResponse
     {
-        $vendor  = $this->resolveVendor($vendorId);
+        $vendor = $this->resolveVendor($vendorId);
         $this->authorizeVendor($request, $vendor);
-        $paged   = $this->billingService->getInvoices($vendor);
+        $paged = $this->billingService->getInvoices($vendor);
 
         if (is_array($paged)) {
             return response()->json($paged);
@@ -87,7 +90,7 @@ class BillingController extends Controller
      */
     public function downloadInvoice(Request $request, string $vendorId, string $invoiceId): JsonResponse
     {
-        $vendor  = $this->resolveVendor($vendorId);
+        $vendor = $this->resolveVendor($vendorId);
         $this->authorizeVendor($request, $vendor);
         $invoice = $vendor->subscriptions()
             ->latest()
@@ -136,29 +139,29 @@ class BillingController extends Controller
             ->take(20)
             ->get()
             ->map(fn ($e) => [
-                'id'        => $e->id,
-                'type'      => $e->event_type,
-                'metadata'  => $e->metadata,
+                'id' => $e->id,
+                'type' => $e->event_type,
+                'metadata' => $e->metadata,
                 'createdAt' => $e->created_at->toISOString(),
             ]);
 
         $checkoutLogs = StripeWebhookLog::whereIn('event_type', [
-                    'checkout.session.created',
-                    'checkout.session.cancelled',
-                    'checkout.session.expired',
-                ])
-                ->where(function ($q) use ($vendor) {
-                    $q->whereJsonContains('metadata->vendor_id', $vendor->id)
-                      ->orWhereJsonContains('metadata->vendor_id', (string) $vendor->id);
-                })
+            'checkout.session.created',
+            'checkout.session.cancelled',
+            'checkout.session.expired',
+        ])
+            ->where(function ($q) use ($vendor) {
+                $q->whereJsonContains('metadata->vendor_id', $vendor->id)
+                    ->orWhereJsonContains('metadata->vendor_id', (string) $vendor->id);
+            })
             ->latest()
             ->take(20)
             ->get()
             ->map(fn ($l) => [
-                'id'        => $l->id,
-                'type'      => $l->event_type,
-                'outcome'   => $l->outcome,
-                'metadata'  => $l->metadata,
+                'id' => $l->id,
+                'type' => $l->event_type,
+                'outcome' => $l->outcome,
+                'metadata' => $l->metadata,
                 'createdAt' => $l->created_at->toISOString(),
             ]);
 
@@ -191,7 +194,7 @@ class BillingController extends Controller
         }
 
         return response()->json([
-            'message'      => 'Plan upgraded successfully.',
+            'message' => 'Plan upgraded successfully.',
             'subscription' => $this->billingService->getSubscriptionDetails($vendor),
         ]);
     }
@@ -217,7 +220,7 @@ class BillingController extends Controller
         }
 
         return response()->json([
-            'message'      => 'Billing cycle updated successfully.',
+            'message' => 'Billing cycle updated successfully.',
             'subscription' => $this->billingService->getSubscriptionDetails($vendor),
         ]);
     }
@@ -231,23 +234,23 @@ class BillingController extends Controller
         $this->authorizeVendor($request, $vendor);
 
         $data = $request->validate([
-            'cardBrand'               => ['sometimes', 'nullable', 'string', 'max:20'],
-            'last4'                   => ['sometimes', 'nullable', 'string', 'size:4'],
-            'expMonth'                => ['sometimes', 'nullable', 'string', 'max:2'],
-            'expYear'                 => ['sometimes', 'nullable', 'string', 'max:4'],
-            'stripePaymentMethodId'   => ['required', 'string', 'max:255'],
-            'billingEmail'            => ['sometimes', 'nullable', 'email', 'max:255'],
+            'cardBrand' => ['sometimes', 'nullable', 'string', 'max:20'],
+            'last4' => ['sometimes', 'nullable', 'string', 'size:4'],
+            'expMonth' => ['sometimes', 'nullable', 'string', 'max:2'],
+            'expYear' => ['sometimes', 'nullable', 'string', 'max:4'],
+            'stripePaymentMethodId' => ['required', 'string', 'max:255'],
+            'billingEmail' => ['sometimes', 'nullable', 'email', 'max:255'],
         ]);
 
         $method = $this->billingService->updatePaymentMethod($vendor, $data);
 
         return response()->json([
-            'message'       => 'Payment method updated successfully.',
+            'message' => 'Payment method updated successfully.',
             'paymentMethod' => [
-                'brand'    => $method->card_brand,
-                'last4'    => $method->last4,
+                'brand' => $method->card_brand,
+                'last4' => $method->last4,
                 'expMonth' => $method->exp_month,
-                'expYear'  => $method->exp_year,
+                'expYear' => $method->exp_year,
                 'isDefault' => $method->is_default,
             ],
         ]);
@@ -270,7 +273,7 @@ class BillingController extends Controller
         }
 
         return response()->json([
-            'message'      => 'Subscription cancelled successfully.',
+            'message' => 'Subscription cancelled successfully.',
             'subscription' => $this->billingService->getSubscriptionDetails($vendor),
         ]);
     }
@@ -287,8 +290,8 @@ class BillingController extends Controller
 
         if (! $url) {
             return response()->json([
-                'url'      => null,
-                'message'  => 'Billing portal is not yet configured. Please contact support to update your payment method.',
+                'url' => null,
+                'message' => 'Billing portal is not yet configured. Please contact support to update your payment method.',
             ]);
         }
 
@@ -304,7 +307,7 @@ class BillingController extends Controller
         $this->authorizeVendor($request, $vendor);
 
         $data = $request->validate([
-            'planId'       => ['required', 'integer', 'exists:subscription_plans,id'],
+            'planId' => ['required', 'integer', 'exists:subscription_plans,id'],
             'billingCycle' => ['required', 'string', 'in:monthly,yearly'],
         ]);
 
@@ -314,55 +317,88 @@ class BillingController extends Controller
             ? $plan->stripe_yearly_price_id
             : $plan->stripe_monthly_price_id;
 
-        if (!$priceId) {
+        if (! $priceId) {
             return response()->json([
                 'message' => 'Stripe pricing is not configured for this plan. Please contact support.',
             ], 422);
         }
 
-        $secret = config('services.stripe.secret');
-
-        if (!$secret) {
+        if (! config('services.stripe.secret')) {
             return response()->json([
                 'message' => 'Payment system is not configured.',
             ], 503);
         }
 
-        $stripe = new \Stripe\StripeClient($secret);
-
         $frontendBase = rtrim(config('services.vendor_frontend.url'), '/');
+        $pendingSubscription = $this->billingService->createPendingSubscription(
+            $vendor,
+            $plan,
+            $data['billingCycle']
+        );
 
-        $session = $stripe->checkout->sessions->create([
-            'mode'        => 'subscription',
-            'line_items'  => [[
-                'price'    => $priceId,
-                'quantity' => 1,
-            ]],
-            'success_url' => $frontendBase . '/activate/success?plan=' . urlencode($plan->name) . '&session_id={CHECKOUT_SESSION_ID}',
-            'cancel_url'  => $frontendBase . '/activate/checkout?cancelled=1&session_id={CHECKOUT_SESSION_ID}',
-            'client_reference_id' => (string) $vendor->id,
-            'customer_email'      => $vendor->email,
-            'metadata'            => [
-                'vendor_id' => $vendor->id,
-                'plan_id'   => $plan->id,
-                'cycle'     => $data['billingCycle'],
-            ],
+        try {
+            $session = $this->stripe->createCheckoutSession([
+                'mode' => 'subscription',
+                'line_items' => [[
+                    'price' => $priceId,
+                    'quantity' => 1,
+                ]],
+                'success_url' => $frontendBase.'/activate/success?plan='.urlencode($plan->name).'&session_id={CHECKOUT_SESSION_ID}',
+                'cancel_url' => $frontendBase.'/activate/checkout?cancelled=1&session_id={CHECKOUT_SESSION_ID}',
+                'client_reference_id' => (string) $vendor->id,
+                'customer_email' => $vendor->email,
+                'metadata' => [
+                    'vendor_id' => $vendor->id,
+                    'plan_id' => $plan->id,
+                    'cycle' => $data['billingCycle'],
+                    'local_subscription_id' => $pendingSubscription->id,
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            $pendingSubscription->update([
+                'status' => 'checkout_failed',
+                'cancelled_at' => now(),
+            ]);
+
+            StripeWebhookLog::create([
+                'event_type' => 'checkout.session.create_failed',
+                'http_status' => 502,
+                'outcome' => 'checkout_create_failed',
+                'error_message' => $e->getMessage(),
+                'metadata' => [
+                    'vendor_id' => $vendor->id,
+                    'plan_id' => $plan->id,
+                    'local_subscription_id' => $pendingSubscription->id,
+                ],
+            ]);
+
+            return response()->json([
+                'message' => 'Could not start the checkout session. Please try again.',
+            ], 502);
+        }
+
+        $pendingSubscription->update([
+            'stripe_checkout_session_id' => $session->id,
         ]);
 
         StripeWebhookLog::create([
-            'event_type'      => 'checkout.session.created',
+            'event_type' => 'checkout.session.created',
             'stripe_event_id' => $session->id,
-            'http_status'     => 200,
-            'outcome'         => 'checkout_started',
-            'metadata'        => [
+            'http_status' => 200,
+            'outcome' => 'checkout_started',
+            'metadata' => [
                 'vendor_id' => $vendor->id,
-                'plan_id'   => $plan->id,
+                'plan_id' => $plan->id,
                 'plan_name' => $plan->name,
-                'cycle'     => $data['billingCycle'],
+                'cycle' => $data['billingCycle'],
+                'local_subscription_id' => $pendingSubscription->id,
             ],
         ]);
 
-        return response()->json(['checkoutUrl' => $session->url]);
+        return response()->json([
+            'checkoutUrl' => $session->url,
+            'subscriptionId' => (string) $pendingSubscription->id,
+        ]);
     }
 
     /**
@@ -378,14 +414,23 @@ class BillingController extends Controller
         ]);
 
         StripeWebhookLog::create([
-            'event_type'      => 'checkout.session.cancelled',
+            'event_type' => 'checkout.session.cancelled',
             'stripe_event_id' => $data['sessionId'],
-            'http_status'     => 200,
-            'outcome'         => 'checkout_abandoned',
-            'metadata'        => [
+            'http_status' => 200,
+            'outcome' => 'checkout_abandoned',
+            'metadata' => [
                 'vendor_id' => $vendor->id,
             ],
         ]);
+
+        Subscription::where('vendor_id', $vendor->id)
+            ->where('stripe_checkout_session_id', $data['sessionId'])
+            ->where('status', 'pending')
+            ->update([
+                'status' => 'cancelled',
+                'cancelled_at' => now(),
+                'auto_renew' => false,
+            ]);
 
         return response()->json(['received' => true]);
     }
@@ -402,15 +447,12 @@ class BillingController extends Controller
             'sessionId' => ['required', 'string'],
         ]);
 
-        $secret = config('services.stripe.secret');
-        if (!$secret) {
+        if (! config('services.stripe.secret')) {
             return response()->json(['message' => 'Payment system is not configured.'], 503);
         }
 
-        $stripe = new \Stripe\StripeClient($secret);
-
         try {
-            $session = $stripe->checkout->sessions->retrieve($data['sessionId']);
+            $session = $this->stripe->retrieveCheckoutSession($data['sessionId']);
         } catch (\Exception $e) {
             return response()->json(['message' => 'Could not verify checkout session.'], 422);
         }
@@ -418,7 +460,7 @@ class BillingController extends Controller
         if ($session->payment_status !== 'paid') {
             return response()->json([
                 'verified' => false,
-                'message'  => 'Payment has not been completed yet.',
+                'message' => 'Payment has not been completed yet.',
             ]);
         }
 
@@ -427,34 +469,18 @@ class BillingController extends Controller
             return response()->json(['message' => 'Session does not belong to this vendor.'], 403);
         }
 
-        if (!$vendor->status || $vendor->status === 'pending') {
-            $vendor->update(['status' => 'active']);
-        }
+        $result = $this->billingService->activateCheckoutSession($session);
 
-        $existing = $vendor->subscriptions()
-            ->where('stripe_subscription_id', $session->subscription)
-            ->first();
-
-        if (!$existing && $session->subscription) {
-            $planId = $session->metadata->plan_id ?? null;
-            $cycle = $session->metadata->cycle ?? 'monthly';
-
-            \App\Models\Subscription::create([
-                'vendor_id'              => $vendor->id,
-                'plan_id'                => $planId,
-                'status'                 => 'active',
-                'billing_cycle'          => $cycle,
-                'start_date'             => now(),
-                'next_billing_date'      => $cycle === 'yearly' ? now()->addYear() : now()->addMonth(),
-                'auto_renew'             => true,
-                'stripe_subscription_id' => $session->subscription,
-                'stripe_customer_id'     => $session->customer,
-            ]);
+        if (! in_array($result, ['subscription_activated', 'already_processed'], true)) {
+            return response()->json([
+                'verified' => false,
+                'message' => 'Checkout was paid but the subscription could not be activated.',
+            ], 422);
         }
 
         return response()->json([
             'verified' => true,
-            'status'   => $vendor->fresh()->status,
+            'status' => $vendor->fresh()->status,
         ]);
     }
 

@@ -15,6 +15,7 @@ class Subscription extends Model
         'next_billing_date',
         'auto_renew',
         'stripe_subscription_id',
+        'stripe_checkout_session_id',
         'stripe_customer_id',
         'cancelled_at',
         'paused_at',
