@@ -125,55 +125,6 @@ class BillingController extends Controller
     }
 
     /**
-     * GET /api/vendor/{vendorId}/billing/history
-     */
-    public function history(Request $request, string $vendorId): JsonResponse
-    {
-        $vendor = $this->resolveVendor($vendorId);
-        $this->authorizeVendor($request, $vendor);
-
-        $subscriptionIds = $vendor->subscriptions()->pluck('id');
-
-        $events = \App\Models\SubscriptionEvent::whereIn('subscription_id', $subscriptionIds)
-            ->latest()
-            ->take(20)
-            ->get()
-            ->map(fn ($e) => [
-                'id' => $e->id,
-                'type' => $e->event_type,
-                'metadata' => $e->metadata,
-                'createdAt' => $e->created_at->toISOString(),
-            ]);
-
-        $checkoutLogs = StripeWebhookLog::whereIn('event_type', [
-            'checkout.session.created',
-            'checkout.session.cancelled',
-            'checkout.session.expired',
-        ])
-            ->where(function ($q) use ($vendor) {
-                $q->whereJsonContains('metadata->vendor_id', $vendor->id)
-                    ->orWhereJsonContains('metadata->vendor_id', (string) $vendor->id);
-            })
-            ->latest()
-            ->take(20)
-            ->get()
-            ->map(fn ($l) => [
-                'id' => $l->id,
-                'type' => $l->event_type,
-                'outcome' => $l->outcome,
-                'metadata' => $l->metadata,
-                'createdAt' => $l->created_at->toISOString(),
-            ]);
-
-        $history = $events->concat($checkoutLogs)
-            ->sortByDesc('createdAt')
-            ->values()
-            ->take(20);
-
-        return response()->json(['data' => $history]);
-    }
-
-    /**
      * POST /api/vendor/{vendorId}/billing/upgrade
      */
     public function upgradePlan(Request $request, string $vendorId): JsonResponse
