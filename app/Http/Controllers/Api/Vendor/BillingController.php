@@ -270,7 +270,7 @@ class BillingController extends Controller
             ], 422);
         }
 
-        $secret = config('services.stripe.secret') ?: env('STRIPE_SECRET');
+        $secret = config('services.stripe.secret');
 
         if (!$secret) {
             return response()->json([
@@ -280,7 +280,7 @@ class BillingController extends Controller
 
         $stripe = new \Stripe\StripeClient($secret);
 
-        $frontendBase = rtrim(env('VENDOR_FRONTEND_URL', 'http://localhost:3000'), '/');
+        $frontendBase = rtrim(config('services.vendor_frontend.url'), '/');
 
         $session = $stripe->checkout->sessions->create([
             'mode'        => 'subscription',

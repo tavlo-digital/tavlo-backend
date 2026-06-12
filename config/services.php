@@ -41,4 +41,8 @@ return [
         'webhook_secret' => env('STRIPE_WEBHOOK_SECRET'),
     ],
 
+    'vendor_frontend' => [
+        'url' => env('VENDOR_FRONTEND_URL', 'http://localhost:3000'),
+    ],
+
 ];

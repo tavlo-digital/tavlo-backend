@@ -240,7 +240,7 @@ class BillingService
      */
     public function createPortalSession(Vendor $vendor): ?string
     {
-        $secret = env('STRIPE_SECRET');
+        $secret = config('services.stripe.secret');
         if (! $secret) {
             return null;
         }
@@ -254,7 +254,7 @@ class BillingService
             $stripe = new \Stripe\StripeClient($secret);
             $session = $stripe->billingPortal->sessions->create([
                 'customer'   => $subscription->stripe_customer_id,
-                'return_url' => rtrim(env('VENDOR_FRONTEND_URL', config('app.url')), '/') . '/billing?payment_updated=success',
+                'return_url' => rtrim(config('services.vendor_frontend.url'), '/') . '/billing?payment_updated=success',
             ]);
             return $session->url;
         } catch (\Exception $e) {
