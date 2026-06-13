@@ -225,7 +225,7 @@ class OrderHistoryController extends Controller
         $items = $this->linkedCartItems($order);
         $serviceFeeRate = (float) ($settings?->service_fee_rate ?? 0);
 
-        $taxGroups = TaxCalculationService::computeTaxGroups($items, $vendorCountry, true);
+        $taxGroups = TaxCalculationService::computeTaxGroups($items, $vendorCountry);
         $totals = TaxCalculationService::computeTotals($taxGroups, $serviceFeeRate);
 
         $receiptTip = round((float) ($order->tip_amount ?? 0), 2);
@@ -247,14 +247,10 @@ class OrderHistoryController extends Controller
 
         $receiptItems = $items->map(function (CartItem $item) use ($vendorCountry) {
             $menuItem = $item->menuItem;
-            $fullUnitPrice = $this->cartItemUnitPrice($item, $vendorCountry);
-            $fullLineGross = round($fullUnitPrice * $item->quantity, 2);
+            $unitPrice = $this->cartItemUnitPrice($item, $vendorCountry);
+            $lineGross = round($unitPrice * $item->quantity, 2);
             $taxCategory = $menuItem?->tax_category ?? 'food';
             $vatRate = TaxCalculationService::itemVatRate($menuItem, $vendorCountry);
-
-            $sharedBetween = 1 + count(is_array($item->shared_order_ids) ? $item->shared_order_ids : []);
-            $unitPrice = round($fullUnitPrice / $sharedBetween, 2);
-            $lineGross = round($fullLineGross / $sharedBetween, 2);
 
             return [
                 'id' => $item->id,
@@ -264,7 +260,6 @@ class OrderHistoryController extends Controller
                 'line_gross' => $lineGross,
                 'tax_category' => strtoupper($taxCategory),
                 'vat_rate' => $vatRate,
-                'shared_between' => $sharedBetween,
             ];
         })->values()->all();
 
@@ -404,7 +399,7 @@ class OrderHistoryController extends Controller
         $vendorCountry = $order->vendor?->country ?? 'AT';
         $serviceFeeRate = (float) ($order->vendor?->vendorSetting?->service_fee_rate ?? 0);
 
-        $taxGroups = TaxCalculationService::computeTaxGroups($items, $vendorCountry, true);
+        $taxGroups = TaxCalculationService::computeTaxGroups($items, $vendorCountry);
         $totals = TaxCalculationService::computeTotals($taxGroups, $serviceFeeRate);
 
         $tipAmount = round((float) ($order->tip_amount ?? 0), 2);
@@ -431,13 +426,9 @@ class OrderHistoryController extends Controller
     {
         $menuItem = $item->menuItem;
         $itemTaxCategory = $menuItem?->tax_category ?? 'food';
-        $fullUnitPrice = $this->cartItemUnitPrice($item, $vendorCountry);
-        $fullLineTotal = round($fullUnitPrice * $item->quantity, 2);
+        $unitPrice = $this->cartItemUnitPrice($item, $vendorCountry);
+        $lineTotal = round($unitPrice * $item->quantity, 2);
         $vatRate = TaxCalculationService::itemVatRate($menuItem, $vendorCountry);
-
-        $sharedBetween = 1 + count(is_array($item->shared_order_ids) ? $item->shared_order_ids : []);
-        $unitPrice = round($fullUnitPrice / $sharedBetween, 2);
-        $lineTotal = round($fullLineTotal / $sharedBetween, 2);
 
         return [
             'id' => $item->id,
@@ -448,7 +439,6 @@ class OrderHistoryController extends Controller
             'line_total' => $lineTotal,
             'vat_rate' => $vatRate,
             'tax_category' => $itemTaxCategory,
-            'shared_between' => $sharedBetween,
             'image_url' => $this->media->url($menuItem?->image_url),
             'notes' => $item->notes,
             'paid_addons' => $this->formatPaidAddons($item, $itemTaxCategory, $vendorCountry),
@@ -500,7 +490,7 @@ class OrderHistoryController extends Controller
         $vendorCountry = $vendor?->country ?? 'AT';
         $serviceFeeRate = (float) ($settings?->service_fee_rate ?? 0);
 
-        $taxGroups = TaxCalculationService::computeTaxGroups($items, $vendorCountry, true);
+        $taxGroups = TaxCalculationService::computeTaxGroups($items, $vendorCountry);
         $totals = TaxCalculationService::computeTotals($taxGroups, $serviceFeeRate);
 
         $tipAmount = round((float) ($order->tip_amount ?? 0), 2);
@@ -548,7 +538,7 @@ class OrderHistoryController extends Controller
 
         $allItems = $ownedItems->merge($sharedIntoItems);
         $serviceFeeRate = (float) ($order->vendor?->vendorSetting?->service_fee_rate ?? 0);
-        $taxGroups = TaxCalculationService::computeTaxGroups($allItems, $vendorCountry, true);
+        $taxGroups = TaxCalculationService::computeTaxGroups($allItems, $vendorCountry);
         $totals = TaxCalculationService::computeTotals($taxGroups, $serviceFeeRate);
 
         return [
@@ -614,8 +604,6 @@ class OrderHistoryController extends Controller
         $orderIds = array_values(array_map('intval', is_array($item->shared_order_ids) ? $item->shared_order_ids : []));
         $sharedBetween = 1 + count($orderIds);
 
-        $payload['unit_price'] = round($payload['unit_price'] / $sharedBetween, 2);
-        $payload['line_total'] = round($payload['line_total'] / $sharedBetween, 2);
         $payload['shared_between'] = $sharedBetween;
         $payload['shared_with'] = array_values(array_filter(array_map(function (int $orderId) use ($ordersById, $sessionCustomerNames) {
             $order = $ordersById->get($orderId);
@@ -633,7 +621,7 @@ class OrderHistoryController extends Controller
                 'customer_name' => $customerName,
             ];
         }, $orderIds)));
-        $payload['my_share'] = $payload['line_total'];
+        $payload['my_share'] = round($payload['line_total'] / $sharedBetween, 2);
 
         return $payload;
     }
