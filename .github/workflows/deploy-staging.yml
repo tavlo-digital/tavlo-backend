@@ -17,15 +17,27 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: '8.4'
+          coverage: none
           tools: composer:v2
 
       - name: Install Composer dependencies
-        run: composer install --no-interaction --prefer-dist --optimize-autoloader --no-dev
+        run: composer install --no-interaction --prefer-dist --optimize-autoloader --no-dev --no-progress
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
 
       - name: Write .env file
         env:
           ENV_FILE_CONTENT: ${{ secrets.STAGING_ENV_FILE }}
         run: printenv ENV_FILE_CONTENT > .env
+
+      - name: Build frontend assets
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
 
       - name: Deploy files via rsync
         uses: burnett01/rsync-deployments@7.0.1
@@ -34,7 +46,6 @@ jobs:
             --exclude='.git/'
             --exclude='node_modules/'
             --exclude='vendor/'
-            --exclude='public/build/'
             --exclude='public/storage/'
             --exclude='.npm-cache/'
             --exclude='storage/'
@@ -56,36 +67,24 @@ jobs:
             set -e
             cd ${{ secrets.STAGING_DEPLOY_PATH }}
 
-            # Install PHP dependencies first (updates autoloader for new classes)
-            composer install --no-interaction --prefer-dist --optimize-autoloader --no-dev
+            # Install PHP dependencies only when Composer configuration changes.
+            COMPOSER_HASH="$(sha256sum composer.json composer.lock | sha256sum | cut -d ' ' -f 1)"
+            COMPOSER_HASH_FILE="storage/app/.deploy-composer-hash"
+            if [ ! -f vendor/autoload.php ] || [ ! -f "$COMPOSER_HASH_FILE" ] || [ "$(cat "$COMPOSER_HASH_FILE")" != "$COMPOSER_HASH" ]; then
+              composer install --no-interaction --prefer-dist --optimize-autoloader --no-dev --no-progress
+              printf '%s' "$COMPOSER_HASH" > "$COMPOSER_HASH_FILE"
+            fi
 
-            # Set permissions
-            chmod -R 775 storage bootstrap/cache
+            # These directories retain their contents and permissions between deploys.
+            chmod 775 storage bootstrap/cache
 
-            php artisan key:generate --force
-
-            # Clear stale caches before building
-            php artisan config:clear
-            php artisan route:clear
-            php artisan view:clear
-            php artisan event:clear
-
-            # Use a project-local cache because shared hosts can have a root-owned ~/.npm.
-            export npm_config_cache="$PWD/.npm-cache"
-            mkdir -p "$npm_config_cache"
-
-            # Install and build frontend
-            npm ci --no-audit --no-fund
-            npm run build
+            php artisan optimize:clear
 
             # Run database migrations
             php artisan migrate --force
 
             # Rebuild caches
-            php artisan config:cache
-            php artisan route:cache
-            php artisan view:cache
-            php artisan event:cache
+            php artisan optimize
 
             # Restart queue workers
             php artisan queue:restart
