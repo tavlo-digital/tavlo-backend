@@ -59,9 +59,9 @@ class VendorController extends Controller
             }
 
             return [
-                'id' => $v->vendor_public_id,
+                'id' => $v->id,
+                'publicId' => $v->vendor_public_id,
                 'name' => $v->name,
-                'slug' => $v->slug,
                 'risk' => $v->risk_level,
                 'riskTooltip' => $riskTooltip,
                 'status' => ucfirst($v->status),
@@ -82,11 +82,9 @@ class VendorController extends Controller
         ]);
     }
 
-    public function show(string $vendor, string $tab = 'overview')
+    public function show(int $vendor, string $tab = 'overview')
     {
-        $vendor = Vendor::where('slug', $vendor)
-            ->orWhere('vendor_public_id', $vendor)
-            ->firstOrFail();
+        $vendor = Vendor::findOrFail($vendor);
         $subscription = $vendor->subscriptions()->with('plan')->latest()->first();
 
         $vendorData = [
@@ -120,7 +118,7 @@ class VendorController extends Controller
         ];
 
         $props = [
-            'vendor' => $vendorSlug,
+            'vendor' => $vendor->id,
             'tab' => $tab,
             'vendorData' => $vendorData,
         ];
@@ -145,9 +143,9 @@ class VendorController extends Controller
         return Inertia::render('admin/vendor/[vendor]/show', $props);
     }
 
-    public function approveChange(string $vendor, int $change)
+    public function approveChange(int $vendor, int $change)
     {
-        $vendor = Vendor::where('slug', $vendor)->orWhere('vendor_public_id', $vendor)->firstOrFail();
+        $vendor = Vendor::findOrFail($vendor);
         $change = VendorRequestChange::where('vendor_id', $vendor->id)
             ->where('id', $change)
             ->where('status', 'pending')
@@ -182,9 +180,9 @@ class VendorController extends Controller
         return redirect()->back()->with('success', 'Changes approved successfully.');
     }
 
-    public function declineChange(Request $request, string $vendor, int $change)
+    public function declineChange(Request $request, int $vendor, int $change)
     {
-        $vendor = Vendor::where('slug', $vendor)->orWhere('vendor_public_id', $vendor)->firstOrFail();
+        $vendor = Vendor::findOrFail($vendor);
         $change = VendorRequestChange::where('vendor_id', $vendor->id)
             ->where('id', $change)
             ->where('status', 'pending')

@@ -43,9 +43,9 @@ type StatCard = {
 };
 
 type BackendVendor = {
-    id: string;
+    id: number;
+    publicId: string;
     name: string;
-    slug: string;
     risk: string;
     riskTooltip: string;
     status: string;
@@ -87,8 +87,8 @@ const riskIcons: Record<string, React.ElementType | undefined> = {
 function mapVendor(v: BackendVendor): Vendor {
     return {
         id: v.id,
+        publicId: v.publicId,
         name: v.name,
-        slug: v.slug,
         risk: v.risk as RiskLevel,
         riskIcon: riskIcons[v.risk],
         riskTooltip: v.riskTooltip,
@@ -123,9 +123,9 @@ const quickFilters: QuickFilter[] = [
 type RiskLevel = 'red' | 'orange' | 'yellow' | 'none';
 
 type Vendor = {
-    id: string;
+    id: number;
+    publicId: string;
     name: string;
-    slug: string;
     risk: RiskLevel;
     riskIcon?: React.ElementType;
     riskTooltip?: string;
@@ -292,7 +292,7 @@ function PaymentCell({ payment }: { payment: Vendor['payment'] }) {
 
 function ActionsCell({ vendor }: { vendor: Vendor }) {
     const [open, setOpen] = useState(false);
-    const identifier = vendor.slug || vendor.id;
+    const identifier = vendor.id;
     return (
         <div className="flex items-center gap-2">
             <Link href={`/admin/vendor/${identifier}/overview`} className="p-1.5 hover:bg-gray-100 rounded transition-colors" title="View vendor details">
@@ -344,7 +344,7 @@ export default function AdminVendorsIndex() {
 
     const [activeFilter, setActiveFilter] = useState(0);
     const [selectAll, setSelectAll] = useState(false);
-    const [selected, setSelected] = useState<Set<string>>(new Set());
+    const [selected, setSelected] = useState<Set<number>>(new Set());
     const [exportOpen, setExportOpen] = useState(false);
     const [exportAll, setExportAll] = useState(false);
     const [filtersOpen, setFiltersOpen] = useState(false);
@@ -374,7 +374,7 @@ export default function AdminVendorsIndex() {
         setSelectAll(!selectAll);
     }
 
-    function toggleSelect(id: string) {
+    function toggleSelect(id: number) {
         const next = new Set(selected);
         if (next.has(id)) {
             next.delete(id);
@@ -686,7 +686,7 @@ export default function AdminVendorsIndex() {
                                         <td className="px-4 py-3">
                                             <div>
                                                 <div className="font-medium text-gray-900">{vendor.name}</div>
-                                                <div className="text-xs text-gray-500 font-mono">{vendor.id}</div>
+                                                <div className="text-xs text-gray-500 font-mono">{vendor.publicId}</div>
                                             </div>
                                         </td>
                                         <td className="px-4 py-3">
