@@ -2,9 +2,9 @@
 
 namespace Tests\Feature\Customer;
 
+use App\Models\Allergen;
 use App\Models\CartItem;
 use App\Models\Customer;
-use App\Models\Allergen;
 use App\Models\MenuCategory;
 use App\Models\MenuItem;
 use App\Models\ModifierGroup;
@@ -31,13 +31,13 @@ class RestaurantBrowsingTest extends TestCase
 
         $this->vendor = Vendor::factory()->create([
             'restaurant_name' => 'Test Restaurant',
-            'city'            => 'Vienna',
+            'city' => 'Vienna',
         ]);
 
         VendorSetting::create([
-            'vendor_id'                 => $this->vendor->id,
-            'is_live_and_discoverable'  => true,
-            'description'               => 'A great restaurant',
+            'vendor_id' => $this->vendor->id,
+            'is_live_and_discoverable' => true,
+            'description' => 'A great restaurant',
         ]);
     }
 
@@ -54,6 +54,32 @@ class RestaurantBrowsingTest extends TestCase
             ->assertJsonPath('data.0.currency', 'EUR')
             ->assertJsonPath('data.0.payment_methods.on-site', true)
             ->assertJsonPath('data.0.payment_methods.stripe', false);
+    }
+
+    public function test_restaurant_hours_follow_vendor_time_format(): void
+    {
+        $day = strtolower(now()->setTimezone($this->vendor->resolveTimezone())->format('l'));
+        $this->vendor->vendorSetting->update([
+            'time_format' => '12h',
+            'business_hours' => [
+                $day => [
+                    'open' => '10:45',
+                    'close' => '20:45',
+                    'closed' => false,
+                ],
+            ],
+        ]);
+
+        $this->getJson('/api/customer/restaurants')
+            ->assertOk()
+            ->assertJsonPath('data.0.today_hours', '10:45 AM – 8:45 PM')
+            ->assertJsonPath("data.0.business_hours.{$day}.open", '10:45 AM')
+            ->assertJsonPath("data.0.business_hours.{$day}.close", '8:45 PM');
+
+        $this->getJson("/api/customer/restaurants/{$this->vendor->vendor_public_id}/about")
+            ->assertOk()
+            ->assertJsonPath("business_hours.{$day}.open", '10:45 AM')
+            ->assertJsonPath("business_hours.{$day}.close", '8:45 PM');
     }
 
     public function test_restaurant_currency_comes_from_selected_country(): void
@@ -85,7 +111,7 @@ class RestaurantBrowsingTest extends TestCase
     {
         $hidden = Vendor::factory()->create();
         VendorSetting::create([
-            'vendor_id'                => $hidden->id,
+            'vendor_id' => $hidden->id,
             'is_live_and_discoverable' => false,
         ]);
 
@@ -105,7 +131,7 @@ class RestaurantBrowsingTest extends TestCase
         $category = MenuCategory::create([
             'vendor_id' => $hidden->id,
             'name' => 'Hidden Mains',
-            'slug' => 'hidden-mains-' . $hidden->id,
+            'slug' => 'hidden-mains-'.$hidden->id,
         ]);
         $item = MenuItem::create([
             'vendor_id' => $hidden->id,
@@ -173,8 +199,8 @@ class RestaurantBrowsingTest extends TestCase
     {
         MenuCategory::create([
             'vendor_id' => $this->vendor->id,
-            'name'      => 'Starters',
-            'slug'      => 'starters',
+            'name' => 'Starters',
+            'slug' => 'starters',
             'is_active' => true,
             'sort_order' => 1,
         ]);
@@ -194,31 +220,31 @@ class RestaurantBrowsingTest extends TestCase
     {
         $category = MenuCategory::create([
             'vendor_id' => $this->vendor->id,
-            'name'      => 'Mains',
-            'slug'      => 'mains',
+            'name' => 'Mains',
+            'slug' => 'mains',
             'is_active' => true,
             'sort_order' => 1,
         ]);
 
         $item = MenuItem::create([
-            'vendor_id'        => $this->vendor->id,
+            'vendor_id' => $this->vendor->id,
             'menu_category_id' => $category->id,
-            'name'             => 'Schnitzel',
-            'price'            => 14.90,
-            'vat_rate'         => 10,
-            'tax_category'     => 'food',
-            'calories'         => 640,
-            'fat'              => 28.5,
-            'carbs'            => 42.25,
-            'protein'          => 36,
-            'paid_addons'      => [
+            'name' => 'Schnitzel',
+            'price' => 14.90,
+            'vat_rate' => 10,
+            'tax_category' => 'food',
+            'calories' => 640,
+            'fat' => 28.5,
+            'carbs' => 42.25,
+            'protein' => 36,
+            'paid_addons' => [
                 ['name' => 'Extra cheese', 'price' => 1.50],
             ],
-            'free_addons'      => ['Ketchup'],
-            'removable_items'  => ['Onions'],
-            'is_active'        => true,
-            'available'        => true,
-            'sort_order'       => 1,
+            'free_addons' => ['Ketchup'],
+            'removable_items' => ['Onions'],
+            'is_active' => true,
+            'available' => true,
+            'sort_order' => 1,
         ]);
         $group = ModifierGroup::create([
             'vendor_id' => $this->vendor->id,
@@ -264,25 +290,25 @@ class RestaurantBrowsingTest extends TestCase
     {
         $category = MenuCategory::create([
             'vendor_id' => $this->vendor->id,
-            'name'      => 'Mains',
-            'slug'      => 'discounted-mains',
+            'name' => 'Mains',
+            'slug' => 'discounted-mains',
             'is_active' => true,
             'sort_order' => 1,
         ]);
 
         MenuItem::create([
-            'vendor_id'        => $this->vendor->id,
+            'vendor_id' => $this->vendor->id,
             'menu_category_id' => $category->id,
-            'name'             => 'Discounted Pasta',
-            'price'            => 20.00,
-            'has_discount'     => true,
+            'name' => 'Discounted Pasta',
+            'price' => 20.00,
+            'has_discount' => true,
             'discount_percent' => 25,
             'discounted_price' => 15.00,
-            'vat_rate'         => 10,
-            'tax_category'     => 'food',
-            'is_active'        => true,
-            'available'        => true,
-            'sort_order'       => 1,
+            'vat_rate' => 10,
+            'tax_category' => 'food',
+            'is_active' => true,
+            'available' => true,
+            'sort_order' => 1,
         ]);
 
         $response = $this->getJson("/api/customer/restaurants/{$this->vendor->vendor_public_id}/menu");
@@ -297,7 +323,7 @@ class RestaurantBrowsingTest extends TestCase
         $category = MenuCategory::create([
             'vendor_id' => $this->vendor->id,
             'name' => 'Unavailable',
-            'slug' => 'unavailable-' . $this->vendor->id,
+            'slug' => 'unavailable-'.$this->vendor->id,
         ]);
         $item = MenuItem::create([
             'vendor_id' => $this->vendor->id,
@@ -319,38 +345,38 @@ class RestaurantBrowsingTest extends TestCase
     {
         $cat1 = MenuCategory::create([
             'vendor_id' => $this->vendor->id,
-            'name'      => 'Starters',
-            'slug'      => 'starters',
+            'name' => 'Starters',
+            'slug' => 'starters',
             'is_active' => true,
             'sort_order' => 1,
         ]);
 
         $cat2 = MenuCategory::create([
             'vendor_id' => $this->vendor->id,
-            'name'      => 'Mains',
-            'slug'      => 'mains',
+            'name' => 'Mains',
+            'slug' => 'mains',
             'is_active' => true,
             'sort_order' => 2,
         ]);
 
         MenuItem::create([
-            'vendor_id'        => $this->vendor->id,
+            'vendor_id' => $this->vendor->id,
             'menu_category_id' => $cat1->id,
-            'name'             => 'Soup',
-            'price'            => 5.00,
-            'is_active'        => true,
-            'available'        => true,
-            'sort_order'       => 1,
+            'name' => 'Soup',
+            'price' => 5.00,
+            'is_active' => true,
+            'available' => true,
+            'sort_order' => 1,
         ]);
 
         MenuItem::create([
-            'vendor_id'        => $this->vendor->id,
+            'vendor_id' => $this->vendor->id,
             'menu_category_id' => $cat2->id,
-            'name'             => 'Steak',
-            'price'            => 25.00,
-            'is_active'        => true,
-            'available'        => true,
-            'sort_order'       => 1,
+            'name' => 'Steak',
+            'price' => 25.00,
+            'is_active' => true,
+            'available' => true,
+            'sort_order' => 1,
         ]);
 
         $response = $this->getJson("/api/customer/restaurants/{$this->vendor->vendor_public_id}/menu?category_id={$cat2->id}");
@@ -364,27 +390,27 @@ class RestaurantBrowsingTest extends TestCase
     {
         $category = MenuCategory::create([
             'vendor_id' => $this->vendor->id,
-            'name'      => 'Mains',
-            'slug'      => 'detail-mains',
+            'name' => 'Mains',
+            'slug' => 'detail-mains',
             'is_active' => true,
             'sort_order' => 1,
         ]);
 
         $item = MenuItem::create([
-            'vendor_id'        => $this->vendor->id,
+            'vendor_id' => $this->vendor->id,
             'menu_category_id' => $category->id,
-            'name'             => 'Caesar Salad',
-            'price'            => 12.50,
-            'vat_rate'         => 20,
-            'tax_category'     => 'food',
-            'paid_addons'      => [
+            'name' => 'Caesar Salad',
+            'price' => 12.50,
+            'vat_rate' => 20,
+            'tax_category' => 'food',
+            'paid_addons' => [
                 ['name' => 'Grilled chicken', 'price' => 3.00],
             ],
-            'free_addons'      => ['Croutons'],
-            'removable_items'  => ['Parmesan'],
-            'is_active'        => true,
-            'available'        => true,
-            'sort_order'       => 1,
+            'free_addons' => ['Croutons'],
+            'removable_items' => ['Parmesan'],
+            'is_active' => true,
+            'available' => true,
+            'sort_order' => 1,
         ]);
         $group = ModifierGroup::create([
             'vendor_id' => $this->vendor->id,
@@ -424,8 +450,8 @@ class RestaurantBrowsingTest extends TestCase
     {
         $category = MenuCategory::create([
             'vendor_id' => $this->vendor->id,
-            'name'      => 'Tagged',
-            'slug'      => 'tagged',
+            'name' => 'Tagged',
+            'slug' => 'tagged',
             'is_active' => true,
             'sort_order' => 1,
         ]);
@@ -444,15 +470,15 @@ class RestaurantBrowsingTest extends TestCase
         ]);
 
         $item = MenuItem::create([
-            'vendor_id'        => $this->vendor->id,
+            'vendor_id' => $this->vendor->id,
             'menu_category_id' => $category->id,
-            'name'             => 'Tagged Pasta',
-            'price'            => 11.50,
-            'allergies'        => ['Gluten'],
-            'special_tags'     => ['chefs-pick'],
-            'is_active'        => true,
-            'available'        => true,
-            'sort_order'       => 1,
+            'name' => 'Tagged Pasta',
+            'price' => 11.50,
+            'allergies' => ['Gluten'],
+            'special_tags' => ['chefs-pick'],
+            'is_active' => true,
+            'available' => true,
+            'sort_order' => 1,
         ]);
 
         $response = $this->getJson("/api/customer/restaurants/{$this->vendor->vendor_public_id}/menu/{$item->id}");
@@ -472,9 +498,9 @@ class RestaurantBrowsingTest extends TestCase
     {
         RestaurantTable::create([
             'vendor_id' => $this->vendor->id,
-            'number'    => 1,
-            'name'      => 'Table 1',
-            'qr_token'  => 'token-123',
+            'number' => 1,
+            'name' => 'Table 1',
+            'qr_token' => 'token-123',
             'is_active' => true,
         ]);
 
@@ -493,8 +519,8 @@ class RestaurantBrowsingTest extends TestCase
     {
         $this->vendor->vendorSetting->update([
             'supported_languages' => ['de', 'it'],
-            'date_format'         => 'MM/DD/YYYY',
-            'time_format'         => '12h',
+            'date_format' => 'MM/DD/YYYY',
+            'time_format' => '12h',
         ]);
 
         $response = $this->getJson("/api/customer/restaurants/{$this->vendor->vendor_public_id}/languages");
@@ -588,13 +614,21 @@ class RestaurantBrowsingTest extends TestCase
             'quantity' => 2,
         ]);
 
-        Review::create([
+        $review = Review::create([
             'review_public_id' => 'rev_public_menu_items',
             'customer_id' => $customer->id,
             'vendor_id' => $this->vendor->id,
             'order_id' => $order->id,
             'rating' => 5,
             'text' => 'Fresh and fast.',
+        ]);
+        $review->forceFill([
+            'created_at' => '2026-04-18 14:32:10',
+            'vendor_replied_at' => '2026-04-19 08:10:00',
+        ])->save();
+        $this->vendor->vendorSetting->update([
+            'date_format' => 'MM/DD/YYYY',
+            'time_format' => '12h',
         ]);
 
         $response = $this->getJson("/api/customer/restaurants/{$this->vendor->vendor_public_id}/reviews");
@@ -605,6 +639,8 @@ class RestaurantBrowsingTest extends TestCase
             ->assertJsonPath('data.0.menu_items.0.slug', 'caesar-salad')
             ->assertJsonPath('data.0.menu_items.0.image_url', 'menu-items/57/photo.png')
             ->assertJsonPath('data.0.menu_items.0.quantity', 2)
+            ->assertJsonPath('data.0.created_at', \Carbon\Carbon::parse('2026-04-18 14:32:10', 'UTC')->setTimezone($this->vendor->resolveTimezone())->format('m/d/Y g:i A'))
+            ->assertJsonPath('data.0.vendor_replied_at', \Carbon\Carbon::parse('2026-04-19 08:10:00', 'UTC')->setTimezone($this->vendor->resolveTimezone())->format('m/d/Y g:i A'))
             ->assertJsonPath('review_summary.total_reviews', 1);
     }
 }

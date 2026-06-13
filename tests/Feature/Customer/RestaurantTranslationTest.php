@@ -82,13 +82,30 @@ class RestaurantTranslationTest extends TestCase
             ->assertJsonPath('0.modifier_groups.0.options.0.name', 'Groß');
     }
 
-    public function test_missing_query_language_uses_english_even_with_accept_language(): void
+    public function test_accept_language_localizes_content_when_query_language_is_absent(): void
     {
-        $this->withHeader('Accept-Language', 'de-DE,de;q=0.9,en;q=0.8')
-            ->getJson("/api/customer/restaurants/{$this->vendor->vendor_public_id}/menu/{$this->item->id}")
+        $response = $this->withHeader('Accept-Language', 'de-DE,de;q=0.9,en;q=0.8')
+            ->getJson("/api/customer/restaurants/{$this->vendor->vendor_public_id}/menu/{$this->item->id}");
+
+        $response
             ->assertOk()
-            ->assertHeader('Content-Language', 'en')
-            ->assertJsonPath('name', 'Grilled Chicken');
+            ->assertHeader('Content-Language', 'de')
+            ->assertJsonPath('name', 'Gegrilltes Hähnchen')
+            ->assertJsonPath('description', 'Mit Gemüse serviert')
+            ->assertJsonPath('category.name', 'Vorspeisen')
+            ->assertJsonPath('modifier_groups.0.name', 'Größe wählen')
+            ->assertJsonPath('modifier_groups.0.options.0.name', 'Groß');
+
+        $this->assertStringContainsString('Accept-Language', $response->headers->get('Vary'));
+    }
+
+    public function test_query_language_overrides_accept_language(): void
+    {
+        $this->withHeader('Accept-Language', 'en')
+            ->getJson("/api/customer/restaurants/{$this->vendor->vendor_public_id}/menu?lang=de")
+            ->assertOk()
+            ->assertHeader('Content-Language', 'de')
+            ->assertJsonPath('0.name', 'Gegrilltes Hähnchen');
     }
 
     public function test_unsupported_language_uses_english(): void
@@ -97,6 +114,12 @@ class RestaurantTranslationTest extends TestCase
 
         $this->withHeader('Accept-Language', 'en')
             ->getJson($url.'?lang=fr')
+            ->assertOk()
+            ->assertHeader('Content-Language', 'en')
+            ->assertJsonPath('0.name', 'Grilled Chicken');
+
+        $this->withHeader('Accept-Language', 'fr-FR,fr;q=0.9')
+            ->getJson($url)
             ->assertOk()
             ->assertHeader('Content-Language', 'en')
             ->assertJsonPath('0.name', 'Grilled Chicken');

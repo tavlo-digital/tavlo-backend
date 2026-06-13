@@ -2,18 +2,21 @@
 
 namespace Tests\Feature\Customer;
 
-use App\Models\Customer;
 use App\Models\CartItem;
+use App\Models\Customer;
+use App\Models\CustomerLoyaltyPoint;
+use App\Models\GdprRequest;
+use App\Models\LoyaltyTransaction;
 use App\Models\MenuCategory;
 use App\Models\MenuItem;
+use App\Models\Notification;
 use App\Models\Order;
-use App\Models\RestaurantTable;
 use App\Models\Reservation;
+use App\Models\RestaurantTable;
 use App\Models\Review;
 use App\Models\TableScanSession;
 use App\Models\Vendor;
 use App\Models\VendorSetting;
-use App\Models\GdprRequest;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -22,7 +25,9 @@ class CustomerFeaturesTest extends TestCase
     use RefreshDatabase;
 
     private Customer $customer;
+
     private Vendor $vendor;
+
     private array $headers;
 
     protected function setUp(): void
@@ -32,15 +37,15 @@ class CustomerFeaturesTest extends TestCase
         $this->customer = Customer::factory()->create();
         $this->vendor = Vendor::factory()->create();
         VendorSetting::create([
-            'vendor_id'                => $this->vendor->id,
+            'vendor_id' => $this->vendor->id,
             'is_live_and_discoverable' => true,
-            'enable_reservations'      => true,
+            'enable_reservations' => true,
         ]);
 
         $token = $this->customer->createToken('test', ['role:customer'])->plainTextToken;
         $this->headers = [
             'Authorization' => "Bearer {$token}",
-            'Accept'        => 'application/json',
+            'Accept' => 'application/json',
         ];
     }
 
@@ -75,9 +80,9 @@ class CustomerFeaturesTest extends TestCase
 
         Order::factory()->create([
             'customer_id' => $this->customer->id,
-            'vendor_id'   => $this->vendor->id,
+            'vendor_id' => $this->vendor->id,
             'table_scan_session_id' => $session->id,
-            'amount'      => 25.50,
+            'amount' => 25.50,
         ]);
 
         $response = $this->getJson('/api/customer/orders/restaurants', $this->headers);
@@ -94,6 +99,8 @@ class CustomerFeaturesTest extends TestCase
         ]);
         $this->vendor->vendorSetting()->update([
             'logo_url' => 'vendors/1/logo.png',
+            'date_format' => 'MM/DD/YYYY',
+            'time_format' => '12h',
         ]);
 
         $category = MenuCategory::create([
@@ -181,8 +188,10 @@ class CustomerFeaturesTest extends TestCase
             ->assertJsonPath('history.0.currency', 'USD')
             ->assertJsonPath('history.0.orders_count', 2)
             ->assertJsonPath('history.0.total_spent', 34.24)
+            ->assertJsonPath('history.0.last_ordered_at', $second->created_at->copy()->setTimezone($this->vendor->resolveTimezone())->format('m/d/Y g:i A'))
             ->assertJsonPath('history.0.orders.0.order_id', 'ORD-8801')
             ->assertJsonPath('history.0.orders.0.order_public_id', $first->order_public_id)
+            ->assertJsonPath('history.0.orders.0.created_at', $first->created_at->copy()->setTimezone($this->vendor->resolveTimezone())->format('m/d/Y g:i A'))
             ->assertJsonPath('history.0.orders.0.payment_status', 'paid')
             ->assertJsonPath('history.0.orders.0.payment_method', 'card')
             ->assertJsonPath('history.0.orders.0.items_count', 1)
@@ -202,11 +211,15 @@ class CustomerFeaturesTest extends TestCase
 
     public function test_can_get_vendor_orders(): void
     {
+        $this->vendor->vendorSetting()->update([
+            'date_format' => 'MM/DD/YYYY',
+            'time_format' => '12h',
+        ]);
         $session = $this->tableScanSession();
 
         Order::factory()->count(3)->create([
             'customer_id' => $this->customer->id,
-            'vendor_id'   => $this->vendor->id,
+            'vendor_id' => $this->vendor->id,
             'table_scan_session_id' => $session->id,
         ]);
 
@@ -217,6 +230,10 @@ class CustomerFeaturesTest extends TestCase
 
         $response->assertOk()
             ->assertJsonPath('summary.total_orders', 3);
+        $this->assertMatchesRegularExpression(
+            '/^\d{2}\/\d{2}\/\d{4} \d{1,2}:\d{2} [AP]M$/',
+            $response->json('orders.data.0.created_at')
+        );
     }
 
     public function test_can_get_single_order(): void
@@ -227,6 +244,8 @@ class CustomerFeaturesTest extends TestCase
         ]);
         $this->vendor->vendorSetting()->update([
             'logo_url' => 'vendors/1/logo.png',
+            'date_format' => 'MM/DD/YYYY',
+            'time_format' => '12h',
         ]);
 
         $category = MenuCategory::create([
@@ -270,7 +289,7 @@ class CustomerFeaturesTest extends TestCase
         $order = Order::factory()->create([
             'order_number' => 'ORD-8842',
             'customer_id' => $this->customer->id,
-            'vendor_id'   => $this->vendor->id,
+            'vendor_id' => $this->vendor->id,
             'table_scan_session_id' => $session->id,
             'status' => 'delivered',
             'order_type' => 'dine-in',
@@ -295,6 +314,7 @@ class CustomerFeaturesTest extends TestCase
             ->assertJsonPath('order_public_id', $order->order_public_id)
             ->assertJsonPath('restaurant.restaurant_public_id', 'REST-101')
             ->assertJsonPath('restaurant.restaurant_name', 'Bella Italia')
+            ->assertJsonPath('created_at', $order->created_at->copy()->setTimezone($this->vendor->resolveTimezone())->format('m/d/Y g:i A'))
             ->assertJsonPath('status', 'delivered')
             ->assertJsonPath('order_type', 'dine-in')
             ->assertJsonPath('payment_status', 'paid')
@@ -320,7 +340,7 @@ class CustomerFeaturesTest extends TestCase
         $session = $this->tableScanSession($other);
         $order = Order::factory()->create([
             'customer_id' => $other->id,
-            'vendor_id'   => $this->vendor->id,
+            'vendor_id' => $this->vendor->id,
             'table_scan_session_id' => $session->id,
         ]);
 
@@ -346,6 +366,8 @@ class CustomerFeaturesTest extends TestCase
             'service_fee_rate' => 10,
             'invoice_prefix' => 'INV',
             'next_invoice_number' => 1001,
+            'date_format' => 'MM/DD/YYYY',
+            'time_format' => '12h',
         ]);
 
         $category = MenuCategory::create([
@@ -397,6 +419,8 @@ class CustomerFeaturesTest extends TestCase
             ->assertJsonPath('data.restaurant.phone', '+43 1 234 5678')
             ->assertJsonPath('data.restaurant.company_register_number', 'FN 123456 a')
             ->assertJsonPath('data.receipt.invoice_number', 'INV-0001001')
+            ->assertJsonPath('data.receipt.date', $order->created_at->copy()->setTimezone($this->vendor->resolveTimezone())->format('m/d/Y'))
+            ->assertJsonPath('data.receipt.time', $order->created_at->copy()->setTimezone($this->vendor->resolveTimezone())->format('g:i A'))
             ->assertJsonPath('data.receipt.order_id', 'ord-receipt-test')
             ->assertJsonPath('data.receipt.currency', 'EUR')
             ->assertJsonPath('data.order.items.0.name', 'Bruschetta al Pomodoro')
@@ -414,8 +438,13 @@ class CustomerFeaturesTest extends TestCase
             ->assertJsonPath('data.payment.method', 'stripe')
             ->assertJsonPath('data.payment.status', 'CONFIRMED')
             ->assertJsonPath('data.payment.transaction_id', 'pi_test123')
+            ->assertJsonPath('data.payment.paid_at', $order->payment_confirmed_at->copy()->setTimezone($this->vendor->resolveTimezone())->format('m/d/Y g:i A'))
             ->assertJsonPath('data.legal.rksv_required_check', true)
             ->assertJsonPath('meta.version', '1.0');
+        $this->assertMatchesRegularExpression(
+            '/^\d{2}\/\d{2}\/\d{4} \d{1,2}:\d{2} [AP]M$/',
+            $response->json('meta.generated_at')
+        );
 
         $this->assertDatabaseHas('orders', [
             'id' => $order->id,
@@ -485,10 +514,10 @@ class CustomerFeaturesTest extends TestCase
     {
         $response = $this->postJson('/api/customer/reservations', [
             'vendor_public_id' => $this->vendor->vendor_public_id,
-            'date'             => now()->addDays(3)->format('Y-m-d'),
-            'time'             => '19:00',
-            'party_size'       => 4,
-            'customer_note'    => 'Window seat please',
+            'date' => now()->addDays(3)->format('Y-m-d'),
+            'time' => '19:00',
+            'party_size' => 4,
+            'customer_note' => 'Window seat please',
         ], $this->headers);
 
         $response->assertCreated()
@@ -496,8 +525,8 @@ class CustomerFeaturesTest extends TestCase
 
         $this->assertDatabaseHas('reservations', [
             'customer_id' => $this->customer->id,
-            'vendor_id'   => $this->vendor->id,
-            'party_size'  => 4,
+            'vendor_id' => $this->vendor->id,
+            'party_size' => 4,
         ]);
     }
 
@@ -505,9 +534,9 @@ class CustomerFeaturesTest extends TestCase
     {
         $response = $this->postJson('/api/customer/reservations', [
             'vendor_public_id' => $this->vendor->vendor_public_id,
-            'date'             => now()->subDay()->format('Y-m-d'),
-            'time'             => '19:00',
-            'party_size'       => 2,
+            'date' => now()->subDay()->format('Y-m-d'),
+            'time' => '19:00',
+            'party_size' => 2,
         ], $this->headers);
 
         $response->assertUnprocessable()
@@ -516,38 +545,45 @@ class CustomerFeaturesTest extends TestCase
 
     public function test_can_list_upcoming_reservations(): void
     {
-        Reservation::create([
+        $this->vendor->vendorSetting()->update([
+            'date_format' => 'MM/DD/YYYY',
+            'time_format' => '12h',
+        ]);
+        $reservation = Reservation::create([
             'reservation_public_id' => 'res_test1',
-            'vendor_id'             => $this->vendor->id,
-            'customer_id'           => $this->customer->id,
-            'guest_name'            => $this->customer->name,
-            'guest_email'           => $this->customer->email,
-            'guest_phone'           => $this->customer->phone,
-            'date'                  => now()->addDays(5)->format('Y-m-d'),
-            'time'                  => '20:00',
-            'party_size'            => 2,
-            'status'                => 'confirmed',
+            'vendor_id' => $this->vendor->id,
+            'customer_id' => $this->customer->id,
+            'guest_name' => $this->customer->name,
+            'guest_email' => $this->customer->email,
+            'guest_phone' => $this->customer->phone,
+            'date' => now()->addDays(5)->format('Y-m-d'),
+            'time' => '20:00',
+            'party_size' => 2,
+            'status' => 'confirmed',
         ]);
 
         $response = $this->getJson('/api/customer/reservations?tab=upcoming', $this->headers);
 
         $response->assertOk()
-            ->assertJsonPath('data.0.status', 'confirmed');
+            ->assertJsonPath('data.0.status', 'confirmed')
+            ->assertJsonPath('data.0.date', $reservation->date->format('m/d/Y'))
+            ->assertJsonPath('data.0.time', '8:00 PM')
+            ->assertJsonPath('data.0.created_at', $reservation->created_at->format('m/d/Y g:i A'));
     }
 
     public function test_can_cancel_reservation(): void
     {
         $reservation = Reservation::create([
             'reservation_public_id' => 'res_cancel1',
-            'vendor_id'             => $this->vendor->id,
-            'customer_id'           => $this->customer->id,
-            'guest_name'            => $this->customer->name,
-            'guest_email'           => $this->customer->email,
-            'guest_phone'           => $this->customer->phone,
-            'date'                  => now()->addDays(5)->format('Y-m-d'),
-            'time'                  => '20:00',
-            'party_size'            => 2,
-            'status'                => 'pending',
+            'vendor_id' => $this->vendor->id,
+            'customer_id' => $this->customer->id,
+            'guest_name' => $this->customer->name,
+            'guest_email' => $this->customer->email,
+            'guest_phone' => $this->customer->phone,
+            'date' => now()->addDays(5)->format('Y-m-d'),
+            'time' => '20:00',
+            'party_size' => 2,
+            'status' => 'pending',
         ]);
 
         $response = $this->postJson(
@@ -582,9 +618,11 @@ class CustomerFeaturesTest extends TestCase
     public function test_can_list_favorites(): void
     {
         $this->customer->favorites()->attach($this->vendor->id);
+        $vendorDay = strtolower(now()->setTimezone($this->vendor->resolveTimezone())->format('l'));
         $this->vendor->vendorSetting()->update([
+            'time_format' => '12h',
             'business_hours' => [
-                strtolower(now()->format('l')) => [
+                $vendorDay => [
                     'open' => '00:00',
                     'close' => '23:59',
                     'closed' => false,
@@ -603,7 +641,9 @@ class CustomerFeaturesTest extends TestCase
 
         $response->assertOk()
             ->assertJsonCount(1)
-            ->assertJsonPath('0.business_hours.' . strtolower(now()->format('l')) . '.closed', false)
+            ->assertJsonPath('0.business_hours.'.$vendorDay.'.closed', false)
+            ->assertJsonPath('0.business_hours.'.$vendorDay.'.open', '12:00 AM')
+            ->assertJsonPath('0.business_hours.'.$vendorDay.'.close', '11:59 PM')
             ->assertJsonPath('0.cuisines.0', 'Burgers');
     }
 
@@ -631,7 +671,7 @@ class CustomerFeaturesTest extends TestCase
     {
         $order = Order::factory()->create([
             'customer_id' => $this->customer->id,
-            'vendor_id'   => $this->vendor->id,
+            'vendor_id' => $this->vendor->id,
             'payment_received' => true,
             'payment_pending' => false,
             'status' => 'completed',
@@ -639,8 +679,8 @@ class CustomerFeaturesTest extends TestCase
 
         $response = $this->postJson('/api/customer/reviews', [
             'vendor_public_id' => $this->vendor->vendor_public_id,
-            'rating'          => 5,
-            'review'          => 'Amazing food!',
+            'rating' => 5,
+            'review' => 'Amazing food!',
         ], $this->headers);
 
         $response->assertCreated()
@@ -654,8 +694,8 @@ class CustomerFeaturesTest extends TestCase
     {
         $response = $this->postJson('/api/customer/reviews', [
             'vendor_public_id' => $this->vendor->vendor_public_id,
-            'rating'           => 5,
-            'review'           => 'Amazing food!',
+            'rating' => 5,
+            'review' => 'Amazing food!',
         ], $this->headers);
 
         $response->assertUnprocessable()
@@ -685,7 +725,7 @@ class CustomerFeaturesTest extends TestCase
     {
         $order = Order::factory()->create([
             'customer_id' => $this->customer->id,
-            'vendor_id'   => $this->vendor->id,
+            'vendor_id' => $this->vendor->id,
             'payment_received' => true,
             'payment_pending' => false,
             'status' => 'completed',
@@ -693,16 +733,16 @@ class CustomerFeaturesTest extends TestCase
 
         Review::create([
             'review_public_id' => 'rev_existing',
-            'customer_id'      => $this->customer->id,
-            'vendor_id'        => $this->vendor->id,
-            'order_id'         => $order->id,
-            'rating'           => 4,
+            'customer_id' => $this->customer->id,
+            'vendor_id' => $this->vendor->id,
+            'order_id' => $order->id,
+            'rating' => 4,
         ]);
 
         $response = $this->postJson('/api/customer/reviews', [
             'vendor_public_id' => $this->vendor->vendor_public_id,
-            'rating'           => 5,
-            'review'           => 'Another review',
+            'rating' => 5,
+            'review' => 'Another review',
         ], $this->headers);
 
         $response->assertStatus(422);
@@ -712,14 +752,14 @@ class CustomerFeaturesTest extends TestCase
     {
         $review = Review::create([
             'review_public_id' => 'rev_update',
-            'customer_id'      => $this->customer->id,
-            'vendor_id'        => $this->vendor->id,
-            'order_id'         => Order::factory()->create([
+            'customer_id' => $this->customer->id,
+            'vendor_id' => $this->vendor->id,
+            'order_id' => Order::factory()->create([
                 'customer_id' => $this->customer->id,
-                'vendor_id'   => $this->vendor->id,
+                'vendor_id' => $this->vendor->id,
             ])->id,
-            'rating'           => 3,
-            'text'             => 'Was okay',
+            'rating' => 3,
+            'text' => 'Was okay',
         ]);
 
         $response = $this->patchJson(
@@ -736,13 +776,13 @@ class CustomerFeaturesTest extends TestCase
     {
         $review = Review::create([
             'review_public_id' => 'rev_delete',
-            'customer_id'      => $this->customer->id,
-            'vendor_id'        => $this->vendor->id,
-            'order_id'         => Order::factory()->create([
+            'customer_id' => $this->customer->id,
+            'vendor_id' => $this->vendor->id,
+            'order_id' => Order::factory()->create([
                 'customer_id' => $this->customer->id,
-                'vendor_id'   => $this->vendor->id,
+                'vendor_id' => $this->vendor->id,
             ])->id,
-            'rating'           => 2,
+            'rating' => 2,
         ]);
 
         $response = $this->deleteJson(
@@ -757,21 +797,69 @@ class CustomerFeaturesTest extends TestCase
 
     public function test_can_list_reviews(): void
     {
-        Review::create([
+        $this->vendor->vendorSetting()->update([
+            'date_format' => 'MM/DD/YYYY',
+            'time_format' => '12h',
+        ]);
+        $review = Review::create([
             'review_public_id' => 'rev_list1',
-            'customer_id'      => $this->customer->id,
-            'vendor_id'        => $this->vendor->id,
-            'order_id'         => Order::factory()->create([
+            'customer_id' => $this->customer->id,
+            'vendor_id' => $this->vendor->id,
+            'order_id' => Order::factory()->create([
                 'customer_id' => $this->customer->id,
-                'vendor_id'   => $this->vendor->id,
+                'vendor_id' => $this->vendor->id,
             ])->id,
-            'rating'           => 5,
+            'rating' => 5,
         ]);
 
         $response = $this->getJson('/api/customer/reviews', $this->headers);
 
         $response->assertOk()
-            ->assertJsonPath('data.0.rating', 5);
+            ->assertJsonPath('data.0.rating', 5)
+            ->assertJsonPath('data.0.created_at', $review->created_at->format('m/d/Y g:i A'));
+    }
+
+    public function test_notifications_and_loyalty_transactions_follow_vendor_formats(): void
+    {
+        $this->vendor->vendorSetting()->update([
+            'date_format' => 'MM/DD/YYYY',
+            'time_format' => '12h',
+        ]);
+
+        $notification = Notification::create([
+            'customer_id' => $this->customer->id,
+            'vendor_id' => $this->vendor->id,
+            'event' => 'order_updated',
+            'message' => 'Your order is ready.',
+            'read' => false,
+        ]);
+        CustomerLoyaltyPoint::create([
+            'customer_id' => $this->customer->id,
+            'vendor_id' => $this->vendor->id,
+            'points_balance' => 20,
+            'total_earned' => 20,
+            'total_redeemed' => 0,
+        ]);
+        $transaction = LoyaltyTransaction::create([
+            'customer_id' => $this->customer->id,
+            'vendor_id' => $this->vendor->id,
+            'type' => 'earned',
+            'points' => 20,
+        ]);
+
+        $this->getJson('/api/customer/notifications', $this->headers)
+            ->assertOk()
+            ->assertJsonPath(
+                'notifications.0.created_at',
+                $notification->created_at->format('m/d/Y g:i A')
+            );
+
+        $this->getJson("/api/customer/loyalty/{$this->vendor->vendor_public_id}", $this->headers)
+            ->assertOk()
+            ->assertJsonPath(
+                'transactions.data.0.created_at',
+                $transaction->created_at->format('m/d/Y g:i A')
+            );
     }
 
     // ================================================================
@@ -786,8 +874,8 @@ class CustomerFeaturesTest extends TestCase
 
         $this->assertDatabaseHas('gdpr_requests', [
             'customer_id' => $this->customer->id,
-            'type'        => 'data_export',
-            'status'      => 'pending',
+            'type' => 'data_export',
+            'status' => 'pending',
         ]);
     }
 
@@ -795,8 +883,8 @@ class CustomerFeaturesTest extends TestCase
     {
         GdprRequest::create([
             'customer_id' => $this->customer->id,
-            'type'        => 'data_export',
-            'status'      => 'pending',
+            'type' => 'data_export',
+            'status' => 'pending',
         ]);
 
         $response = $this->postJson('/api/customer/privacy/export', [], $this->headers);
@@ -806,7 +894,7 @@ class CustomerFeaturesTest extends TestCase
     public function test_can_request_account_deletion(): void
     {
         $response = $this->postJson('/api/customer/privacy/delete', [
-            'password'     => 'password',
+            'password' => 'password',
             'confirmation' => true,
         ], $this->headers);
 
@@ -814,15 +902,15 @@ class CustomerFeaturesTest extends TestCase
 
         $this->assertDatabaseHas('gdpr_requests', [
             'customer_id' => $this->customer->id,
-            'type'        => 'account_deletion',
-            'status'      => 'pending',
+            'type' => 'account_deletion',
+            'status' => 'pending',
         ]);
     }
 
     public function test_account_deletion_fails_with_wrong_password(): void
     {
         $response = $this->postJson('/api/customer/privacy/delete', [
-            'password'     => 'wrong-password',
+            'password' => 'wrong-password',
             'confirmation' => true,
         ], $this->headers);
 
@@ -833,8 +921,8 @@ class CustomerFeaturesTest extends TestCase
     {
         GdprRequest::create([
             'customer_id' => $this->customer->id,
-            'type'        => 'data_export',
-            'status'      => 'completed',
+            'type' => 'data_export',
+            'status' => 'completed',
         ]);
 
         $response = $this->getJson('/api/customer/privacy/requests', $this->headers);

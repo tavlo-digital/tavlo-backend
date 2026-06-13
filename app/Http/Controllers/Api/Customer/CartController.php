@@ -7,8 +7,10 @@ use App\Models\CartItem;
 use App\Models\MenuItem;
 use App\Models\Order;
 use App\Models\TableScanSession;
+use App\Models\Vendor;
 use App\Services\NotificationService;
 use App\Services\TaxCalculationService;
+use App\Services\VendorDateTimeService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -18,6 +20,8 @@ use Illuminate\Validation\ValidationException;
 
 class CartController extends Controller
 {
+    public function __construct(private readonly VendorDateTimeService $dateTimes) {}
+
     /**
      * Resolve the authenticated customer's active session.
      * Returns null if none exists.
@@ -46,7 +50,7 @@ class CartController extends Controller
 
     private function customerName($customer): string
     {
-        return trim(($customer->first_name ?? '') . ' ' . ($customer->last_name ?? '')) ?: 'A guest';
+        return trim(($customer->first_name ?? '').' '.($customer->last_name ?? '')) ?: 'A guest';
     }
 
     /**
@@ -87,7 +91,7 @@ class CartController extends Controller
 
         $people = $sessions->map(function (TableScanSession $s) use ($mySession, $orderedOrderIds, $vendorCountry, $serviceFeeRate) {
             $personItems = $s->cartItems
-                ->filter(fn(CartItem $item) => $item->order_id === null
+                ->filter(fn (CartItem $item) => $item->order_id === null
                     && ! $this->cartItemBelongsToOrderedOrder($item, $orderedOrderIds))
                 ->values();
 
@@ -95,31 +99,31 @@ class CartController extends Controller
             $personTotals = TaxCalculationService::computeTotals($personTaxGroups, $serviceFeeRate);
 
             return [
-                'session_id'  => $s->id,
+                'session_id' => $s->id,
                 'customer_id' => $s->customer_id,
-                'is_me'       => $s->id === $mySession->id,
-                'name'        => $s->customer
-                    ? trim($s->customer->first_name . ' ' . $s->customer->last_name)
+                'is_me' => $s->id === $mySession->id,
+                'name' => $s->customer
+                    ? trim($s->customer->first_name.' '.$s->customer->last_name)
                     : 'Guest',
                 'personal_items' => $personItems
-                    ->map(fn(CartItem $item) => $this->itemPayload($item, $vendorCountry)),
+                    ->map(fn (CartItem $item) => $this->itemPayload($item, $vendorCountry)),
                 'tax_groups' => $personTaxGroups,
                 'totals' => $personTotals,
             ];
         });
 
-        $table  = $mySession->restaurantTable;
+        $table = $mySession->restaurantTable;
         $vendor = $mySession->vendor;
 
         return response()->json([
             'table' => $table ? [
-                'id'     => $table->id,
+                'id' => $table->id,
                 'number' => $table->number ?? null,
-                'name'   => $table->name ?? null,
+                'name' => $table->name ?? null,
             ] : null,
             'vendor' => $vendor ? [
                 'vendor_public_id' => $vendor->vendor_public_id ?? null,
-                'restaurant_name'  => $vendor->restaurant_name ?? null,
+                'restaurant_name' => $vendor->restaurant_name ?? null,
             ] : null,
             'people' => $people->values(),
         ]);
@@ -144,32 +148,32 @@ class CartController extends Controller
     public function addItem(Request $request): JsonResponse
     {
         $data = Validator::make($request->all(), [
-            'menu_item_id'           => ['required', 'integer', 'exists:menu_items,id'],
-            'quantity'               => ['sometimes', 'integer', 'min:1', 'max:99'],
-            'notes'                  => ['nullable', 'string', 'max:500'],
-            'paid_addons'            => ['sometimes', 'array'],
-            'paid_addons.*.name'     => ['required_with:paid_addons', 'string', 'max:255'],
-            'paid_addons.*.price'    => ['sometimes', 'numeric', 'min:0'],
-            'free_addons'            => ['sometimes', 'array'],
-            'free_addons.*'          => ['string', 'max:255'],
-            'removed_items'          => ['sometimes', 'array'],
-            'removed_items.*'        => ['string', 'max:255'],
-            'removable_items'        => ['sometimes', 'array'],
-            'removable_items.*'      => ['string', 'max:255'],
-            'selected_modifiers'                         => ['sometimes', 'array'],
-            'selected_modifiers.*.modifier_group_id'     => ['sometimes', 'integer'],
-            'selected_modifiers.*.group_id'              => ['sometimes', 'integer'],
-            'selected_modifiers.*.id'                    => ['sometimes', 'integer'],
-            'selected_modifiers.*.option_ids'            => ['sometimes', 'array'],
-            'selected_modifiers.*.option_ids.*'          => ['integer'],
-            'selected_modifiers.*.options'               => ['sometimes', 'array'],
-            'modifiers'                                  => ['sometimes', 'array'],
-            'modifiers.*.modifier_group_id'              => ['sometimes', 'integer'],
-            'modifiers.*.group_id'                       => ['sometimes', 'integer'],
-            'modifiers.*.id'                             => ['sometimes', 'integer'],
-            'modifiers.*.option_ids'                     => ['sometimes', 'array'],
-            'modifiers.*.option_ids.*'                   => ['integer'],
-            'modifiers.*.options'                        => ['sometimes', 'array'],
+            'menu_item_id' => ['required', 'integer', 'exists:menu_items,id'],
+            'quantity' => ['sometimes', 'integer', 'min:1', 'max:99'],
+            'notes' => ['nullable', 'string', 'max:500'],
+            'paid_addons' => ['sometimes', 'array'],
+            'paid_addons.*.name' => ['required_with:paid_addons', 'string', 'max:255'],
+            'paid_addons.*.price' => ['sometimes', 'numeric', 'min:0'],
+            'free_addons' => ['sometimes', 'array'],
+            'free_addons.*' => ['string', 'max:255'],
+            'removed_items' => ['sometimes', 'array'],
+            'removed_items.*' => ['string', 'max:255'],
+            'removable_items' => ['sometimes', 'array'],
+            'removable_items.*' => ['string', 'max:255'],
+            'selected_modifiers' => ['sometimes', 'array'],
+            'selected_modifiers.*.modifier_group_id' => ['sometimes', 'integer'],
+            'selected_modifiers.*.group_id' => ['sometimes', 'integer'],
+            'selected_modifiers.*.id' => ['sometimes', 'integer'],
+            'selected_modifiers.*.option_ids' => ['sometimes', 'array'],
+            'selected_modifiers.*.option_ids.*' => ['integer'],
+            'selected_modifiers.*.options' => ['sometimes', 'array'],
+            'modifiers' => ['sometimes', 'array'],
+            'modifiers.*.modifier_group_id' => ['sometimes', 'integer'],
+            'modifiers.*.group_id' => ['sometimes', 'integer'],
+            'modifiers.*.id' => ['sometimes', 'integer'],
+            'modifiers.*.option_ids' => ['sometimes', 'array'],
+            'modifiers.*.option_ids.*' => ['integer'],
+            'modifiers.*.options' => ['sometimes', 'array'],
         ])->validate();
 
         $mySession = $this->activeSession($request);
@@ -208,14 +212,14 @@ class CartController extends Controller
         } else {
             $item = CartItem::create([
                 'table_scan_session_id' => $mySession->id,
-                'menu_item_id'          => $data['menu_item_id'],
-                'order_id'              => null,
-                'quantity'              => $data['quantity'] ?? 1,
-                'notes'                 => $data['notes'] ?? null,
-                'paid_addons'           => $customizations['paid_addons'],
-                'free_addons'           => $customizations['free_addons'],
-                'removed_items'         => $customizations['removed_items'],
-                'selected_modifiers'    => $customizations['selected_modifiers'],
+                'menu_item_id' => $data['menu_item_id'],
+                'order_id' => null,
+                'quantity' => $data['quantity'] ?? 1,
+                'notes' => $data['notes'] ?? null,
+                'paid_addons' => $customizations['paid_addons'],
+                'free_addons' => $customizations['free_addons'],
+                'removed_items' => $customizations['removed_items'],
+                'selected_modifiers' => $customizations['selected_modifiers'],
             ]);
         }
 
@@ -236,31 +240,31 @@ class CartController extends Controller
     public function updateItem(Request $request, int $id): JsonResponse
     {
         $data = Validator::make($request->all(), [
-            'quantity'               => ['sometimes', 'integer', 'min:1', 'max:99'],
-            'notes'                  => ['nullable', 'string', 'max:500'],
-            'paid_addons'            => ['sometimes', 'array'],
-            'paid_addons.*.name'     => ['required_with:paid_addons', 'string', 'max:255'],
-            'paid_addons.*.price'    => ['sometimes', 'numeric', 'min:0'],
-            'free_addons'            => ['sometimes', 'array'],
-            'free_addons.*'          => ['string', 'max:255'],
-            'removed_items'          => ['sometimes', 'array'],
-            'removed_items.*'        => ['string', 'max:255'],
-            'removable_items'        => ['sometimes', 'array'],
-            'removable_items.*'      => ['string', 'max:255'],
-            'selected_modifiers'                         => ['sometimes', 'array'],
-            'selected_modifiers.*.modifier_group_id'     => ['sometimes', 'integer'],
-            'selected_modifiers.*.group_id'              => ['sometimes', 'integer'],
-            'selected_modifiers.*.id'                    => ['sometimes', 'integer'],
-            'selected_modifiers.*.option_ids'            => ['sometimes', 'array'],
-            'selected_modifiers.*.option_ids.*'          => ['integer'],
-            'selected_modifiers.*.options'               => ['sometimes', 'array'],
-            'modifiers'                                  => ['sometimes', 'array'],
-            'modifiers.*.modifier_group_id'              => ['sometimes', 'integer'],
-            'modifiers.*.group_id'                       => ['sometimes', 'integer'],
-            'modifiers.*.id'                             => ['sometimes', 'integer'],
-            'modifiers.*.option_ids'                     => ['sometimes', 'array'],
-            'modifiers.*.option_ids.*'                   => ['integer'],
-            'modifiers.*.options'                        => ['sometimes', 'array'],
+            'quantity' => ['sometimes', 'integer', 'min:1', 'max:99'],
+            'notes' => ['nullable', 'string', 'max:500'],
+            'paid_addons' => ['sometimes', 'array'],
+            'paid_addons.*.name' => ['required_with:paid_addons', 'string', 'max:255'],
+            'paid_addons.*.price' => ['sometimes', 'numeric', 'min:0'],
+            'free_addons' => ['sometimes', 'array'],
+            'free_addons.*' => ['string', 'max:255'],
+            'removed_items' => ['sometimes', 'array'],
+            'removed_items.*' => ['string', 'max:255'],
+            'removable_items' => ['sometimes', 'array'],
+            'removable_items.*' => ['string', 'max:255'],
+            'selected_modifiers' => ['sometimes', 'array'],
+            'selected_modifiers.*.modifier_group_id' => ['sometimes', 'integer'],
+            'selected_modifiers.*.group_id' => ['sometimes', 'integer'],
+            'selected_modifiers.*.id' => ['sometimes', 'integer'],
+            'selected_modifiers.*.option_ids' => ['sometimes', 'array'],
+            'selected_modifiers.*.option_ids.*' => ['integer'],
+            'selected_modifiers.*.options' => ['sometimes', 'array'],
+            'modifiers' => ['sometimes', 'array'],
+            'modifiers.*.modifier_group_id' => ['sometimes', 'integer'],
+            'modifiers.*.group_id' => ['sometimes', 'integer'],
+            'modifiers.*.id' => ['sometimes', 'integer'],
+            'modifiers.*.option_ids' => ['sometimes', 'array'],
+            'modifiers.*.option_ids.*' => ['integer'],
+            'modifiers.*.options' => ['sometimes', 'array'],
         ])->validate();
 
         $mySession = $this->activeSession($request);
@@ -377,46 +381,46 @@ class CartController extends Controller
 
             $items = $personCartItems
                 ->map(function (CartItem $item) use ($isMe, $vendorCountry, $itemTaxCategoryFn, &$personalTotal, &$personalCount, &$tableTotal, &$tableItemCount) {
-                $unitPrice = $this->cartItemUnitPrice($item, $vendorCountry);
-                $lineTotal = $this->cartItemLineTotal($item, $vendorCountry);
-                $itc = $itemTaxCategoryFn($item);
+                    $unitPrice = $this->cartItemUnitPrice($item, $vendorCountry);
+                    $lineTotal = $this->cartItemLineTotal($item, $vendorCountry);
+                    $itc = $itemTaxCategoryFn($item);
 
-                $personalTotal += $lineTotal;
-                $personalCount += $item->quantity;
-                $tableTotal += $lineTotal;
-                $tableItemCount += $item->quantity;
+                    $personalTotal += $lineTotal;
+                    $personalCount += $item->quantity;
+                    $tableTotal += $lineTotal;
+                    $tableItemCount += $item->quantity;
 
-                return [
-                    'cart_item_id' => $item->id,
-                    'menu_item_id' => $item->menu_item_id,
-                    'name'         => $item->menuItem?->name,
-                    'image_url'    => $item->menuItem?->image_url,
-                    'quantity'     => $item->quantity,
-                    'unit_price'   => $unitPrice,
-                    'paid_addons'  => $this->formatCartPaidAddons($item, $itc, $vendorCountry),
-                    'free_addons'  => $item->free_addons ?? [],
-                    'removed_items' => $item->removed_items ?? [],
-                    'selected_modifiers' => $this->formatCartSelectedModifiers($item, $itc, $vendorCountry),
-                    'total_price'  => $lineTotal,
-                    'is_mine'      => $isMe,
-                ];
-            })->values();
+                    return [
+                        'cart_item_id' => $item->id,
+                        'menu_item_id' => $item->menu_item_id,
+                        'name' => $item->menuItem?->name,
+                        'image_url' => $item->menuItem?->image_url,
+                        'quantity' => $item->quantity,
+                        'unit_price' => $unitPrice,
+                        'paid_addons' => $this->formatCartPaidAddons($item, $itc, $vendorCountry),
+                        'free_addons' => $item->free_addons ?? [],
+                        'removed_items' => $item->removed_items ?? [],
+                        'selected_modifiers' => $this->formatCartSelectedModifiers($item, $itc, $vendorCountry),
+                        'total_price' => $lineTotal,
+                        'is_mine' => $isMe,
+                    ];
+                })->values();
 
             $personTaxGroups = TaxCalculationService::computeTaxGroups($personCartItems, $vendorCountry);
             $personTotals = TaxCalculationService::computeTotals($personTaxGroups, $serviceFeeRate);
 
             return [
-                'session_id'  => $s->id,
+                'session_id' => $s->id,
                 'customer_id' => $s->customer_id,
-                'is_me'       => $isMe,
-                'name'        => $s->customer
-                    ? trim($s->customer->first_name . ' ' . $s->customer->last_name)
+                'is_me' => $isMe,
+                'name' => $s->customer
+                    ? trim($s->customer->first_name.' '.$s->customer->last_name)
                     : 'Guest',
-                'item_count'  => $personalCount,
+                'item_count' => $personalCount,
                 'total_price' => round($personalTotal, 2),
-                'items'       => $items,
-                'tax_groups'  => $personTaxGroups,
-                'totals'      => $personTotals,
+                'items' => $items,
+                'tax_groups' => $personTaxGroups,
+                'totals' => $personTotals,
             ];
         })->values();
 
@@ -424,13 +428,13 @@ class CartController extends Controller
 
         return response()->json([
             'table' => $table ? [
-                'id'     => $table->id,
+                'id' => $table->id,
                 'number' => $table->number ?? null,
-                'name'   => $table->name ?? null,
+                'name' => $table->name ?? null,
             ] : null,
-            'people'     => $people,
-            'summary'    => [
-                'item_count'  => $tableItemCount,
+            'people' => $people,
+            'summary' => [
+                'item_count' => $tableItemCount,
                 'total_price' => round($tableTotal, 2),
             ],
         ]);
@@ -464,9 +468,9 @@ class CartController extends Controller
         $vendorCountry = $this->vendorCountry($mySession);
         $myTotal = 0.0;
         foreach ($myCartItems as $item) {
-            $lineTotal  = $this->cartItemLineTotal($item, $vendorCountry);
+            $lineTotal = $this->cartItemLineTotal($item, $vendorCountry);
             $shareCount = 1 + count($item->shared_order_ids ?? []);
-            $myTotal   += $lineTotal / $shareCount;
+            $myTotal += $lineTotal / $shareCount;
         }
         $myTotal = round($myTotal, 2);
 
@@ -484,16 +488,16 @@ class CartController extends Controller
             $currency = $mySession->vendor?->currency ?? 'EUR';
 
             Order::create([
-                'order_public_id'       => 'ord-' . Str::random(12),
-                'customer_id'           => $request->user()->id,
-                'vendor_id'             => $mySession->vendor_id,
+                'order_public_id' => 'ord-'.Str::random(12),
+                'customer_id' => $request->user()->id,
+                'vendor_id' => $mySession->vendor_id,
                 'table_scan_session_id' => $mySession->id,
-                'status'                => 'draft',
-                'amount'                => $myTotal,
-                'currency'              => $currency,
-                'payment_pending'       => true,
-                'payment_received'      => false,
-                'order_type'            => 'dine-in',
+                'status' => 'draft',
+                'amount' => $myTotal,
+                'currency' => $currency,
+                'payment_pending' => true,
+                'payment_received' => false,
+                'order_type' => 'dine-in',
             ]);
         });
 
@@ -513,7 +517,7 @@ class CartController extends Controller
     public function updateOrder(Request $request, int $order_id): JsonResponse
     {
         $data = Validator::make($request->all(), [
-            'shared_item'   => ['nullable', 'integer'],
+            'shared_item' => ['nullable', 'integer'],
             'unshared_item' => ['nullable', 'integer'],
         ])->validate();
 
@@ -584,7 +588,7 @@ class CartController extends Controller
             $existing = is_array($cartItem->shared_order_ids) ? $cartItem->shared_order_ids : [];
             $filtered = array_values(array_filter(
                 array_map('intval', $existing),
-                fn(int $id) => $id !== $order->id
+                fn (int $id) => $id !== $order->id
             ));
             $cartItem->update(['shared_order_ids' => $filtered]);
         }
@@ -623,7 +627,7 @@ class CartController extends Controller
             CartItem::where('table_scan_session_id', $mySession->id)
                 ->whereNull('order_id')
                 ->update([
-                    'order_id'    => $order->id,
+                    'order_id' => $order->id,
                     'received_at' => now(),
                 ]);
 
@@ -682,15 +686,15 @@ class CartController extends Controller
         $total = 0.0;
 
         foreach ($owned as $item) {
-            $lineTotal  = $this->cartItemLineTotal($item, $vendorCountry);
+            $lineTotal = $this->cartItemLineTotal($item, $vendorCountry);
             $shareCount = 1 + count($item->shared_order_ids ?? []);
-            $total     += $lineTotal / $shareCount;
+            $total += $lineTotal / $shareCount;
         }
 
         foreach ($sharedInto as $item) {
-            $lineTotal  = $this->cartItemLineTotal($item, $vendorCountry);
+            $lineTotal = $this->cartItemLineTotal($item, $vendorCountry);
             $shareCount = 1 + count($item->shared_order_ids ?? []);
-            $total     += $lineTotal / $shareCount;
+            $total += $lineTotal / $shareCount;
         }
 
         return round($total, 2);
@@ -708,6 +712,7 @@ class CartController extends Controller
 
         $vendorCountry = $this->vendorCountry($mySession);
         $serviceFeeRate = $this->serviceFeeRate($mySession);
+        $vendor = $mySession->vendor;
 
         $sessions = TableScanSession::with([
             'customer:id,first_name,last_name',
@@ -733,25 +738,25 @@ class CartController extends Controller
 
         $ordersById = $orders->flatten()->keyBy('id');
 
-        $sessionCustomerNames = $sessions->mapWithKeys(fn(TableScanSession $s) => [
+        $sessionCustomerNames = $sessions->mapWithKeys(fn (TableScanSession $s) => [
             $s->id => $s->customer
-                ? trim($s->customer->first_name . ' ' . $s->customer->last_name)
+                ? trim($s->customer->first_name.' '.$s->customer->last_name)
                 : 'Guest',
         ]);
 
-        $tableTotal      = 0.0;
+        $tableTotal = 0.0;
         $tableOrderCount = 0;
 
-        $people = $sessions->map(function (TableScanSession $s) use ($mySession, $orders, $allCartItems, $ordersById, $sessionCustomerNames, $vendorCountry, $serviceFeeRate, &$tableTotal, &$tableOrderCount) {
+        $people = $sessions->map(function (TableScanSession $s) use ($mySession, $orders, $allCartItems, $ordersById, $sessionCustomerNames, $vendorCountry, $serviceFeeRate, $vendor, &$tableTotal, &$tableOrderCount) {
             $personOrders = $orders->get($s->id, collect());
-            $personTotal  = (float) $personOrders->sum(fn(Order $o) => (float) $o->amount);
+            $personTotal = (float) $personOrders->sum(fn (Order $o) => (float) $o->amount);
 
-            $tableTotal      += $personTotal;
+            $tableTotal += $personTotal;
             $tableOrderCount += $personOrders->count();
 
             $personCartItems = collect();
 
-            $orderPayloads = $personOrders->map(function (Order $order) use ($s, $allCartItems, $mySession, $ordersById, $sessionCustomerNames, $vendorCountry, &$personCartItems) {
+            $orderPayloads = $personOrders->map(function (Order $order) use ($s, $allCartItems, $mySession, $ordersById, $sessionCustomerNames, $vendorCountry, $vendor, &$personCartItems) {
                 $ownedCartItems = $allCartItems->filter(function (CartItem $ci) use ($s, $order) {
                     if ($order->status === 'draft') {
                         return (int) $ci->table_scan_session_id === (int) $s->id
@@ -766,6 +771,7 @@ class CartController extends Controller
                         return false;
                     }
                     $ids = is_array($ci->shared_order_ids) ? $ci->shared_order_ids : [];
+
                     return in_array($order->id, array_map('intval', $ids), true);
                 });
 
@@ -773,56 +779,55 @@ class CartController extends Controller
                 $personCartItems = $personCartItems->merge($orderItems);
 
                 $itemRows = $orderItems
-                    ->map(fn(CartItem $ci) => $this->cartItemPayload($ci, $order, $mySession, $ordersById, $sessionCustomerNames, $vendorCountry))
+                    ->map(fn (CartItem $ci) => $this->cartItemPayload($ci, $order, $mySession, $ordersById, $sessionCustomerNames, $vendorCountry, $vendor))
                     ->values()
                     ->all();
 
-                return $this->orderPayload($order, $itemRows);
+                return $this->orderPayload($order, $itemRows, $vendor);
             })->values();
 
             $personTaxGroups = TaxCalculationService::computeTaxGroups($personCartItems, $vendorCountry);
             $personTotals = TaxCalculationService::computeTotals($personTaxGroups, $serviceFeeRate);
 
-            $totalTips = round((float) $personOrders->sum(fn(Order $o) => (float) ($o->tip_amount ?? 0)), 2);
+            $totalTips = round((float) $personOrders->sum(fn (Order $o) => (float) ($o->tip_amount ?? 0)), 2);
             $personTotals['total_tips'] = $totalTips;
             $personTotals['grand_total'] = round($personTotals['grand_total'] + $totalTips, 2);
 
             return [
-                'session_id'   => $s->id,
-                'customer_id'  => $s->customer_id,
-                'is_me'        => $s->id === $mySession->id,
-                'name'         => $s->customer
-                    ? trim($s->customer->first_name . ' ' . $s->customer->last_name)
+                'session_id' => $s->id,
+                'customer_id' => $s->customer_id,
+                'is_me' => $s->id === $mySession->id,
+                'name' => $s->customer
+                    ? trim($s->customer->first_name.' '.$s->customer->last_name)
                     : 'Guest',
-                'scanned_at'   => $s->scanned_at?->toIso8601String(),
-                'status'       => $s->status,
+                'scanned_at' => $this->dateTimes->formatDateTime($s->scanned_at, $vendor),
+                'status' => $s->status,
                 'orders_count' => $personOrders->count(),
                 'total_amount' => round($personTotal, 2),
-                'orders'       => $orderPayloads,
-                'tax_groups'   => $personTaxGroups,
-                'totals'       => $personTotals,
+                'orders' => $orderPayloads,
+                'tax_groups' => $personTaxGroups,
+                'totals' => $personTotals,
             ];
         })->values();
 
-        $table  = $mySession->restaurantTable;
-        $vendor = $mySession->vendor;
+        $table = $mySession->restaurantTable;
 
         return [
             'table' => $table ? [
-                'id'     => $table->id,
+                'id' => $table->id,
                 'number' => $table->number ?? null,
-                'name'   => $table->name ?? null,
+                'name' => $table->name ?? null,
             ] : null,
             'vendor' => $vendor ? [
                 'vendor_public_id' => $vendor->vendor_public_id ?? null,
-                'restaurant_name'  => $vendor->restaurant_name ?? null,
+                'restaurant_name' => $vendor->restaurant_name ?? null,
             ] : null,
             'session' => [
-                'id'         => $mySession->id,
-                'status'     => $mySession->status,
-                'scanned_at' => $mySession->scanned_at?->toIso8601String(),
+                'id' => $mySession->id,
+                'status' => $mySession->status,
+                'scanned_at' => $this->dateTimes->formatDateTime($mySession->scanned_at, $vendor),
             ],
-            'people'  => $people,
+            'people' => $people,
             'summary' => [
                 'orders_count' => $tableOrderCount,
                 'total_amount' => round($tableTotal, 2),
@@ -833,8 +838,15 @@ class CartController extends Controller
     /**
      * Build the per-item row used inside an order's `items` array.
      */
-    private function cartItemPayload(CartItem $ci, Order $order, TableScanSession $mySession, $ordersById = null, $sessionCustomerNames = null, ?string $vendorCountry = null): array
-    {
+    private function cartItemPayload(
+        CartItem $ci,
+        Order $order,
+        TableScanSession $mySession,
+        $ordersById = null,
+        $sessionCustomerNames = null,
+        ?string $vendorCountry = null,
+        ?Vendor $vendor = null,
+    ): array {
         $vendorCountry ??= 'AT';
         $menuItem = $ci->menuItem;
         $itemTaxCategory = $menuItem?->tax_category ?? 'food';
@@ -842,9 +854,9 @@ class CartController extends Controller
         $lineTotal = $this->cartItemLineTotal($ci, $vendorCountry);
         $vatRate = TaxCalculationService::itemVatRate($menuItem, $vendorCountry);
         $vatAmount = TaxCalculationService::vatFromGross($lineTotal, $vatRate);
-        $orderIds  = array_values(array_map('intval', is_array($ci->shared_order_ids) ? $ci->shared_order_ids : []));
+        $orderIds = array_values(array_map('intval', is_array($ci->shared_order_ids) ? $ci->shared_order_ids : []));
         $sharedBetween = 1 + count($orderIds);
-        $myShare   = round($lineTotal / $sharedBetween, 2);
+        $myShare = round($lineTotal / $sharedBetween, 2);
 
         $sharedWith = array_values(array_filter(array_map(function (int $oid) use ($ordersById, $sessionCustomerNames) {
             if ($ordersById === null) {
@@ -854,37 +866,38 @@ class CartController extends Controller
             if (! $o) {
                 return null;
             }
+
             return [
-                'order_id'      => $o->id,
-                'customer_id'   => $o->customer_id,
+                'order_id' => $o->id,
+                'customer_id' => $o->customer_id,
                 'customer_name' => $sessionCustomerNames?->get($o->table_scan_session_id, 'Guest') ?? 'Guest',
             ];
         }, $orderIds)));
 
         return [
-            'cart_item_id'       => $ci->id,
-            'menu_item_id'       => $ci->menu_item_id,
-            'name'               => $menuItem?->name,
-            'image_url'          => $menuItem?->image_url,
-            'quantity'           => $ci->quantity,
-            'unit_price'         => $unitPrice,
-            'paid_addons'        => $this->formatCartPaidAddons($ci, $itemTaxCategory, $vendorCountry),
-            'free_addons'        => $ci->free_addons ?? [],
-            'removed_items'      => $ci->removed_items ?? [],
+            'cart_item_id' => $ci->id,
+            'menu_item_id' => $ci->menu_item_id,
+            'name' => $menuItem?->name,
+            'image_url' => $menuItem?->image_url,
+            'quantity' => $ci->quantity,
+            'unit_price' => $unitPrice,
+            'paid_addons' => $this->formatCartPaidAddons($ci, $itemTaxCategory, $vendorCountry),
+            'free_addons' => $ci->free_addons ?? [],
+            'removed_items' => $ci->removed_items ?? [],
             'selected_modifiers' => $this->formatCartSelectedModifiers($ci, $itemTaxCategory, $vendorCountry),
-            'vat_rate'           => $vatRate,
-            'tax_category'       => $itemTaxCategory,
-            'vat_amount'         => $vatAmount,
-            'line_total'         => $lineTotal,
-            'is_mine'            => (int) $ci->table_scan_session_id === (int) $mySession->id,
-            'shared_between'     => $sharedBetween,
-            'shared_with'        => $sharedWith,
-            'my_share'           => $myShare,
-            'status'             => $this->cartItemStatus($ci),
-            'received_at'        => $ci->received_at?->toIso8601String(),
-            'preparing_start_at' => $ci->preparing_start_at?->toIso8601String(),
-            'ready_at'           => $ci->ready_at?->toIso8601String(),
-            'served_at'          => $ci->served_at?->toIso8601String(),
+            'vat_rate' => $vatRate,
+            'tax_category' => $itemTaxCategory,
+            'vat_amount' => $vatAmount,
+            'line_total' => $lineTotal,
+            'is_mine' => (int) $ci->table_scan_session_id === (int) $mySession->id,
+            'shared_between' => $sharedBetween,
+            'shared_with' => $sharedWith,
+            'my_share' => $myShare,
+            'status' => $this->cartItemStatus($ci),
+            'received_at' => $this->dateTimes->formatDateTime($ci->received_at, $vendor),
+            'preparing_start_at' => $this->dateTimes->formatDateTime($ci->preparing_start_at, $vendor),
+            'ready_at' => $this->dateTimes->formatDateTime($ci->ready_at, $vendor),
+            'served_at' => $this->dateTimes->formatDateTime($ci->served_at, $vendor),
         ];
     }
 
@@ -912,38 +925,38 @@ class CartController extends Controller
     /**
      * Build the per-order dict (without its `items` array — that is computed by the caller).
      */
-    private function orderPayload(Order $o, array $items): array
+    private function orderPayload(Order $o, array $items, ?Vendor $vendor = null): array
     {
         return [
-            'id'                    => $o->id,
-            'order_public_id'       => $o->order_public_id,
-            'customer_id'           => $o->customer_id,
-            'vendor_id'             => $o->vendor_id,
+            'id' => $o->id,
+            'order_public_id' => $o->order_public_id,
+            'customer_id' => $o->customer_id,
+            'vendor_id' => $o->vendor_id,
             'table_scan_session_id' => $o->table_scan_session_id,
-            'status'                => $o->status,
-            'amount'                => (float) $o->amount,
-            'tip_amount'            => (float) ($o->tip_amount ?? 0),
-            'currency'              => $o->currency,
-            'order_number'          => $o->order_number,
-            'order_type'            => $o->order_type,
-            'table_number'          => $o->table_number,
-            'service_fee'           => (float) ($o->service_fee ?? 0),
-            'vat_amount'            => (float) ($o->vat_amount ?? 0),
-            'course'                => $o->course,
-            'payment_method'        => $o->payment_method,
-            'payment_pending'       => (bool) $o->payment_pending,
-            'payment_received'      => (bool) $o->payment_received,
-            'payment_confirmed_at'  => $o->payment_confirmed_at?->toIso8601String(),
-            'payment_note'          => $o->payment_note,
-            'transaction_id'        => $o->transaction_id,
-            'served_at'             => $o->served_at?->toIso8601String(),
-            'cancelled_at'          => $o->cancelled_at?->toIso8601String(),
-            'cancelled_reason'      => $o->cancelled_reason,
-            'waiter_confirmed'      => (bool) $o->waiter_confirmed,
-            'waiter_confirmed_at'   => $o->waiter_confirmed_at?->toIso8601String(),
-            'created_at'            => $o->created_at?->toIso8601String(),
-            'updated_at'            => $o->updated_at?->toIso8601String(),
-            'items'                 => $items,
+            'status' => $o->status,
+            'amount' => (float) $o->amount,
+            'tip_amount' => (float) ($o->tip_amount ?? 0),
+            'currency' => $o->currency,
+            'order_number' => $o->order_number,
+            'order_type' => $o->order_type,
+            'table_number' => $o->table_number,
+            'service_fee' => (float) ($o->service_fee ?? 0),
+            'vat_amount' => (float) ($o->vat_amount ?? 0),
+            'course' => $o->course,
+            'payment_method' => $o->payment_method,
+            'payment_pending' => (bool) $o->payment_pending,
+            'payment_received' => (bool) $o->payment_received,
+            'payment_confirmed_at' => $this->dateTimes->formatDateTime($o->payment_confirmed_at, $vendor),
+            'payment_note' => $o->payment_note,
+            'transaction_id' => $o->transaction_id,
+            'served_at' => $this->dateTimes->formatDateTime($o->served_at, $vendor),
+            'cancelled_at' => $this->dateTimes->formatDateTime($o->cancelled_at, $vendor),
+            'cancelled_reason' => $o->cancelled_reason,
+            'waiter_confirmed' => (bool) $o->waiter_confirmed,
+            'waiter_confirmed_at' => $this->dateTimes->formatDateTime($o->waiter_confirmed_at, $vendor),
+            'created_at' => $this->dateTimes->formatDateTime($o->created_at, $vendor),
+            'updated_at' => $this->dateTimes->formatDateTime($o->updated_at, $vendor),
+            'items' => $items,
         ];
     }
 
@@ -1181,24 +1194,24 @@ class CartController extends Controller
         $itemTaxCategory = $menuItem?->tax_category ?? 'food';
 
         return [
-            'id'         => $item->id,
-            'quantity'   => $item->quantity,
-            'notes'      => $item->notes,
-            'price'      => $unitPrice,
+            'id' => $item->id,
+            'quantity' => $item->quantity,
+            'notes' => $item->notes,
+            'price' => $unitPrice,
             'paid_addons' => $this->formatCartPaidAddons($item, $itemTaxCategory, $vendorCountry),
             'free_addons' => $item->free_addons ?? [],
             'removed_items' => $item->removed_items ?? [],
             'selected_modifiers' => $this->formatCartSelectedModifiers($item, $itemTaxCategory, $vendorCountry),
-            'vat_rate'   => $vatRate,
+            'vat_rate' => $vatRate,
             'vat_amount' => $vatAmount,
             'line_total' => $lineTotal,
-            'menu_item'  => $menuItem ? [
-                'id'           => $menuItem->id,
-                'name'         => $menuItem->name,
-                'price'        => $baseGross,
-                'vat_rate'     => $vatRate,
+            'menu_item' => $menuItem ? [
+                'id' => $menuItem->id,
+                'name' => $menuItem->name,
+                'price' => $baseGross,
+                'vat_rate' => $vatRate,
                 'tax_category' => $menuItem->tax_category,
-                'image_url'    => $menuItem->image_url,
+                'image_url' => $menuItem->image_url,
             ] : null,
         ];
     }

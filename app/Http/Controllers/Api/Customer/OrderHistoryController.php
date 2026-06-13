@@ -9,6 +9,7 @@ use App\Models\OrderPayment;
 use App\Models\Vendor;
 use App\Services\MediaService;
 use App\Services\TaxCalculationService;
+use App\Services\VendorDateTimeService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -17,9 +18,10 @@ use Illuminate\Support\Facades\DB;
 
 class OrderHistoryController extends Controller
 {
-    public function __construct(private readonly MediaService $media)
-    {
-    }
+    public function __construct(
+        private readonly MediaService $media,
+        private readonly VendorDateTimeService $dateTimes,
+    ) {}
 
     /**
      * Get the customer's full account order history grouped by restaurant.
@@ -36,7 +38,7 @@ class OrderHistoryController extends Controller
 
         $orders = (clone $base)
             ->with([
-                'vendor.vendorSetting:id,vendor_id,logo_url,service_fee_rate',
+                'vendor.vendorSetting:id,vendor_id,logo_url,service_fee_rate,date_format,time_format',
                 'tableScanSession:id,customer_id',
             ])
             ->orderByDesc('created_at')
@@ -44,6 +46,7 @@ class OrderHistoryController extends Controller
 
         $history = $orders
             ->groupBy('vendor_id')
+            ->sortByDesc(fn (Collection $vendorOrders) => $vendorOrders->max('created_at'))
             ->map(function (Collection $vendorOrders) use ($page, $perPage) {
                 /** @var Order $first */
                 $first = $vendorOrders->first();
@@ -59,7 +62,10 @@ class OrderHistoryController extends Controller
                     'currency' => $first->currency ?? $vendor?->currency,
                     'orders_count' => $total,
                     'total_spent' => round((float) $vendorOrders->sum(fn (Order $order) => (float) $order->amount), 2),
-                    'last_ordered_at' => $vendorOrders->max('created_at')?->toIso8601String(),
+                    'last_ordered_at' => $this->dateTimes->formatDateTime(
+                        $vendorOrders->max('created_at'),
+                        $vendor,
+                    ),
                     'orders' => $pagedOrders->map(fn (Order $order) => $this->formatHistoryOrder($order))->all(),
                     'pagination' => [
                         'current_page' => $page,
@@ -70,7 +76,6 @@ class OrderHistoryController extends Controller
                     ],
                 ];
             })
-            ->sortByDesc('last_ordered_at')
             ->values();
 
         return response()->json([
@@ -96,11 +101,24 @@ class OrderHistoryController extends Controller
         );
 
         $restaurants = Vendor::whereHas('orders', $byCustomer)
+            ->with('vendorSetting:id,vendor_id,date_format,time_format')
             ->withCount(['orders' => $byCustomer])
             ->withSum(['orders' => $byCustomer], 'amount')
             ->withMax(['orders' => $byCustomer], 'created_at')
             ->get([
                 'id', 'vendor_public_id', 'restaurant_name', 'slug',
+            ])
+            ->map(fn (Vendor $vendor) => [
+                'id' => $vendor->id,
+                'vendor_public_id' => $vendor->vendor_public_id,
+                'restaurant_name' => $vendor->restaurant_name,
+                'slug' => $vendor->slug,
+                'orders_count' => $vendor->orders_count,
+                'orders_sum_amount' => $vendor->orders_sum_amount,
+                'orders_max_created_at' => $this->dateTimes->formatDateTime(
+                    $vendor->orders_max_created_at,
+                    $vendor,
+                ),
             ]);
 
         return response()->json($restaurants);
@@ -112,7 +130,9 @@ class OrderHistoryController extends Controller
     public function vendorOrders(Request $request, string $vendorPublicId): JsonResponse
     {
         $customer = $request->user();
-        $vendor = Vendor::where('vendor_public_id', $vendorPublicId)->firstOrFail();
+        $vendor = Vendor::where('vendor_public_id', $vendorPublicId)
+            ->with('vendorSetting:id,vendor_id,date_format,time_format')
+            ->firstOrFail();
 
         $base = fn () => Order::whereHas(
             'tableScanSession',
@@ -125,19 +145,25 @@ class OrderHistoryController extends Controller
                 'id', 'order_public_id', 'order_type', 'table_number',
                 'amount', 'currency', 'status', 'created_at',
             ]);
+        $orders->getCollection()->transform(function (Order $order) use ($vendor) {
+            $payload = $order->toArray();
+            $payload['created_at'] = $this->dateTimes->formatDateTime($order->created_at, $vendor);
+
+            return $payload;
+        });
 
         $summary = [
             'total_orders' => $base()->count(),
-            'total_spent'  => $base()->sum('amount'),
+            'total_spent' => $base()->sum('amount'),
         ];
 
         return response()->json([
             'restaurant' => [
-                'id'   => $vendor->vendor_public_id,
+                'id' => $vendor->vendor_public_id,
                 'name' => $vendor->restaurant_name,
             ],
             'summary' => $summary,
-            'orders'  => $orders,
+            'orders' => $orders,
         ]);
     }
 
@@ -151,7 +177,7 @@ class OrderHistoryController extends Controller
         $order = Order::where('order_public_id', $orderPublicId)
             ->where(fn (Builder $query) => $this->scopeCustomerOrders($query, $customer->id))
             ->with([
-                'vendor.vendorSetting:id,vendor_id,logo_url,service_fee_rate',
+                'vendor.vendorSetting:id,vendor_id,logo_url,service_fee_rate,date_format,time_format',
                 'tableScanSession:id,customer_id',
             ])
             ->firstOrFail();
@@ -169,7 +195,7 @@ class OrderHistoryController extends Controller
         $order = Order::where('order_public_id', $orderPublicId)
             ->where(fn (Builder $query) => $this->scopeCustomerOrders($query, $customer->id))
             ->with([
-                'vendor.vendorSetting:id,vendor_id,estimated_prep_time,service_fee_rate',
+                'vendor.vendorSetting:id,vendor_id,estimated_prep_time,service_fee_rate,date_format,time_format',
                 'tableScanSession:id,customer_id',
             ])
             ->firstOrFail();
@@ -254,8 +280,8 @@ class OrderHistoryController extends Controller
                 ],
                 'receipt' => [
                     'invoice_number' => $invoiceNumber,
-                    'date' => $order->created_at?->format('Y-m-d'),
-                    'time' => $order->created_at?->format('H:i'),
+                    'date' => $this->dateTimes->formatDate($order->created_at, $vendor),
+                    'time' => $this->dateTimes->formatTime($order->created_at, $vendor),
                     'table' => $tableName,
                     'order_id' => $order->order_public_id,
                     'currency' => $order->currency ?? $vendor?->currency ?? 'EUR',
@@ -270,13 +296,15 @@ class OrderHistoryController extends Controller
                     'method' => $order->payment_method,
                     'status' => $order->payment_received ? 'CONFIRMED' : 'PENDING',
                     'transaction_id' => $order->transaction_id ?? $payment?->stripe_payment_intent_id,
-                    'paid_at' => $order->payment_confirmed_at?->toIso8601String()
-                        ?? $payment?->paid_at?->toIso8601String(),
+                    'paid_at' => $this->dateTimes->formatDateTime(
+                        $order->payment_confirmed_at ?? $payment?->paid_at,
+                        $vendor,
+                    ),
                 ],
                 'legal' => $this->legalBlock($countryCode, $vendor),
             ],
             'meta' => [
-                'generated_at' => now()->toIso8601String(),
+                'generated_at' => $this->dateTimes->formatDateTime(now(), $vendor),
                 'template' => 'tavlo-receipt-template',
                 'version' => '1.0',
             ],
@@ -381,7 +409,7 @@ class OrderHistoryController extends Controller
         return [
             'order_id' => $order->order_number ?? (string) $order->id,
             'order_public_id' => $order->order_public_id,
-            'created_at' => $order->created_at?->toIso8601String(),
+            'created_at' => $this->dateTimes->formatDateTime($order->created_at, $order->vendor),
             'order_type' => $order->order_type,
             'payment_status' => $this->paymentStatus($order),
             'payment_method' => $order->payment_method,
@@ -477,7 +505,7 @@ class OrderHistoryController extends Controller
                 'restaurant_name' => $vendor?->restaurant_name,
                 'logo_url' => $this->media->url($settings?->logo_url),
             ],
-            'created_at' => $order->created_at?->toIso8601String(),
+            'created_at' => $this->dateTimes->formatDateTime($order->created_at, $vendor),
             'status' => $order->status,
             'order_type' => $order->order_type,
             'payment_status' => $this->paymentStatus($order),
@@ -486,6 +514,7 @@ class OrderHistoryController extends Controller
             'items' => $items->map(function (CartItem $item) use ($vendorCountry) {
                 $historyItem = $this->formatHistoryItem($item, $vendorCountry);
                 unset($historyItem['id']);
+
                 return $historyItem;
             })->values()->all(),
             'tax_groups' => $taxGroups,
@@ -660,7 +689,7 @@ class OrderHistoryController extends Controller
 
             return [
                 $order->table_scan_session_id => $customer
-                    ? trim($customer->first_name . ' ' . $customer->last_name)
+                    ? trim($customer->first_name.' '.$customer->last_name)
                     : 'Guest',
             ];
         });
@@ -674,7 +703,10 @@ class OrderHistoryController extends Controller
 
         $prepMinutes = (int) ($order->vendor?->vendorSetting?->estimated_prep_time ?? 20);
 
-        return $order->created_at->copy()->addMinutes($prepMinutes)->toIso8601String();
+        return $this->dateTimes->formatDateTime(
+            $order->created_at->copy()->addMinutes($prepMinutes),
+            $order->vendor,
+        );
     }
 
     private function linkedCartItems(Order $order): Collection

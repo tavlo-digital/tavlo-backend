@@ -64,7 +64,11 @@ class LocaleService
                 : 'en';
         }
 
-        return 'en';
+        $preferred = $this->normalize($request->getPreferredLanguage($supported));
+
+        return in_array($preferred, $supported, true)
+            ? $preferred
+            : 'en';
     }
 
     public function fallbackChain(Vendor $vendor, string $locale): array
@@ -181,5 +185,4 @@ class LocaleService
             $model->{$relation}()->updateOrCreate(['language' => $language], $values);
         }
     }
-
 }

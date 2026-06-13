@@ -43,7 +43,12 @@ class CloseStaleTableScanSessions extends Command
                     'closed_at' => now(),
                 ]);
 
-            NotificationService::notifyCustomers($customerIds, 'session_expire', 'Your table session has expired due to inactivity.');
+            NotificationService::notifyCustomers(
+                $customerIds,
+                'session_expire',
+                'Your table session has expired due to inactivity.',
+                $sessions->first()?->vendor_id,
+            );
 
             $closed += $sessions->count();
         }

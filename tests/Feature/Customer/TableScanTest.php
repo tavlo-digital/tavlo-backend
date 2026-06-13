@@ -2,8 +2,8 @@
 
 namespace Tests\Feature\Customer;
 
-use App\Models\Customer;
 use App\Models\CartItem;
+use App\Models\Customer;
 use App\Models\MenuCategory;
 use App\Models\MenuItem;
 use App\Models\Notification;
@@ -20,7 +20,9 @@ class TableScanTest extends TestCase
     use RefreshDatabase;
 
     private Customer $customer;
+
     private Vendor $vendor;
+
     private array $headers;
 
     protected function setUp(): void
@@ -28,7 +30,7 @@ class TableScanTest extends TestCase
         parent::setUp();
 
         $this->customer = Customer::factory()->create();
-        $this->vendor   = Vendor::factory()->create(['country' => 'GB']);
+        $this->vendor = Vendor::factory()->create(['country' => 'GB']);
         $this->vendor->vendorSetting()->create();
 
         $this->headers = $this->headersFor($this->customer);
@@ -40,17 +42,17 @@ class TableScanTest extends TestCase
 
         return [
             'Authorization' => "Bearer {$token}",
-            'Accept'        => 'application/json',
+            'Accept' => 'application/json',
         ];
     }
 
     private function makeTable(array $extra = []): RestaurantTable
     {
         return $this->vendor->restaurantTables()->create(array_merge([
-            'number'        => 1,
-            'name'          => 'Table 1',
-            'qr_token'      => RestaurantTable::generateQrToken(),
-            'is_active'     => true,
+            'number' => 1,
+            'name' => 'Table 1',
+            'qr_token' => RestaurantTable::generateQrToken(),
+            'is_active' => true,
             'qr_created_at' => now(),
         ], $extra));
     }
@@ -76,7 +78,7 @@ class TableScanTest extends TestCase
         return $this->withHeaders($headers ?? $this->headers)
             ->postJson('/api/customer/table/pin', [
                 'token' => $token,
-                'pin'   => $pin,
+                'pin' => $pin,
             ]);
     }
 
@@ -95,12 +97,12 @@ class TableScanTest extends TestCase
     private function activeSession(RestaurantTable $table, ?Customer $customer = null): TableScanSession
     {
         return TableScanSession::create([
-            'vendor_id'           => $this->vendor->id,
+            'vendor_id' => $this->vendor->id,
             'restaurant_table_id' => $table->id,
-            'customer_id'         => ($customer ?? $this->customer)->id,
-            'pin'                 => '1234',
-            'status'              => 'active',
-            'scanned_at'          => now(),
+            'customer_id' => ($customer ?? $this->customer)->id,
+            'pin' => '1234',
+            'status' => 'active',
+            'scanned_at' => now(),
         ]);
     }
 
@@ -108,42 +110,42 @@ class TableScanTest extends TestCase
     {
         $category = MenuCategory::firstOrCreate([
             'vendor_id' => $this->vendor->id,
-            'slug'      => 'mains',
+            'slug' => 'mains',
         ], [
             'vendor_id' => $this->vendor->id,
-            'name'      => 'Mains',
-            'slug'      => 'mains',
+            'name' => 'Mains',
+            'slug' => 'mains',
             'is_active' => true,
         ]);
 
         $item = MenuItem::create([
-            'vendor_id'         => $this->vendor->id,
-            'menu_category_id'  => $category->id,
-            'name'              => 'Margherita',
-            'price'             => 12.50,
-            'available'         => true,
+            'vendor_id' => $this->vendor->id,
+            'menu_category_id' => $category->id,
+            'name' => 'Margherita',
+            'price' => 12.50,
+            'available' => true,
         ]);
 
         return CartItem::create([
             'table_scan_session_id' => $session->id,
-            'menu_item_id'          => $item->id,
-            'quantity'              => 1,
+            'menu_item_id' => $item->id,
+            'quantity' => 1,
         ]);
     }
 
     private function order(TableScanSession $session, array $extra = []): Order
     {
         return Order::create(array_merge([
-            'order_public_id'       => 'ord-' . uniqid(),
-            'customer_id'           => $session->customer_id,
-            'vendor_id'             => $session->vendor_id,
+            'order_public_id' => 'ord-'.uniqid(),
+            'customer_id' => $session->customer_id,
+            'vendor_id' => $session->vendor_id,
             'table_scan_session_id' => $session->id,
-            'status'                => 'confirmed',
-            'amount'                => 10,
-            'currency'              => 'EUR',
-            'order_type'            => 'dine-in',
-            'payment_pending'       => false,
-            'payment_received'      => false,
+            'status' => 'confirmed',
+            'amount' => 10,
+            'currency' => 'EUR',
+            'order_type' => 'dine-in',
+            'payment_pending' => false,
+            'payment_received' => false,
         ], $extra));
     }
 
@@ -180,19 +182,19 @@ class TableScanTest extends TestCase
         $table = $this->makeTable(['number' => 3, 'name' => 'T3']);
         $this->vendor->update([
             'vendor_public_id' => 'VID-8492',
-            'name'             => 'Bella Italia',
+            'name' => 'Bella Italia',
         ]);
 
         $this->getStatus($table->qr_token)
             ->assertOk()
             ->assertJson([
                 'table' => [
-                    'id'     => (string) $table->id,
+                    'id' => (string) $table->id,
                     'number' => 3,
-                    'name'   => 'T3',
+                    'name' => 'T3',
                 ],
                 'vendor' => [
-                    'id'   => 'VID-8492',
+                    'id' => 'VID-8492',
                     'name' => 'Bella Italia',
                 ],
                 'status' => 'available',
@@ -225,7 +227,7 @@ class TableScanTest extends TestCase
         $table = $this->makeTable();
         $session = $this->activeSession($table);
         $session->update([
-            'status'    => 'closed',
+            'status' => 'closed',
             'closed_at' => now(),
         ]);
         $this->cartItem($session);
@@ -273,6 +275,10 @@ class TableScanTest extends TestCase
     {
         $table = $this->makeTable(['number' => 7, 'name' => 'T7']);
         $this->vendor->update(['country' => 'AT']);
+        $this->vendor->vendorSetting()->update([
+            'date_format' => 'MM/DD/YYYY',
+            'time_format' => '12h',
+        ]);
 
         $response = $this->postScan($table->qr_token, $this->headers);
 
@@ -280,8 +286,8 @@ class TableScanTest extends TestCase
             ->assertJsonStructure([
                 'pin',
                 'session' => ['id', 'status', 'scannedAt'],
-                'table'   => ['id', 'number', 'name'],
-                'vendor'  => ['id', 'name', 'currency'],
+                'table' => ['id', 'number', 'name'],
+                'vendor' => ['id', 'name', 'currency'],
             ])
             ->assertJsonPath('table.number', 7)
             ->assertJsonPath('table.name', 'T7')
@@ -291,20 +297,22 @@ class TableScanTest extends TestCase
 
         $pin = $response->json('pin');
         $this->assertMatchesRegularExpression('/^\d{4}$/', $pin);
+        $session = TableScanSession::findOrFail((int) $response->json('session.id'));
+        $this->assertSame($session->scanned_at->copy()->setTimezone($this->vendor->resolveTimezone())->format('m/d/Y g:i A'), $response->json('session.scannedAt'));
 
         $this->assertDatabaseHas('table_scan_sessions', [
-            'vendor_id'           => $this->vendor->id,
+            'vendor_id' => $this->vendor->id,
             'restaurant_table_id' => $table->id,
-            'customer_id'         => $this->customer->id,
-            'status'              => 'active',
-            'pin'                 => $pin,
+            'customer_id' => $this->customer->id,
+            'status' => 'active',
+            'pin' => $pin,
         ]);
     }
 
     public function test_guest_scan_without_existing_active_session_does_not_require_pin_entry(): void
     {
         $guest = Customer::factory()->create([
-            'account_type'        => 'guest',
+            'account_type' => 'guest',
             'registration_source' => 'guest',
         ]);
         $table = $this->makeTable();
@@ -316,8 +324,8 @@ class TableScanTest extends TestCase
 
         $this->assertDatabaseHas('table_scan_sessions', [
             'restaurant_table_id' => $table->id,
-            'customer_id'         => $guest->id,
-            'status'              => 'active',
+            'customer_id' => $guest->id,
+            'status' => 'active',
         ]);
     }
 
@@ -348,12 +356,12 @@ class TableScanTest extends TestCase
 
         for ($i = 0; $i < 9999; $i++) {
             TableScanSession::create([
-                'vendor_id'           => $this->vendor->id,
+                'vendor_id' => $this->vendor->id,
                 'restaurant_table_id' => $otherTable->id,
-                'customer_id'         => $this->customer->id,
-                'pin'                 => str_pad((string) $i, 4, '0', STR_PAD_LEFT),
-                'status'              => 'active',
-                'scanned_at'          => now(),
+                'customer_id' => $this->customer->id,
+                'pin' => str_pad((string) $i, 4, '0', STR_PAD_LEFT),
+                'status' => 'active',
+                'scanned_at' => now(),
             ]);
         }
 
@@ -368,13 +376,13 @@ class TableScanTest extends TestCase
         $table = $this->makeTable();
 
         TableScanSession::create([
-            'vendor_id'           => $this->vendor->id,
+            'vendor_id' => $this->vendor->id,
             'restaurant_table_id' => $table->id,
-            'customer_id'         => $this->customer->id,
-            'pin'                 => '1234',
-            'status'              => 'closed',
-            'scanned_at'          => now()->subHour(),
-            'closed_at'           => now()->subMinutes(5),
+            'customer_id' => $this->customer->id,
+            'pin' => '1234',
+            'status' => 'closed',
+            'scanned_at' => now()->subHour(),
+            'closed_at' => now()->subMinutes(5),
         ]);
 
         // Should not throw or loop forever — closed sessions don't block PIN.
@@ -395,10 +403,10 @@ class TableScanTest extends TestCase
         $this->postScan($table->qr_token, $this->headers)
             ->assertCreated()
             ->assertJson([
-                'message'     => 'Table session was already started',
-                'status'      => 'active',
+                'message' => 'Table session was already started',
+                'status' => 'active',
                 'requiresPin' => false,
-                'pin'         => $first['pin'],
+                'pin' => $first['pin'],
             ])
             ->assertJsonPath('session.id', $first['session']['id']);
 
@@ -418,10 +426,10 @@ class TableScanTest extends TestCase
         $this->postScan($table->qr_token, $this->headersFor($otherCustomer))
             ->assertStatus(409)
             ->assertJson([
-                'message'     => 'This table already has an active session',
-                'status'      => 'active',
+                'message' => 'This table already has an active session',
+                'status' => 'active',
                 'requiresPin' => true,
-                'pin'         => null,
+                'pin' => null,
             ]);
 
         $this->assertSame(1, TableScanSession::where('restaurant_table_id', $table->id)->where('status', 'active')->count());
@@ -452,7 +460,7 @@ class TableScanTest extends TestCase
 
         $this->postJson('/api/customer/table/pin', [
             'token' => $table->qr_token,
-            'pin'   => '1234',
+            'pin' => '1234',
         ])->assertUnauthorized();
     }
 
@@ -494,7 +502,7 @@ class TableScanTest extends TestCase
         $response = $this->actingAs($secondCustomer, 'customer')
             ->postJson('/api/customer/table/pin', [
                 'token' => $table->qr_token,
-                'pin'   => $ownerPin,
+                'pin' => $ownerPin,
             ], ['Accept' => 'application/json']);
 
         $response->assertCreated()
@@ -505,9 +513,9 @@ class TableScanTest extends TestCase
 
         $this->assertDatabaseHas('table_scan_sessions', [
             'restaurant_table_id' => $table->id,
-            'customer_id'         => $secondCustomer->id,
-            'status'              => 'active',
-            'pin'                 => $ownerPin,
+            'customer_id' => $secondCustomer->id,
+            'status' => 'active',
+            'pin' => $ownerPin,
         ]);
     }
 
@@ -517,34 +525,34 @@ class TableScanTest extends TestCase
         $secondCustomer = Customer::factory()->create();
 
         TableScanSession::create([
-            'vendor_id'           => $this->vendor->id,
+            'vendor_id' => $this->vendor->id,
             'restaurant_table_id' => $table->id,
-            'customer_id'         => $this->customer->id,
-            'pin'                 => '2468',
-            'status'              => 'active',
-            'scanned_at'          => now(),
+            'customer_id' => $this->customer->id,
+            'pin' => '2468',
+            'status' => 'active',
+            'scanned_at' => now(),
         ]);
 
         $secondSession = TableScanSession::create([
-            'vendor_id'           => $this->vendor->id,
+            'vendor_id' => $this->vendor->id,
             'restaurant_table_id' => $table->id,
-            'customer_id'         => $secondCustomer->id,
-            'pin'                 => '',
-            'status'              => 'active',
-            'scanned_at'          => now(),
+            'customer_id' => $secondCustomer->id,
+            'pin' => '',
+            'status' => 'active',
+            'scanned_at' => now(),
         ]);
 
         $this->actingAs($secondCustomer, 'customer')
             ->postJson('/api/customer/table/pin', [
                 'token' => $table->qr_token,
-                'pin'   => '2468',
+                'pin' => '2468',
             ], ['Accept' => 'application/json'])
             ->assertOk()
             ->assertJsonPath('pin', '2468')
             ->assertJsonPath('session.id', (string) $secondSession->id);
 
         $this->assertDatabaseHas('table_scan_sessions', [
-            'id'  => $secondSession->id,
+            'id' => $secondSession->id,
             'pin' => '2468',
         ]);
     }
@@ -562,14 +570,14 @@ class TableScanTest extends TestCase
         $this->actingAs($secondCustomer, 'customer')
             ->postJson('/api/customer/table/pin', [
                 'token' => $table->qr_token,
-                'pin'   => $ownerPin,
+                'pin' => $ownerPin,
             ], ['Accept' => 'application/json'])
             ->assertCreated();
 
         $this->actingAs($secondCustomer, 'customer')
             ->postJson('/api/customer/table/pin', [
                 'token' => $table->qr_token,
-                'pin'   => $ownerPin,
+                'pin' => $ownerPin,
             ], ['Accept' => 'application/json'])
             ->assertOk()
             ->assertJsonPath('pin', $ownerPin);
@@ -602,25 +610,36 @@ class TableScanTest extends TestCase
 
     public function test_session_user_close_closes_all_sessions_for_table(): void
     {
+        $this->vendor->vendorSetting()->update([
+            'date_format' => 'MM/DD/YYYY',
+            'time_format' => '12h',
+        ]);
         $table = $this->makeTable();
         $mySession = $this->activeSession($table);
         $otherCustomer = Customer::factory()->create();
         $otherSession = $this->activeSession($table, $otherCustomer);
 
-        $this->postClose(['table_id' => $table->id])
+        $response = $this->postClose(['table_id' => $table->id]);
+
+        $response
             ->assertOk()
             ->assertJsonPath('message', 'Table session closed')
             ->assertJsonPath('status', 'closed')
-            ->assertJsonPath('session.id', (string) $mySession->id);
+            ->assertJsonPath('session.id', (string) $mySession->id)
+            ->assertJsonPath('session.scannedAt', $mySession->scanned_at->copy()->setTimezone($this->vendor->resolveTimezone())->format('m/d/Y g:i A'));
 
         $this->assertDatabaseHas('table_scan_sessions', [
-            'id'     => $mySession->id,
+            'id' => $mySession->id,
             'status' => 'closed',
         ]);
         $this->assertDatabaseHas('table_scan_sessions', [
-            'id'     => $otherSession->id,
+            'id' => $otherSession->id,
             'status' => 'closed',
         ]);
+        $this->assertSame(
+            $mySession->fresh()->closed_at->copy()->setTimezone($this->vendor->resolveTimezone())->format('m/d/Y g:i A'),
+            $response->json('session.closedAt')
+        );
     }
 
     public function test_close_route_accepts_legacy_vendor_public_id_when_supplied(): void
@@ -630,7 +649,7 @@ class TableScanTest extends TestCase
 
         $this->postClose([
             'vendor_public_id' => $this->vendor->vendor_public_id,
-            'table_id'         => $table->id,
+            'table_id' => $table->id,
         ])
             ->assertOk()
             ->assertJsonPath('session.id', (string) $session->id);
@@ -647,7 +666,7 @@ class TableScanTest extends TestCase
             ->assertJsonPath('message', 'There is an active order on this table.');
 
         $this->assertDatabaseHas('table_scan_sessions', [
-            'id'     => $session->id,
+            'id' => $session->id,
             'status' => 'active',
         ]);
     }
@@ -665,11 +684,11 @@ class TableScanTest extends TestCase
             ->assertJsonPath('message', 'There is an active order on this table.');
 
         $this->assertDatabaseHas('table_scan_sessions', [
-            'id'     => $mySession->id,
+            'id' => $mySession->id,
             'status' => 'active',
         ]);
         $this->assertDatabaseHas('table_scan_sessions', [
-            'id'     => $otherSession->id,
+            'id' => $otherSession->id,
             'status' => 'active',
         ]);
     }
@@ -679,7 +698,7 @@ class TableScanTest extends TestCase
         $table = $this->makeTable();
         $session = $this->activeSession($table);
         $this->order($session, [
-            'status'           => 'draft',
+            'status' => 'draft',
             'payment_received' => false,
         ]);
 
@@ -689,7 +708,7 @@ class TableScanTest extends TestCase
             ->assertJsonPath('status', 'closed');
 
         $this->assertDatabaseHas('table_scan_sessions', [
-            'id'     => $session->id,
+            'id' => $session->id,
             'status' => 'closed',
         ]);
     }
@@ -699,8 +718,8 @@ class TableScanTest extends TestCase
         $table = $this->makeTable();
         $session = $this->activeSession($table);
         $order = $this->order($session, [
-            'payment_received'      => true,
-            'payment_confirmed_at'  => now(),
+            'payment_received' => true,
+            'payment_confirmed_at' => now(),
         ]);
         $item = $this->cartItem($session);
         $item->update(['order_id' => $order->id]);
@@ -710,7 +729,7 @@ class TableScanTest extends TestCase
             ->assertJsonPath('message', 'All the items on table are not served.');
 
         $this->assertDatabaseHas('table_scan_sessions', [
-            'id'     => $session->id,
+            'id' => $session->id,
             'status' => 'active',
         ]);
     }
@@ -720,12 +739,12 @@ class TableScanTest extends TestCase
         $table = $this->makeTable();
         $session = $this->activeSession($table);
         $order = $this->order($session, [
-            'payment_received'      => true,
-            'payment_confirmed_at'  => now(),
+            'payment_received' => true,
+            'payment_confirmed_at' => now(),
         ]);
         $item = $this->cartItem($session);
         $item->update([
-            'order_id'  => $order->id,
+            'order_id' => $order->id,
             'served_at' => now(),
         ]);
 
@@ -735,7 +754,7 @@ class TableScanTest extends TestCase
             ->assertJsonPath('status', 'closed');
 
         $this->assertDatabaseHas('table_scan_sessions', [
-            'id'     => $session->id,
+            'id' => $session->id,
             'status' => 'closed',
         ]);
     }
@@ -768,7 +787,7 @@ class TableScanTest extends TestCase
             ->assertJsonPath('message', 'Table session closed');
 
         $this->assertDatabaseHas('table_scan_sessions', [
-            'id'     => $session->id,
+            'id' => $session->id,
             'status' => 'closed',
         ]);
     }
@@ -785,11 +804,11 @@ class TableScanTest extends TestCase
             ->assertOk();
 
         $this->assertDatabaseHas('table_scan_sessions', [
-            'id'     => $session1->id,
+            'id' => $session1->id,
             'status' => 'closed',
         ]);
         $this->assertDatabaseHas('table_scan_sessions', [
-            'id'     => $session2->id,
+            'id' => $session2->id,
             'status' => 'closed',
         ]);
     }
@@ -833,17 +852,17 @@ class TableScanTest extends TestCase
 
         $waiter1 = TeamMember::create([
             'vendor_id' => $this->vendor->id,
-            'name'      => 'Waiter One',
-            'email'     => 'w1@test.com',
-            'role'      => 'waiter',
-            'status'    => 'active',
+            'name' => 'Waiter One',
+            'email' => 'w1@test.com',
+            'role' => 'waiter',
+            'status' => 'active',
         ]);
         $waiter2 = TeamMember::create([
             'vendor_id' => $this->vendor->id,
-            'name'      => 'Waiter Two',
-            'email'     => 'w2@test.com',
-            'role'      => 'waiter',
-            'status'    => 'active',
+            'name' => 'Waiter Two',
+            'email' => 'w2@test.com',
+            'role' => 'waiter',
+            'status' => 'active',
         ]);
 
         $this->postCall()
@@ -852,11 +871,11 @@ class TableScanTest extends TestCase
 
         $this->assertDatabaseHas('notifications', [
             'waiter_id' => $waiter1->id,
-            'event'     => 'table_call',
+            'event' => 'table_call',
         ]);
         $this->assertDatabaseHas('notifications', [
             'waiter_id' => $waiter2->id,
-            'event'     => 'table_call',
+            'event' => 'table_call',
         ]);
     }
 
@@ -867,24 +886,24 @@ class TableScanTest extends TestCase
 
         TeamMember::create([
             'vendor_id' => $this->vendor->id,
-            'name'      => 'Waiter',
-            'email'     => 'waiter@test.com',
-            'role'      => 'waiter',
-            'status'    => 'active',
+            'name' => 'Waiter',
+            'email' => 'waiter@test.com',
+            'role' => 'waiter',
+            'status' => 'active',
         ]);
         $kitchen = TeamMember::create([
             'vendor_id' => $this->vendor->id,
-            'name'      => 'Chef',
-            'email'     => 'chef@test.com',
-            'role'      => 'kitchen',
-            'status'    => 'active',
+            'name' => 'Chef',
+            'email' => 'chef@test.com',
+            'role' => 'kitchen',
+            'status' => 'active',
         ]);
 
         $this->postCall()->assertOk();
 
         $this->assertDatabaseMissing('notifications', [
             'kitchen_id' => $kitchen->id,
-            'event'      => 'table_call',
+            'event' => 'table_call',
         ]);
         $this->assertCount(1, Notification::where('event', 'table_call')->get());
     }
@@ -906,10 +925,10 @@ class TableScanTest extends TestCase
 
         TeamMember::create([
             'vendor_id' => $this->vendor->id,
-            'name'      => 'Suspended Waiter',
-            'email'     => 'suspended@test.com',
-            'role'      => 'waiter',
-            'status'    => 'suspended',
+            'name' => 'Suspended Waiter',
+            'email' => 'suspended@test.com',
+            'role' => 'waiter',
+            'status' => 'suspended',
         ]);
 
         $this->postCall()

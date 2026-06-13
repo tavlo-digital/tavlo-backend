@@ -10,25 +10,35 @@ class NotificationService
 {
     public static function notifyTableCustomers(int $restaurantTableId, string $event, string $message): void
     {
-        $customerIds = TableScanSession::query()
+        $sessions = TableScanSession::query()
             ->where('restaurant_table_id', $restaurantTableId)
             ->where('status', 'active')
-            ->distinct()
-            ->pluck('customer_id')
-            ->filter();
+            ->get(['customer_id', 'vendor_id']);
 
-        self::notifyCustomers($customerIds, $event, $message);
+        self::notifyCustomers(
+            $sessions->pluck('customer_id')->filter()->unique(),
+            $event,
+            $message,
+            $sessions->first()?->vendor_id,
+        );
     }
 
-    public static function notifyCustomers(Collection $customerIds, string $event, string $message): void
-    {
+    public static function notifyCustomers(
+        Collection $customerIds,
+        string $event,
+        string $message,
+        ?int $vendorId = null,
+    ): void {
+        $now = now();
+
         $rows = $customerIds->map(fn (int $id) => [
             'customer_id' => $id,
-            'event'       => $event,
-            'message'     => $message,
-            'read'        => false,
-            'created_at'  => now(),
-            'updated_at'  => now(),
+            'vendor_id' => $vendorId,
+            'event' => $event,
+            'message' => $message,
+            'read' => false,
+            'created_at' => $now,
+            'updated_at' => $now,
         ])->all();
 
         if (! empty($rows)) {
@@ -40,9 +50,9 @@ class NotificationService
     {
         Notification::create([
             "{$role}_id" => $id,
-            'event'      => $event,
-            'message'    => $message,
-            'read'       => false,
+            'event' => $event,
+            'message' => $message,
+            'read' => false,
         ]);
     }
 }

@@ -166,6 +166,30 @@ class Vendor extends Authenticatable
         return $this->resolveCurrency();
     }
 
+    public function resolveTimezone(): string
+    {
+        $country = trim((string) $this->country);
+
+        if ($country === '') {
+            return 'UTC';
+        }
+
+        $countryRecord = $this->relationLoaded('countryRecord')
+            ? $this->countryRecord
+            : null;
+
+        if (! $countryRecord) {
+            $countryRecord = Country::query()
+                ->where(function ($query) use ($country) {
+                    $query->whereRaw('LOWER(code) = ?', [strtolower($country)])
+                        ->orWhereRaw('LOWER(name) = ?', [strtolower($country)]);
+                })
+                ->first(['timezone']);
+        }
+
+        return $countryRecord?->timezone ?: 'UTC';
+    }
+
     public function restaurantTables(): \Illuminate\Database\Eloquent\Relations\HasMany
     {
         return $this->hasMany(RestaurantTable::class);

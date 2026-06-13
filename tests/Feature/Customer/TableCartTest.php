@@ -4,8 +4,8 @@ namespace Tests\Feature\Customer;
 
 use App\Models\CartItem;
 use App\Models\Customer;
-use App\Models\MenuItem;
 use App\Models\MenuCategory;
+use App\Models\MenuItem;
 use App\Models\ModifierGroup;
 use App\Models\ModifierOption;
 use App\Models\Order;
@@ -21,10 +21,15 @@ class TableCartTest extends TestCase
     use RefreshDatabase;
 
     private Customer $customer;
+
     private Vendor $vendor;
+
     private RestaurantTable $table;
+
     private TableScanSession $session;
+
     private MenuItem $menuItem;
+
     private array $headers;
 
     protected function setUp(): void
@@ -32,46 +37,46 @@ class TableCartTest extends TestCase
         parent::setUp();
 
         $this->customer = Customer::factory()->create(['first_name' => 'Alice', 'last_name' => 'Smith']);
-        $this->vendor   = Vendor::factory()->create();
+        $this->vendor = Vendor::factory()->create();
 
         $token = $this->customer->createToken('test', ['role:customer'])->plainTextToken;
         $this->headers = ['Authorization' => "Bearer {$token}", 'Accept' => 'application/json'];
 
         $this->table = $this->vendor->restaurantTables()->create([
-            'number'        => 1,
-            'name'          => 'T1',
-            'qr_token'      => RestaurantTable::generateQrToken(),
-            'is_active'     => true,
+            'number' => 1,
+            'name' => 'T1',
+            'qr_token' => RestaurantTable::generateQrToken(),
+            'is_active' => true,
             'qr_created_at' => now(),
         ]);
 
         $category = MenuCategory::create([
             'vendor_id' => $this->vendor->id,
-            'name'      => 'Sides',
-            'slug'      => 'sides-' . $this->vendor->id,
+            'name' => 'Sides',
+            'slug' => 'sides-'.$this->vendor->id,
         ]);
 
         $this->menuItem = MenuItem::create([
-            'vendor_id'        => $this->vendor->id,
+            'vendor_id' => $this->vendor->id,
             'menu_category_id' => $category->id,
-            'name'             => 'Fries',
-            'price'            => 3.50,
-            'vat_rate'         => 20,
-            'paid_addons'      => [
+            'name' => 'Fries',
+            'price' => 3.50,
+            'vat_rate' => 20,
+            'paid_addons' => [
                 ['name' => 'Cheese sauce', 'price' => 1.50],
                 ['name' => 'Truffle mayo', 'price' => 2.00],
             ],
-            'free_addons'      => ['Ketchup', 'Chili flakes'],
-            'removable_items'  => ['Salt'],
+            'free_addons' => ['Ketchup', 'Chili flakes'],
+            'removable_items' => ['Salt'],
         ]);
 
         $this->session = TableScanSession::create([
-            'vendor_id'           => $this->vendor->id,
+            'vendor_id' => $this->vendor->id,
             'restaurant_table_id' => $this->table->id,
-            'customer_id'         => $this->customer->id,
-            'pin'                 => '1234',
-            'status'              => 'active',
-            'scanned_at'          => now(),
+            'customer_id' => $this->customer->id,
+            'pin' => '1234',
+            'status' => 'active',
+            'scanned_at' => now(),
         ]);
     }
 
@@ -111,12 +116,12 @@ class TableCartTest extends TestCase
     {
         $other = Customer::factory()->create(['first_name' => 'Bob', 'last_name' => 'Jones']);
         TableScanSession::create([
-            'vendor_id'           => $this->vendor->id,
+            'vendor_id' => $this->vendor->id,
             'restaurant_table_id' => $this->table->id,
-            'customer_id'         => $other->id,
-            'pin'                 => '',
-            'status'              => 'active',
-            'scanned_at'          => now(),
+            'customer_id' => $other->id,
+            'pin' => '',
+            'status' => 'active',
+            'scanned_at' => now(),
         ]);
 
         $response = $this->withHeaders($this->headers)
@@ -130,25 +135,25 @@ class TableCartTest extends TestCase
     {
         CartItem::create([
             'table_scan_session_id' => $this->session->id,
-            'menu_item_id'          => $this->menuItem->id,
-            'quantity'              => 2,
-            'notes'                 => 'No salt',
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 2,
+            'notes' => 'No salt',
         ]);
 
         $other = Customer::factory()->create(['first_name' => 'Bob', 'last_name' => 'Jones']);
         $otherSession = TableScanSession::create([
-            'vendor_id'           => $this->vendor->id,
+            'vendor_id' => $this->vendor->id,
             'restaurant_table_id' => $this->table->id,
-            'customer_id'         => $other->id,
-            'pin'                 => '',
-            'status'              => 'active',
-            'scanned_at'          => now(),
+            'customer_id' => $other->id,
+            'pin' => '',
+            'status' => 'active',
+            'scanned_at' => now(),
         ]);
 
         CartItem::create([
             'table_scan_session_id' => $otherSession->id,
-            'menu_item_id'          => $this->menuItem->id,
-            'quantity'              => 1,
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 1,
         ]);
 
         $response = $this->withHeaders($this->headers)
@@ -174,12 +179,12 @@ class TableCartTest extends TestCase
     {
         $closed = Customer::factory()->create();
         TableScanSession::create([
-            'vendor_id'           => $this->vendor->id,
+            'vendor_id' => $this->vendor->id,
             'restaurant_table_id' => $this->table->id,
-            'customer_id'         => $closed->id,
-            'pin'                 => '',
-            'status'              => 'closed',
-            'scanned_at'          => now(),
+            'customer_id' => $closed->id,
+            'pin' => '',
+            'status' => 'closed',
+            'scanned_at' => now(),
         ]);
 
         $response = $this->withHeaders($this->headers)
@@ -193,36 +198,36 @@ class TableCartTest extends TestCase
     {
         $item = CartItem::create([
             'table_scan_session_id' => $this->session->id,
-            'menu_item_id'          => $this->menuItem->id,
-            'quantity'              => 1,
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 1,
         ]);
         $item->forceFill(['created_at' => now()->subMinute()])->save();
 
         $draft = Order::create([
-            'order_public_id'       => 'ord-draft-cart-visible',
-            'customer_id'           => $this->customer->id,
-            'vendor_id'             => $this->vendor->id,
+            'order_public_id' => 'ord-draft-cart-visible',
+            'customer_id' => $this->customer->id,
+            'vendor_id' => $this->vendor->id,
             'table_scan_session_id' => $this->session->id,
-            'status'                => 'draft',
-            'amount'                => 3.50,
-            'currency'              => 'EUR',
+            'status' => 'draft',
+            'amount' => 3.50,
+            'currency' => 'EUR',
         ]);
 
         $other = Customer::factory()->create(['first_name' => 'Bob', 'last_name' => 'Jones']);
         $otherSession = TableScanSession::create([
-            'vendor_id'           => $this->vendor->id,
+            'vendor_id' => $this->vendor->id,
             'restaurant_table_id' => $this->table->id,
-            'customer_id'         => $other->id,
-            'pin'                 => '',
-            'status'              => 'active',
-            'scanned_at'          => now(),
+            'customer_id' => $other->id,
+            'pin' => '',
+            'status' => 'active',
+            'scanned_at' => now(),
         ]);
 
         CartItem::create([
             'table_scan_session_id' => $otherSession->id,
-            'menu_item_id'          => $this->menuItem->id,
-            'quantity'              => 2,
-            'shared_order_ids'             => [$draft->id],
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 2,
+            'shared_order_ids' => [$draft->id],
         ]);
 
         $response = $this->withHeaders($this->headers)
@@ -239,19 +244,19 @@ class TableCartTest extends TestCase
     {
         $item = CartItem::create([
             'table_scan_session_id' => $this->session->id,
-            'menu_item_id'          => $this->menuItem->id,
-            'quantity'              => 1,
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 1,
         ]);
         $item->forceFill(['created_at' => now()->subMinute()])->save();
 
         $order = Order::create([
-            'order_public_id'       => 'ord-confirmed-cart-hidden',
-            'customer_id'           => $this->customer->id,
-            'vendor_id'             => $this->vendor->id,
+            'order_public_id' => 'ord-confirmed-cart-hidden',
+            'customer_id' => $this->customer->id,
+            'vendor_id' => $this->vendor->id,
             'table_scan_session_id' => $this->session->id,
-            'status'                => 'confirmed',
-            'amount'                => 3.50,
-            'currency'              => 'EUR',
+            'status' => 'confirmed',
+            'amount' => 3.50,
+            'currency' => 'EUR',
         ]);
         $item->update(['order_id' => $order->id]);
 
@@ -294,8 +299,8 @@ class TableCartTest extends TestCase
         $response = $this->withHeaders($this->headers)
             ->postJson('/api/customer/cart/items', [
                 'menu_item_id' => $this->menuItem->id,
-                'quantity'     => 2,
-                'notes'        => 'No salt',
+                'quantity' => 2,
+                'notes' => 'No salt',
             ]);
 
         $response->assertCreated()
@@ -310,8 +315,8 @@ class TableCartTest extends TestCase
 
         $this->assertDatabaseHas('cart_items', [
             'table_scan_session_id' => $this->session->id,
-            'menu_item_id'          => $this->menuItem->id,
-            'quantity'              => 2,
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 2,
         ]);
     }
 
@@ -441,7 +446,7 @@ class TableCartTest extends TestCase
         $otherCategory = MenuCategory::create([
             'vendor_id' => $otherVendor->id,
             'name' => 'Other Sides',
-            'slug' => 'other-sides-' . $otherVendor->id,
+            'slug' => 'other-sides-'.$otherVendor->id,
         ]);
         $otherItem = MenuItem::create([
             'vendor_id' => $otherVendor->id,
@@ -508,8 +513,8 @@ class TableCartTest extends TestCase
     {
         $item = CartItem::create([
             'table_scan_session_id' => $this->session->id,
-            'menu_item_id'          => $this->menuItem->id,
-            'quantity'              => 1,
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 1,
         ]);
 
         $this->withHeaders($this->headers)
@@ -523,18 +528,18 @@ class TableCartTest extends TestCase
     {
         $other = Customer::factory()->create();
         $otherSession = TableScanSession::create([
-            'vendor_id'           => $this->vendor->id,
+            'vendor_id' => $this->vendor->id,
             'restaurant_table_id' => $this->table->id,
-            'customer_id'         => $other->id,
-            'pin'                 => '',
-            'status'              => 'active',
-            'scanned_at'          => now(),
+            'customer_id' => $other->id,
+            'pin' => '',
+            'status' => 'active',
+            'scanned_at' => now(),
         ]);
 
         $item = CartItem::create([
             'table_scan_session_id' => $otherSession->id,
-            'menu_item_id'          => $this->menuItem->id,
-            'quantity'              => 1,
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 1,
         ]);
 
         $this->withHeaders($this->headers)
@@ -550,8 +555,8 @@ class TableCartTest extends TestCase
     {
         $item = CartItem::create([
             'table_scan_session_id' => $this->session->id,
-            'menu_item_id'          => $this->menuItem->id,
-            'quantity'              => 1,
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 1,
         ]);
 
         $this->withHeaders($this->headers)
@@ -565,18 +570,18 @@ class TableCartTest extends TestCase
     {
         $other = Customer::factory()->create();
         $otherSession = TableScanSession::create([
-            'vendor_id'           => $this->vendor->id,
+            'vendor_id' => $this->vendor->id,
             'restaurant_table_id' => $this->table->id,
-            'customer_id'         => $other->id,
-            'pin'                 => '',
-            'status'              => 'active',
-            'scanned_at'          => now(),
+            'customer_id' => $other->id,
+            'pin' => '',
+            'status' => 'active',
+            'scanned_at' => now(),
         ]);
 
         $item = CartItem::create([
             'table_scan_session_id' => $otherSession->id,
-            'menu_item_id'          => $this->menuItem->id,
-            'quantity'              => 1,
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 1,
         ]);
 
         $this->withHeaders($this->headers)
@@ -588,8 +593,8 @@ class TableCartTest extends TestCase
     {
         CartItem::create([
             'table_scan_session_id' => $this->session->id,
-            'menu_item_id'          => $this->menuItem->id,
-            'quantity'              => 1,
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 1,
         ]);
 
         $response = $this->withHeaders($this->headers)
@@ -675,42 +680,48 @@ class TableCartTest extends TestCase
 
     public function test_table_history_items_include_status_from_preparation_timestamps(): void
     {
+        VendorSetting::factory()->create([
+            'vendor_id' => $this->vendor->id,
+            'date_format' => 'MM/DD/YYYY',
+            'time_format' => '12h',
+        ]);
+
         $new = CartItem::create([
             'table_scan_session_id' => $this->session->id,
-            'menu_item_id'          => $this->menuItem->id,
-            'quantity'              => 1,
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 1,
         ]);
         $preparing = CartItem::create([
             'table_scan_session_id' => $this->session->id,
-            'menu_item_id'          => $this->menuItem->id,
-            'quantity'              => 1,
-            'preparing_start_at'    => now(),
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 1,
+            'preparing_start_at' => now(),
         ]);
         $ready = CartItem::create([
             'table_scan_session_id' => $this->session->id,
-            'menu_item_id'          => $this->menuItem->id,
-            'quantity'              => 1,
-            'preparing_start_at'    => now()->subMinutes(5),
-            'ready_at'              => now(),
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 1,
+            'preparing_start_at' => now()->subMinutes(5),
+            'ready_at' => now(),
         ]);
         $served = CartItem::create([
             'table_scan_session_id' => $this->session->id,
-            'menu_item_id'          => $this->menuItem->id,
-            'quantity'              => 1,
-            'preparing_start_at'    => now()->subMinutes(10),
-            'ready_at'              => now()->subMinutes(5),
-            'served_at'             => now(),
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 1,
+            'preparing_start_at' => now()->subMinutes(10),
+            'ready_at' => now()->subMinutes(5),
+            'served_at' => now(),
         ]);
 
         $order = Order::create([
-            'order_public_id'       => 'ord-status-test',
-            'customer_id'           => $this->customer->id,
-            'vendor_id'             => $this->vendor->id,
+            'order_public_id' => 'ord-status-test',
+            'customer_id' => $this->customer->id,
+            'vendor_id' => $this->vendor->id,
             'table_scan_session_id' => $this->session->id,
-            'status'                => 'confirmed',
-            'amount'                => 10,
-            'currency'              => 'EUR',
-            'order_type'            => 'dine-in',
+            'status' => 'confirmed',
+            'amount' => 10,
+            'currency' => 'EUR',
+            'order_type' => 'dine-in',
         ]);
         CartItem::whereIn('id', [$new->id, $preparing->id, $ready->id, $served->id])
             ->update(['order_id' => $order->id]);
@@ -726,45 +737,45 @@ class TableCartTest extends TestCase
         $this->assertSame('Preparing', $items[$preparing->id]['status']);
         $this->assertSame('Ready', $items[$ready->id]['status']);
         $this->assertSame('Served', $items[$served->id]['status']);
-        $this->assertSame($served->fresh()->served_at->toIso8601String(), $items[$served->id]['served_at']);
+        $this->assertSame($served->fresh()->served_at->copy()->setTimezone($this->vendor->resolveTimezone())->format('m/d/Y g:i A'), $items[$served->id]['served_at']);
     }
 
     public function test_table_history_returns_all_orders_for_active_table_session(): void
     {
         $firstItem = CartItem::create([
             'table_scan_session_id' => $this->session->id,
-            'menu_item_id'          => $this->menuItem->id,
-            'quantity'              => 1,
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 1,
         ]);
         $secondItem = CartItem::create([
             'table_scan_session_id' => $this->session->id,
-            'menu_item_id'          => $this->menuItem->id,
-            'quantity'              => 2,
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 2,
         ]);
 
         $firstOrder = Order::create([
-            'order_public_id'       => 'ord-history-first',
-            'customer_id'           => $this->customer->id,
-            'vendor_id'             => $this->vendor->id,
+            'order_public_id' => 'ord-history-first',
+            'customer_id' => $this->customer->id,
+            'vendor_id' => $this->vendor->id,
             'table_scan_session_id' => $this->session->id,
-            'status'                => 'completed',
-            'amount'                => 3.50,
-            'currency'              => 'EUR',
-            'order_type'            => 'dine-in',
-            'created_at'            => now()->subMinute(),
-            'updated_at'            => now()->subMinute(),
+            'status' => 'completed',
+            'amount' => 3.50,
+            'currency' => 'EUR',
+            'order_type' => 'dine-in',
+            'created_at' => now()->subMinute(),
+            'updated_at' => now()->subMinute(),
         ]);
         $secondOrder = Order::create([
-            'order_public_id'       => 'ord-history-second',
-            'customer_id'           => $this->customer->id,
-            'vendor_id'             => $this->vendor->id,
+            'order_public_id' => 'ord-history-second',
+            'customer_id' => $this->customer->id,
+            'vendor_id' => $this->vendor->id,
             'table_scan_session_id' => $this->session->id,
-            'status'                => 'confirmed',
-            'amount'                => 7,
-            'currency'              => 'EUR',
-            'order_type'            => 'dine-in',
-            'created_at'            => now(),
-            'updated_at'            => now(),
+            'status' => 'confirmed',
+            'amount' => 7,
+            'currency' => 'EUR',
+            'order_type' => 'dine-in',
+            'created_at' => now(),
+            'updated_at' => now(),
         ]);
 
         $firstItem->update(['order_id' => $firstOrder->id]);
@@ -789,14 +800,14 @@ class TableCartTest extends TestCase
     {
         $item = CartItem::create([
             'table_scan_session_id' => $this->session->id,
-            'menu_item_id'          => $this->menuItem->id,
-            'quantity'              => 2,
-            'paid_addons'           => [
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 2,
+            'paid_addons' => [
                 ['name' => 'Cheese sauce', 'price' => 1.50],
             ],
-            'free_addons'           => ['Ketchup'],
-            'removed_items'         => ['Salt'],
-            'selected_modifiers'    => [
+            'free_addons' => ['Ketchup'],
+            'removed_items' => ['Salt'],
+            'selected_modifiers' => [
                 [
                     'modifier_group_id' => 1,
                     'name' => 'Choose your side',
@@ -812,14 +823,14 @@ class TableCartTest extends TestCase
         ]);
 
         $order = Order::create([
-            'order_public_id'       => 'ord-history-customizations',
-            'customer_id'           => $this->customer->id,
-            'vendor_id'             => $this->vendor->id,
+            'order_public_id' => 'ord-history-customizations',
+            'customer_id' => $this->customer->id,
+            'vendor_id' => $this->vendor->id,
             'table_scan_session_id' => $this->session->id,
-            'status'                => 'confirmed',
-            'amount'                => 10,
-            'currency'              => 'EUR',
-            'order_type'            => 'dine-in',
+            'status' => 'confirmed',
+            'amount' => 10,
+            'currency' => 'EUR',
+            'order_type' => 'dine-in',
         ]);
         $item->update(['order_id' => $order->id]);
 
@@ -848,27 +859,29 @@ class TableCartTest extends TestCase
         VendorSetting::factory()->create([
             'vendor_id' => $this->vendor->id,
             'estimated_prep_time' => 30,
+            'date_format' => 'MM/DD/YYYY',
+            'time_format' => '12h',
         ]);
 
         CartItem::create([
             'table_scan_session_id' => $this->session->id,
-            'menu_item_id'          => $this->menuItem->id,
-            'quantity'              => 2,
-            'notes'                 => 'No salt',
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 2,
+            'notes' => 'No salt',
         ]);
 
         $order = Order::create([
-            'order_public_id'       => 'ord-tracking-default',
-            'customer_id'           => $this->customer->id,
-            'vendor_id'             => $this->vendor->id,
+            'order_public_id' => 'ord-tracking-default',
+            'customer_id' => $this->customer->id,
+            'vendor_id' => $this->vendor->id,
             'table_scan_session_id' => $this->session->id,
-            'status'                => 'draft',
-            'amount'                => 7,
-            'currency'              => 'EUR',
-            'order_number'          => 1001,
-            'order_type'            => 'dine-in',
-            'payment_pending'       => true,
-            'payment_received'      => false,
+            'status' => 'draft',
+            'amount' => 7,
+            'currency' => 'EUR',
+            'order_number' => 1001,
+            'order_type' => 'dine-in',
+            'payment_pending' => true,
+            'payment_received' => false,
         ]);
 
         $response = $this->withHeaders($this->headers)
@@ -891,7 +904,7 @@ class TableCartTest extends TestCase
             ->assertJsonPath('shared_items', []);
 
         $this->assertSame(
-            $order->created_at->copy()->addMinutes(30)->toIso8601String(),
+            $order->created_at->copy()->addMinutes(30)->setTimezone($this->vendor->resolveTimezone())->format('m/d/Y g:i A'),
             $response->json('estimated_delivery_time')
         );
     }
@@ -900,57 +913,57 @@ class TableCartTest extends TestCase
     {
         $other = Customer::factory()->create(['first_name' => 'Bob', 'last_name' => 'Jones']);
         $otherSession = TableScanSession::create([
-            'vendor_id'           => $this->vendor->id,
+            'vendor_id' => $this->vendor->id,
             'restaurant_table_id' => $this->table->id,
-            'customer_id'         => $other->id,
-            'pin'                 => '',
-            'status'              => 'active',
-            'scanned_at'          => now(),
+            'customer_id' => $other->id,
+            'pin' => '',
+            'status' => 'active',
+            'scanned_at' => now(),
         ]);
 
         $pizza = MenuItem::create([
-            'vendor_id'        => $this->vendor->id,
+            'vendor_id' => $this->vendor->id,
             'menu_category_id' => $this->menuItem->menu_category_id,
-            'name'             => 'Pizza',
-            'price'            => 18.99,
+            'name' => 'Pizza',
+            'price' => 18.99,
         ]);
 
         $order = Order::create([
-            'order_public_id'       => 'ord-tracking-shared',
-            'customer_id'           => $this->customer->id,
-            'vendor_id'             => $this->vendor->id,
+            'order_public_id' => 'ord-tracking-shared',
+            'customer_id' => $this->customer->id,
+            'vendor_id' => $this->vendor->id,
             'table_scan_session_id' => $this->session->id,
-            'status'                => 'confirmed',
-            'amount'                => 25.99,
-            'currency'              => 'EUR',
-            'order_type'            => 'dine-in',
+            'status' => 'confirmed',
+            'amount' => 25.99,
+            'currency' => 'EUR',
+            'order_type' => 'dine-in',
         ]);
 
         $otherOrder = Order::create([
-            'order_public_id'       => 'ord-bob-shared',
-            'customer_id'           => $other->id,
-            'vendor_id'             => $this->vendor->id,
+            'order_public_id' => 'ord-bob-shared',
+            'customer_id' => $other->id,
+            'vendor_id' => $this->vendor->id,
             'table_scan_session_id' => $otherSession->id,
-            'status'                => 'confirmed',
-            'amount'                => 9.50,
-            'currency'              => 'EUR',
-            'order_type'            => 'dine-in',
+            'status' => 'confirmed',
+            'amount' => 9.50,
+            'currency' => 'EUR',
+            'order_type' => 'dine-in',
         ]);
 
         $ownedShared = CartItem::create([
             'table_scan_session_id' => $this->session->id,
-            'menu_item_id'          => $this->menuItem->id,
-            'order_id'              => $order->id,
-            'quantity'              => 2,
-            'shared_order_ids'             => [$otherOrder->id],
-            'preparing_start_at'    => now(),
+            'menu_item_id' => $this->menuItem->id,
+            'order_id' => $order->id,
+            'quantity' => 2,
+            'shared_order_ids' => [$otherOrder->id],
+            'preparing_start_at' => now(),
         ]);
 
         $sharedInto = CartItem::create([
             'table_scan_session_id' => $otherSession->id,
-            'menu_item_id'          => $pizza->id,
-            'quantity'              => 1,
-            'shared_order_ids'             => [$order->id],
+            'menu_item_id' => $pizza->id,
+            'quantity' => 1,
+            'shared_order_ids' => [$order->id],
         ]);
 
         $response = $this->withHeaders($this->headers)

@@ -5,11 +5,14 @@ namespace App\Http\Controllers\Api\Customer;
 use App\Http\Controllers\Controller;
 use App\Models\MenuCategory;
 use App\Models\Vendor;
+use App\Services\VendorDateTimeService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class FavoriteController extends Controller
 {
+    public function __construct(private readonly VendorDateTimeService $dateTimes) {}
+
     /**
      * Get all favorite restaurants.
      */
@@ -18,7 +21,8 @@ class FavoriteController extends Controller
         $favorites = $request->user()
             ->favorites()
             ->with([
-                'vendorSetting:id,vendor_id,logo_url,cover_photo_url,description,business_hours',
+                'vendorSetting:id,vendor_id,logo_url,cover_photo_url,description,business_hours,date_format,time_format',
+                'countryRecord:id,code,currency,timezone',
                 'menuCategories' => fn ($query) => $query
                     ->where('is_active', true)
                     ->with('masterCategory'),
@@ -27,13 +31,10 @@ class FavoriteController extends Controller
             ->withCount('reviews')
             ->get([
                 'vendors.id', 'vendor_public_id', 'restaurant_name', 'slug',
-                'city', 'address',
+                'city', 'address', 'country',
             ]);
 
-        $dayKey = strtolower(now()->format('l'));
-        $now = now()->format('H:i');
-
-        $payload = $favorites->map(function ($vendor) use ($dayKey, $now) {
+        $payload = $favorites->map(function ($vendor) {
             $setting = $vendor->vendorSetting;
 
             $isOpen = false;
@@ -41,11 +42,14 @@ class FavoriteController extends Controller
             if (is_string($businessHours)) {
                 $businessHours = json_decode($businessHours, true) ?: [];
             }
+            $vendorNow = $this->dateTimes->vendorNow($vendor);
+            $dayKey = strtolower($vendorNow->format('l'));
             if (isset($businessHours[$dayKey]) && ! ($businessHours[$dayKey]['closed'] ?? false)) {
                 $open = $businessHours[$dayKey]['open'] ?? null;
                 $close = $businessHours[$dayKey]['close'] ?? null;
                 if ($open && $close) {
-                    $isOpen = $now >= $open && $now <= $close;
+                    $localTime = $vendorNow->format('H:i');
+                    $isOpen = $localTime >= $open && $localTime <= $close;
                 }
             }
 
@@ -62,7 +66,7 @@ class FavoriteController extends Controller
                 'review_count' => $vendor->reviews_count ?? 0,
                 'is_open' => $isOpen,
                 'status' => $isOpen ? 'Open' : 'Closed',
-                'business_hours' => $businessHours ?: null,
+                'business_hours' => $this->dateTimes->formatBusinessHours($businessHours, $vendor),
                 'cuisines' => $vendor->menuCategories
                     ->map(fn (MenuCategory $category) => $category->display_name)
                     ->unique()

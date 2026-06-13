@@ -173,6 +173,32 @@ class VendorSettingsTest extends TestCase
             ]);
     }
 
+    public function test_can_update_supported_date_and_time_formats(): void
+    {
+        $this->putJson(
+            "/api/vendor/{$this->vendor->vendor_public_id}/settings",
+            [
+                'dateFormat' => 'MM/DD/YYYY',
+                'timeFormat' => '12h',
+            ],
+            $this->authHeaders()
+        )
+            ->assertOk()
+            ->assertJsonPath('dateFormat', 'MM/DD/YYYY')
+            ->assertJsonPath('timeFormat', '12h');
+
+        $this->putJson(
+            "/api/vendor/{$this->vendor->vendor_public_id}/settings",
+            [
+                'dateFormat' => 'unsupported',
+                'timeFormat' => '25h',
+            ],
+            $this->authHeaders()
+        )
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['dateFormat', 'timeFormat']);
+    }
+
     public function test_language_settings_keep_english_enabled_without_a_vendor_default(): void
     {
         $response = $this->putJson(

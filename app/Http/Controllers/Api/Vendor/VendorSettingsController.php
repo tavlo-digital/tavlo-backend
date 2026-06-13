@@ -11,6 +11,7 @@ use App\Services\MediaService;
 use App\Services\VendorMediaService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 
 class VendorSettingsController extends Controller
 {
@@ -131,8 +132,8 @@ class VendorSettingsController extends Controller
             'menuLayout' => ['sometimes', 'nullable', 'string', 'max:50'],
             'backgroundImageUrl' => ['sometimes', 'nullable', 'string', 'max:500'],
             // date / time formatting
-            'dateFormat' => ['sometimes', 'nullable', 'string', 'max:20'],
-            'timeFormat' => ['sometimes', 'nullable', 'string', 'max:5'],
+            'dateFormat' => ['sometimes', 'nullable', Rule::in(['DD.MM.YYYY', 'MM/DD/YYYY', 'YYYY-MM-DD'])],
+            'timeFormat' => ['sometimes', 'nullable', Rule::in(['24h', '12h'])],
             // data retention
             'dataRetentionDays' => ['sometimes', 'nullable', 'integer', 'min:0'],
             // about page

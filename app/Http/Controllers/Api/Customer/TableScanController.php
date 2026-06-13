@@ -11,6 +11,7 @@ use App\Models\TableScanSession;
 use App\Models\TeamMember;
 use App\Models\Vendor;
 use App\Services\NotificationService;
+use App\Services\VendorDateTimeService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -18,6 +19,8 @@ use Illuminate\Support\Facades\Validator;
 
 class TableScanController extends Controller
 {
+    public function __construct(private readonly VendorDateTimeService $dateTimes) {}
+
     /**
      * GET /api/customer/table/status?token={qr_token}
      * Authenticated customer endpoint. Checks table availability before the customer starts/join a scan session.
@@ -53,19 +56,19 @@ class TableScanController extends Controller
         }
 
         return response()->json([
-            'table'  => $this->tablePayload($table),
+            'table' => $this->tablePayload($table),
             'vendor' => $this->statusVendorPayload($table->vendor),
             'status' => $status,
         ]);
     }
 
     /**
-    * POST /api/customer/table/scan
+     * POST /api/customer/table/scan
      * Authenticated customer endpoint. Customer's app posts the QR token after scanning.
      *
-    * Body: either
-    *  - plain-text token string (Content-Type: text/plain)
-    *  - JSON: { "token": "<qr_token>" } (backwards compatible)
+     * Body: either
+     *  - plain-text token string (Content-Type: text/plain)
+     *  - JSON: { "token": "<qr_token>" } (backwards compatible)
      *
      * Behavior:
      *  - Resolve the table by qr_token.
@@ -86,7 +89,7 @@ class TableScanController extends Controller
             ], 410);
         }
 
-        $vendor   = $table->vendor;
+        $vendor = $table->vendor;
         $customer = $request->user();
 
         $result = DB::transaction(function () use ($table, $vendor, $customer) {
@@ -117,12 +120,12 @@ class TableScanController extends Controller
             $table->update(['last_scanned_at' => now()]);
 
             $session = TableScanSession::create([
-                'vendor_id'           => $vendor->id,
+                'vendor_id' => $vendor->id,
                 'restaurant_table_id' => $table->id,
-                'customer_id'         => $customer->id,
-                'pin'                 => TableScanSession::generateUniquePin(),
-                'status'              => 'active',
-                'scanned_at'          => now(),
+                'customer_id' => $customer->id,
+                'pin' => TableScanSession::generateUniquePin(),
+                'status' => 'active',
+                'scanned_at' => now(),
             ]);
 
             return ['created' => $session];
@@ -133,8 +136,8 @@ class TableScanController extends Controller
             $session = $result['customer_session'];
 
             return response()->json($this->sessionResponsePayload($session, $table, $vendor, [
-                'message'     => 'Table session was already started',
-                'status'      => 'active',
+                'message' => 'Table session was already started',
+                'status' => 'active',
                 'requiresPin' => false,
             ]), 201);
         }
@@ -144,10 +147,10 @@ class TableScanController extends Controller
             $existing = $result['existing'];
 
             return response()->json($this->sessionResponsePayload($existing, $table, $vendor, [
-                'message'     => 'This table already has an active session',
-                'status'      => 'active',
+                'message' => 'This table already has an active session',
+                'status' => 'active',
                 'requiresPin' => true,
-                'pin'         => null,
+                'pin' => null,
             ]), 409);
         }
 
@@ -155,8 +158,8 @@ class TableScanController extends Controller
         $session = $result['created'];
 
         return response()->json($this->sessionResponsePayload($session, $table, $vendor, [
-            'message'     => 'Table session started',
-            'status'      => 'active',
+            'message' => 'Table session started',
+            'status' => 'active',
             'requiresPin' => false,
         ]), 201);
     }
@@ -169,7 +172,7 @@ class TableScanController extends Controller
     {
         $data = Validator::make($request->all(), [
             'token' => ['required', 'string'],
-            'pin'   => ['required', 'string', 'size:4'],
+            'pin' => ['required', 'string', 'size:4'],
         ])->validate();
 
         $table = $this->findActiveTableByToken($data['token']);
@@ -214,12 +217,12 @@ class TableScanController extends Controller
             $table->update(['last_scanned_at' => now()]);
 
             $session = TableScanSession::create([
-                'vendor_id'           => $vendor->id,
+                'vendor_id' => $vendor->id,
                 'restaurant_table_id' => $table->id,
-                'customer_id'         => $customer->id,
-                'pin'                 => $data['pin'],
-                'status'              => 'active',
-                'scanned_at'          => now(),
+                'customer_id' => $customer->id,
+                'pin' => $data['pin'],
+                'status' => 'active',
+                'scanned_at' => now(),
             ]);
 
             return ['created' => $session];
@@ -236,8 +239,8 @@ class TableScanController extends Controller
             $session = $result['existing_customer_session'];
 
             return response()->json($this->sessionResponsePayload($session, $table, $vendor, [
-                'message'     => 'Already joined this table session',
-                'status'      => 'active',
+                'message' => 'Already joined this table session',
+                'status' => 'active',
                 'requiresPin' => false,
             ]), 200);
         }
@@ -245,12 +248,12 @@ class TableScanController extends Controller
         /** @var \App\Models\TableScanSession $session */
         $session = $result['created'];
 
-        $customerName = trim(($customer->first_name ?? '') . ' ' . ($customer->last_name ?? '')) ?: 'A guest';
+        $customerName = trim(($customer->first_name ?? '').' '.($customer->last_name ?? '')) ?: 'A guest';
         NotificationService::notifyTableCustomers($table->id, 'participant_added', "{$customerName} has joined the table.");
 
         return response()->json($this->sessionResponsePayload($session, $table, $vendor, [
-            'message'     => 'Joined table session',
-            'status'      => 'active',
+            'message' => 'Joined table session',
+            'status' => 'active',
             'requiresPin' => false,
         ]), 201);
     }
@@ -265,7 +268,7 @@ class TableScanController extends Controller
     {
         $data = Validator::make($request->all(), [
             'vendor_public_id' => ['sometimes', 'string'],
-            'table_id'         => ['required', 'integer'],
+            'table_id' => ['required', 'integer'],
         ])->validate();
 
         $customer = $request->user();
@@ -315,14 +318,21 @@ class TableScanController extends Controller
 
         $customerIds = $allSessions->pluck('customer_id')->filter()->unique();
 
+        $closedAt = now();
+
         TableScanSession::query()
             ->whereIn('id', $sessionIds)
             ->update([
-                'status'    => 'closed',
-                'closed_at' => now(),
+                'status' => 'closed',
+                'closed_at' => $closedAt,
             ]);
 
-        NotificationService::notifyCustomers($customerIds, 'session_expire', 'Your table session has been closed.');
+        NotificationService::notifyCustomers(
+            $customerIds,
+            'session_expire',
+            'Your table session has been closed.',
+            $allSessions->first()?->vendor_id,
+        );
 
         $referenceSession = $customerSession ?? $allSessions->first();
         $table = $referenceSession->restaurantTable;
@@ -330,14 +340,14 @@ class TableScanController extends Controller
 
         return response()->json([
             'message' => 'Table session closed',
-            'status'  => 'closed',
+            'status' => 'closed',
             'session' => [
-                'id'        => (string) $referenceSession->id,
-                'status'    => 'closed',
-                'scannedAt' => $referenceSession->scanned_at?->toIso8601String(),
-                'closedAt'  => now()->toIso8601String(),
+                'id' => (string) $referenceSession->id,
+                'status' => 'closed',
+                'scannedAt' => $this->dateTimes->formatDateTime($referenceSession->scanned_at, $vendorLoaded),
+                'closedAt' => $this->dateTimes->formatDateTime($closedAt, $vendorLoaded),
             ],
-            'table'  => $table        ? $this->tablePayload($table)         : null,
+            'table' => $table ? $this->tablePayload($table) : null,
             'vendor' => $vendorLoaded ? $this->vendorPayload($vendorLoaded) : null,
         ], 200);
     }
@@ -378,10 +388,10 @@ class TableScanController extends Controller
         }
 
         $rows = $waiterIds->map(fn (int $id) => [
-            'waiter_id'  => $id,
-            'event'      => 'table_call',
-            'message'    => "Table {$tableLabel} is calling.",
-            'read'       => false,
+            'waiter_id' => $id,
+            'event' => 'table_call',
+            'message' => "Table {$tableLabel} is calling.",
+            'read' => false,
             'created_at' => now(),
             'updated_at' => now(),
         ])->all();
@@ -438,16 +448,16 @@ class TableScanController extends Controller
         $hasPin = $session->pin !== '';
 
         $base = [
-            'message'     => $extras['message']     ?? 'Table session is active',
-            'status'      => $extras['status']      ?? 'active',
+            'message' => $extras['message'] ?? 'Table session is active',
+            'status' => $extras['status'] ?? 'active',
             'requiresPin' => $extras['requiresPin'] ?? $hasPin,
-            'pin'         => array_key_exists('pin', $extras) ? $extras['pin'] : ($hasPin ? $session->pin : null),
-            'session'     => [
-                'id'        => (string) $session->id,
-                'status'    => $session->status,
-                'scannedAt' => $session->scanned_at?->toIso8601String(),
+            'pin' => array_key_exists('pin', $extras) ? $extras['pin'] : ($hasPin ? $session->pin : null),
+            'session' => [
+                'id' => (string) $session->id,
+                'status' => $session->status,
+                'scannedAt' => $this->dateTimes->formatDateTime($session->scanned_at, $vendor),
             ],
-            'table'  => $this->tablePayload($table),
+            'table' => $this->tablePayload($table),
             'vendor' => $this->vendorPayload($vendor),
         ];
 
@@ -457,17 +467,17 @@ class TableScanController extends Controller
     private function tablePayload(RestaurantTable $table): array
     {
         return [
-            'id'     => (string) $table->id,
+            'id' => (string) $table->id,
             'number' => $table->number,
-            'name'   => $table->name,
+            'name' => $table->name,
         ];
     }
 
     private function vendorPayload(mixed $vendor): array
     {
         return [
-            'id'       => $vendor->vendor_public_id ?? (string) $vendor->id,
-            'name'     => $vendor->name,
+            'id' => $vendor->vendor_public_id ?? (string) $vendor->id,
+            'name' => $vendor->name,
             'currency' => $vendor->currency,
         ];
     }
@@ -475,7 +485,7 @@ class TableScanController extends Controller
     private function statusVendorPayload(mixed $vendor): array
     {
         return [
-            'id'   => $vendor->vendor_public_id ?? (string) $vendor->id,
+            'id' => $vendor->vendor_public_id ?? (string) $vendor->id,
             'name' => $vendor->name,
         ];
     }

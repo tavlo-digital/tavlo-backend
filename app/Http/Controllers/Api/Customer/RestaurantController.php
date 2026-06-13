@@ -13,6 +13,7 @@ use App\Models\Vendor;
 use App\Models\VendorSetting;
 use App\Services\LocaleService;
 use App\Services\TaxCalculationService;
+use App\Services\VendorDateTimeService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
@@ -20,7 +21,10 @@ use Illuminate\Support\Str;
 
 class RestaurantController extends Controller
 {
-    public function __construct(private readonly LocaleService $locales) {}
+    public function __construct(
+        private readonly LocaleService $locales,
+        private readonly VendorDateTimeService $dateTimes,
+    ) {}
 
     /**
      * List all active menu categories across discoverable restaurants.
@@ -51,8 +55,8 @@ class RestaurantController extends Controller
     {
         $query = Vendor::whereHas('vendorSetting', fn ($q) => $q->where('is_live_and_discoverable', true))
             ->with([
-                'vendorSetting:id,vendor_id,logo_url,cover_photo_url,business_hours,enable_reservations,loyalty_enabled,points_per_euro,accept_on_site,stripe_enabled,stripe_account_id,stripe_onboarding_complete',
-                'countryRecord:id,code,currency',
+                'vendorSetting:id,vendor_id,logo_url,cover_photo_url,business_hours,enable_reservations,loyalty_enabled,points_per_euro,accept_on_site,stripe_enabled,stripe_account_id,stripe_onboarding_complete,date_format,time_format',
+                'countryRecord:id,code,currency,timezone',
                 'menuCategories' => fn ($q) => $q->where('is_active', true)->with('masterCategory'),
                 'takeawayQr:id,vendor_id',
             ])
@@ -186,14 +190,16 @@ class RestaurantController extends Controller
             if (is_string($businessHours)) {
                 $businessHours = json_decode($businessHours, true) ?: [];
             }
-            $dayKey = strtolower(now()->format('l'));
+            $vendorNow = $this->dateTimes->vendorNow($vendor);
+            $dayKey = strtolower($vendorNow->format('l'));
             if (isset($businessHours[$dayKey]) && ! ($businessHours[$dayKey]['closed'] ?? false)) {
                 $open = $businessHours[$dayKey]['open'] ?? null;
                 $close = $businessHours[$dayKey]['close'] ?? null;
                 if ($open && $close) {
-                    $todayHours = $open.' – '.$close;
-                    $now = now()->format('H:i');
-                    $isOpen = $now >= $open && $now <= $close;
+                    $todayHours = $this->dateTimes->formatLocalTime($open, $vendor)
+                        .' – '.$this->dateTimes->formatLocalTime($close, $vendor);
+                    $localTime = $vendorNow->format('H:i');
+                    $isOpen = $localTime >= $open && $localTime <= $close;
                 }
             }
 
@@ -214,7 +220,7 @@ class RestaurantController extends Controller
                 'review_count' => $vendor->reviews_count ?? 0,
                 'is_open' => $isOpen,
                 'today_hours' => $todayHours,
-                'business_hours' => $businessHours ?: null,
+                'business_hours' => $this->dateTimes->formatBusinessHours($businessHours, $vendor),
                 'payment_methods' => $this->paymentMethods($setting),
                 'loyalty' => $setting?->loyalty_enabled ? [
                     'enabled' => true,
@@ -241,8 +247,8 @@ class RestaurantController extends Controller
         $vendor = Vendor::where('vendor_public_id', $vendorPublicId)
             ->whereHas('vendorSetting', fn ($q) => $q->where('is_live_and_discoverable', true))
             ->with([
-                'vendorSetting:id,vendor_id,logo_url,cover_photo_url,business_hours,accept_on_site,stripe_enabled,stripe_account_id,stripe_onboarding_complete,enable_reservations,loyalty_enabled,points_per_euro',
-                'countryRecord:id,code,currency',
+                'vendorSetting:id,vendor_id,logo_url,cover_photo_url,business_hours,accept_on_site,stripe_enabled,stripe_account_id,stripe_onboarding_complete,enable_reservations,loyalty_enabled,points_per_euro,date_format,time_format',
+                'countryRecord:id,code,currency,timezone',
                 'menuCategories' => fn ($q) => $q->where('is_active', true)->with('masterCategory'),
                 'takeawayQr:id,vendor_id',
             ])
@@ -264,11 +270,13 @@ class RestaurantController extends Controller
         if (is_string($businessHours)) {
             $businessHours = json_decode($businessHours, true) ?: [];
         }
-        $dayKey = strtolower(now()->format('l')); // e.g. "thursday"
+        $vendorNow = $this->dateTimes->vendorNow($vendor);
+        $dayKey = strtolower($vendorNow->format('l'));
         if (isset($businessHours[$dayKey]) && ! ($businessHours[$dayKey]['closed'] ?? false)) {
-            $todayHours = $businessHours[$dayKey]['open'].' – '.$businessHours[$dayKey]['close'];
-            $now = now()->format('H:i');
-            $isOpen = $now >= $businessHours[$dayKey]['open'] && $now <= $businessHours[$dayKey]['close'];
+            $todayHours = $this->dateTimes->formatLocalTime($businessHours[$dayKey]['open'], $vendor)
+                .' – '.$this->dateTimes->formatLocalTime($businessHours[$dayKey]['close'], $vendor);
+            $localTime = $vendorNow->format('H:i');
+            $isOpen = $localTime >= $businessHours[$dayKey]['open'] && $localTime <= $businessHours[$dayKey]['close'];
         }
 
         // Distance
@@ -304,7 +312,7 @@ class RestaurantController extends Controller
             'review_count' => (int) $vendor->reviews_count,
             'is_open' => $isOpen,
             'today_hours' => $todayHours,
-            'business_hours' => $businessHours ?: null,
+            'business_hours' => $this->dateTimes->formatBusinessHours($businessHours, $vendor),
             'distance_km' => $distanceKm,
             'payment_methods' => $this->paymentMethods($setting),
             'loyalty' => [
@@ -348,7 +356,9 @@ class RestaurantController extends Controller
                 'sort_order' => $category->sort_order,
             ]);
 
-        return response()->json($categories)->header('Content-Language', $locale);
+        return response()->json($categories)
+            ->header('Content-Language', $locale)
+            ->header('Vary', 'Accept-Language');
     }
 
     /**
@@ -468,7 +478,9 @@ class RestaurantController extends Controller
             ];
         });
 
-        return response()->json($data)->header('Content-Language', $locale);
+        return response()->json($data)
+            ->header('Content-Language', $locale)
+            ->header('Vary', 'Accept-Language');
     }
 
     /**
@@ -565,7 +577,9 @@ class RestaurantController extends Controller
                 $item->tax_category ?? 'food',
                 $vendorCountry
             ))->values(),
-        ])->header('Content-Language', $locale);
+        ])
+            ->header('Content-Language', $locale)
+            ->header('Vary', 'Accept-Language');
     }
 
     private function formatModifierGroup(
@@ -827,7 +841,7 @@ class RestaurantController extends Controller
             $reviews->getCollection()->pluck('order')->filter()
         );
 
-        $reviews->getCollection()->transform(function ($review) use ($cartItemsByOrderId) {
+        $reviews->getCollection()->transform(function ($review) use ($cartItemsByOrderId, $vendor) {
             $customer = $review->customer;
             $reviewerName = $customer
                 ? trim(($customer->first_name ?? '').' '.($customer->last_name ?? ''))
@@ -855,14 +869,14 @@ class RestaurantController extends Controller
                 'rating' => $review->rating,
                 'text' => $review->text,
                 'images' => $review->images ?: [],
-                'created_at' => $review->created_at?->toIso8601String(),
+                'created_at' => $this->dateTimes->formatDateTime($review->created_at, $vendor),
                 'reviewer' => [
                     'name' => $reviewerName !== '' ? $reviewerName : 'Anonymous',
                     'profile_picture' => $customer?->profile_picture,
                 ],
                 'menu_items' => $menuItems,
                 'vendor_reply' => $review->vendor_reply,
-                'vendor_replied_at' => $review->vendor_replied_at?->toIso8601String(),
+                'vendor_replied_at' => $this->dateTimes->formatDateTime($review->vendor_replied_at, $vendor),
             ];
         });
 
@@ -1017,7 +1031,7 @@ class RestaurantController extends Controller
             'country' => $vendor->country,
             'latitude' => $vendor->latitude !== null ? (float) $vendor->latitude : null,
             'longitude' => $vendor->longitude !== null ? (float) $vendor->longitude : null,
-            'business_hours' => $businessHours ?: null,
+            'business_hours' => $this->dateTimes->formatBusinessHours($businessHours, $vendor),
             'service_types' => array_values(array_filter([
                 ($vendor->restaurant_tables_count ?? 0) > 0 ? 'dine_in' : null,
                 $vendor->takeawayQr ? 'takeaway' : null,
