@@ -481,6 +481,8 @@ class CartController extends Controller
         }
 
         DB::transaction(function () use ($request, $mySession, $myTotal) {
+            $currency = $mySession->vendor?->currency ?? 'EUR';
+
             Order::create([
                 'order_public_id'       => 'ord-' . Str::random(12),
                 'customer_id'           => $request->user()->id,
@@ -488,7 +490,7 @@ class CartController extends Controller
                 'table_scan_session_id' => $mySession->id,
                 'status'                => 'draft',
                 'amount'                => $myTotal,
-                'currency'              => 'EUR',
+                'currency'              => $currency,
                 'payment_pending'       => true,
                 'payment_received'      => false,
                 'order_type'            => 'dine-in',

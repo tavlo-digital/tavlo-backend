@@ -73,7 +73,6 @@ class VendorSettingsController extends Controller
             // payment
             'acceptOnSite' => ['sometimes', 'nullable', 'boolean'],
             'stripeEnabled' => ['sometimes', 'nullable', 'boolean'],
-            'currency' => ['sometimes', 'nullable', 'string', 'size:3'],
             // tax & receipts
             'serviceFeeRate' => ['sometimes', 'nullable', 'numeric', 'min:0', 'max:100'],
             'invoicePrefix' => ['sometimes', 'nullable', 'string', 'max:20'],
@@ -185,7 +184,6 @@ class VendorSettingsController extends Controller
             'businessHours' => 'business_hours',
             'acceptOnSite' => 'accept_on_site',
             'stripeEnabled' => 'stripe_enabled',
-            'currency' => 'currency',
             'serviceFeeRate' => 'service_fee_rate',
             'invoicePrefix' => 'invoice_prefix',
             'nextInvoiceNumber' => 'next_invoice_number',
@@ -373,40 +371,74 @@ class VendorSettingsController extends Controller
         $vendor = $this->resolveVendor($vendorId);
         $this->authorizeVendor($request, $vendor);
 
-        // Block new submission if one is already pending
-        $hasPending = VendorRequestChange::where('vendor_id', $vendor->id)
+        $pendingChange = VendorRequestChange::where('vendor_id', $vendor->id)
             ->where('status', 'pending')
-            ->exists();
+            ->latest()
+            ->first();
 
-        if ($hasPending) {
-            return response()->json(['message' => 'A legal info change request is already pending review.'], 422);
-        }
+        $presenceRules = $pendingChange
+            ? ['sometimes', 'nullable']
+            : ['required'];
 
         $data = $request->validate([
-            'restaurantName' => ['sometimes', 'string', 'max:255'],
-            'legalEntityName' => ['required', 'string', 'max:255'],
-            'businessRegistrationNumber' => ['required', 'string', 'max:100'],
-            'vatNumber' => ['required', 'string', 'max:50'],
-            'country' => ['sometimes', 'string', 'max:100'],
-            'city' => ['sometimes', 'string', 'max:255'],
-            'address' => ['sometimes', 'string', 'max:500'],
+            'restaurantName' => [...$presenceRules, 'string', 'max:255'],
+            'legalEntityName' => [...$presenceRules, 'string', 'max:255'],
+            'businessRegistrationNumber' => [...$presenceRules, 'string', 'max:100'],
+            'vatNumber' => [...$presenceRules, 'string', 'max:50'],
+            'companyType' => [...$presenceRules, 'string', 'max:50'],
+            'country' => [...$presenceRules, 'string', 'max:100'],
+            'city' => [...$presenceRules, 'string', 'max:255'],
+            'address' => [...$presenceRules, 'string', 'max:500'],
             'vendorNotes' => ['nullable', 'string', 'max:1000'],
         ]);
 
-        VendorRequestChange::create([
+        $changeData = [
             'vendor_id' => $vendor->id,
-            'restaurant_name' => $data['restaurantName'] ?? $vendor->restaurant_name,
-            'legal_entity_name' => $data['legalEntityName'],
-            'business_registration_number' => $data['businessRegistrationNumber'],
-            'vat_number' => $data['vatNumber'],
-            'country' => $data['country'] ?? $vendor->country,
-            'city' => $data['city'] ?? $vendor->city,
-            'address' => $data['address'] ?? $vendor->address,
-            'vendor_notes' => $data['vendorNotes'] ?? null,
+            'restaurant_name' => $data['restaurantName']
+                ?? $pendingChange?->restaurant_name
+                ?? $vendor->restaurant_name,
+            'legal_entity_name' => $data['legalEntityName']
+                ?? $pendingChange?->legal_entity_name
+                ?? $vendor->legal_entity_name,
+            'business_registration_number' => $data['businessRegistrationNumber']
+                ?? $pendingChange?->business_registration_number
+                ?? $vendor->business_registration_number,
+            'vat_number' => $data['vatNumber']
+                ?? $pendingChange?->vat_number
+                ?? $vendor->vat_number,
+            'company_type' => $data['companyType']
+                ?? $pendingChange?->company_type
+                ?? $vendor->vendorSetting?->company_type,
+            'country' => $data['country']
+                ?? $pendingChange?->country
+                ?? $vendor->country,
+            'city' => $data['city']
+                ?? $pendingChange?->city
+                ?? $vendor->city,
+            'address' => $data['address']
+                ?? $pendingChange?->address
+                ?? $vendor->address,
+            'vendor_notes' => $data['vendorNotes']
+                ?? $pendingChange?->vendor_notes,
             'status' => 'pending',
-        ]);
+            'admin_notes' => null,
+            'checked_by' => null,
+            'reviewed_at' => null,
+        ];
 
-        return response()->json(['message' => 'Legal info submitted for approval.'], 201);
+        if ($pendingChange) {
+            $pendingChange->update($changeData);
+
+            return response()->json([
+                'message' => 'Pending legal info updated successfully.',
+            ]);
+        }
+
+        VendorRequestChange::create($changeData);
+
+        return response()->json([
+            'message' => 'Legal info submitted for approval.',
+        ], 201);
     }
 
     /**
@@ -427,6 +459,17 @@ class VendorSettingsController extends Controller
         return response()->json([
             'id' => $latest->id,
             'status' => $latest->status,
+            'legalInfo' => [
+                'restaurantName' => $latest->restaurant_name,
+                'legalEntityName' => $latest->legal_entity_name,
+                'businessRegistrationNumber' => $latest->business_registration_number,
+                'vatNumber' => $latest->vat_number,
+                'companyType' => $latest->company_type
+                    ?? $vendor->vendorSetting?->company_type,
+                'country' => $latest->country,
+                'city' => $latest->city,
+                'address' => $latest->address,
+            ],
             'adminNotes' => $latest->admin_notes,
             'vendorNotes' => $latest->vendor_notes,
             'reviewedAt' => $latest->reviewed_at?->toISOString(),
@@ -561,7 +604,7 @@ class VendorSettingsController extends Controller
             'stripeEnabled' => (bool) $settings->stripe_enabled,
             'stripeAccountId' => $settings->stripe_account_id,
             'stripeOnboardingComplete' => (bool) $settings->stripe_onboarding_complete,
-            'currency' => $settings->currency ?? 'EUR',
+            'currency' => $vendor->currency,
             // tax & receipts
             'serviceFeeRate' => (float) ($settings->service_fee_rate ?? 0),
             'invoicePrefix' => $settings->invoice_prefix ?? 'INV',
@@ -643,6 +686,7 @@ class VendorSettingsController extends Controller
     {
         return Vendor::where('vendor_public_id', $vendorId)
             ->orWhere('id', $vendorId)
+            ->with('countryRecord')
             ->firstOrFail();
     }
 

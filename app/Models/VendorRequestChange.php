@@ -12,6 +12,7 @@ class VendorRequestChange extends Model
         'legal_entity_name',
         'business_registration_number',
         'vat_number',
+        'company_type',
         'country',
         'city',
         'address',

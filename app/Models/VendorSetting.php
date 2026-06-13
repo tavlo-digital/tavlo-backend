@@ -20,7 +20,6 @@ class VendorSetting extends Model
         'business_hours',
         'accept_on_site',
         'stripe_enabled',
-        'currency',
         'service_fee_rate',
         'invoice_prefix',
         'next_invoice_number',

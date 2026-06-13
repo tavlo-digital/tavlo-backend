@@ -148,7 +148,7 @@ class VendorController extends Controller
         $vendor = Vendor::where('slug', $vendorSlug)->firstOrFail();
         $change = VendorRequestChange::where('vendor_id', $vendor->id)
             ->where('id', $changeId)
-            ->where('status', false)
+            ->where('status', 'pending')
             ->firstOrFail();
 
         $fieldMap = [
@@ -163,9 +163,18 @@ class VendorController extends Controller
         }
 
         $vendor->save();
+
+        if ($change->company_type !== null) {
+            $vendor->vendorSetting()->updateOrCreate(
+                ['vendor_id' => $vendor->id],
+                ['company_type' => $change->company_type]
+            );
+        }
+
         $change->update([
-            'status' => true,
+            'status' => 'approved',
             'checked_by' => auth()->id(),
+            'reviewed_at' => now(),
         ]);
 
         return redirect()->back()->with('success', 'Changes approved successfully.');
@@ -176,13 +185,14 @@ class VendorController extends Controller
         $vendor = Vendor::where('slug', $vendorSlug)->firstOrFail();
         $change = VendorRequestChange::where('vendor_id', $vendor->id)
             ->where('id', $changeId)
-            ->where('status', false)
+            ->where('status', 'pending')
             ->firstOrFail();
 
         $change->update([
-            'status' => true,
+            'status' => 'rejected',
             'checked_by' => auth()->id(),
             'admin_notes' => $request->input('admin_notes', 'Declined'),
+            'reviewed_at' => now(),
         ]);
 
         return redirect()->back()->with('success', 'Changes declined.');
@@ -214,6 +224,7 @@ class VendorController extends Controller
             'restaurant_name' => ['label' => 'Restaurant Name', 'impact' => 'Will update restaurant name on all invoices, receipts, and customer-facing pages'],
             'business_registration_number' => ['label' => 'Business Registration Number', 'impact' => 'Must match official business registry - will affect tax compliance'],
             'vat_number' => ['label' => 'VAT Number', 'impact' => 'Critical for Austrian VAT compliance - invoices may be rejected if incorrect'],
+            'company_type' => ['label' => 'Company Type', 'impact' => 'Company type shown on legal and tax records will be updated'],
             'legal_entity_name' => ['label' => 'Legal Entity Name', 'impact' => 'Legal entity on all invoices will be updated'],
             'address' => ['label' => 'Legal Address', 'impact' => 'Must match official business registry'],
             'city' => ['label' => 'City', 'impact' => 'Address update on all documents'],
@@ -221,7 +232,7 @@ class VendorController extends Controller
         ];
 
         return $vendor->requestChanges()
-            ->where('status', false)
+            ->where('status', 'pending')
             ->latest()
             ->get()
             ->map(function ($change) use ($vendor, $fieldMap) {
@@ -230,7 +241,9 @@ class VendorController extends Controller
                     if ($change->$column !== null) {
                         $fields[] = [
                             'field' => $meta['label'],
-                            'current' => $vendor->$column ?? 'Not set',
+                            'current' => $column === 'company_type'
+                                ? ($vendor->vendorSetting?->company_type ?? 'Not set')
+                                : ($vendor->$column ?? 'Not set'),
                             'newValue' => $change->$column,
                             'impact' => $meta['impact'],
                         ];

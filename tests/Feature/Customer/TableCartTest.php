@@ -847,7 +847,6 @@ class TableCartTest extends TestCase
     {
         VendorSetting::factory()->create([
             'vendor_id' => $this->vendor->id,
-            'currency' => 'EUR',
             'estimated_prep_time' => 30,
         ]);
 

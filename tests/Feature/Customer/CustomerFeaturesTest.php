@@ -93,7 +93,6 @@ class CustomerFeaturesTest extends TestCase
             'restaurant_name' => 'Bella Italia',
         ]);
         $this->vendor->vendorSetting()->update([
-            'currency' => 'USD',
             'logo_url' => 'vendors/1/logo.png',
         ]);
 
@@ -227,7 +226,6 @@ class CustomerFeaturesTest extends TestCase
             'restaurant_name' => 'Bella Italia',
         ]);
         $this->vendor->vendorSetting()->update([
-            'currency' => 'USD',
             'logo_url' => 'vendors/1/logo.png',
         ]);
 
@@ -345,7 +343,6 @@ class CustomerFeaturesTest extends TestCase
             'email' => 'info@labellacucina.at',
         ]);
         $this->vendor->vendorSetting()->update([
-            'currency' => 'EUR',
             'service_fee_rate' => 10,
             'invoice_prefix' => 'INV',
             'next_invoice_number' => 1001,

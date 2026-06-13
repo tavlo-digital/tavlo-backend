@@ -40,7 +40,6 @@ class CustomerPaymentsTest extends TestCase
             'stripe_enabled' => true,
             'stripe_account_id' => 'acct_test_123',
             'stripe_onboarding_complete' => true,
-            'currency' => 'EUR',
         ]);
 
         $token = $this->customer->createToken('test', ['role:customer'])->plainTextToken;

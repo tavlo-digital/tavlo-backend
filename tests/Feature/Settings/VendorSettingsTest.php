@@ -6,6 +6,7 @@ use App\Models\Vendor;
 use App\Models\VendorRequestChange;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
@@ -131,6 +132,26 @@ class VendorSettingsTest extends TestCase
         ]);
     }
 
+    public function test_currency_is_derived_from_country_and_not_saved_in_settings(): void
+    {
+        $this->vendor->update(['country' => 'GB']);
+
+        $response = $this->putJson(
+            "/api/vendor/{$this->vendor->vendor_public_id}/settings",
+            [
+                'currency' => 'USD',
+                'latitude' => 51.5074,
+                'longitude' => -0.1278,
+            ],
+            $this->authHeaders()
+        );
+
+        $response->assertOk()
+            ->assertJsonPath('currency', 'GBP');
+
+        $this->assertFalse(Schema::hasColumn('vendor_settings', 'currency'));
+    }
+
     public function test_can_update_loyalty_settings(): void
     {
         $response = $this->putJson(
@@ -194,9 +215,14 @@ class VendorSettingsTest extends TestCase
         $response = $this->postJson(
             "/api/vendor/{$this->vendor->vendor_public_id}/legal-info",
             [
+                'restaurantName' => 'My Restaurant',
                 'legalEntityName' => 'My GmbH',
                 'businessRegistrationNumber' => 'FN123456a',
                 'vatNumber' => 'ATU12345678',
+                'companyType' => 'GmbH',
+                'country' => 'AT',
+                'city' => 'Vienna',
+                'address' => 'Main Street 1',
             ],
             $this->authHeaders()
         );
@@ -208,18 +234,41 @@ class VendorSettingsTest extends TestCase
             'vendor_id' => $this->vendor->id,
             'legal_entity_name' => 'My GmbH',
             'vat_number' => 'ATU12345678',
+            'company_type' => 'GmbH',
             'status' => 'pending',
         ]);
     }
 
-    public function test_cannot_submit_legal_info_while_pending(): void
+    public function test_first_legal_info_submission_requires_all_fields(): void
     {
-        VendorRequestChange::create([
+        $this->postJson(
+            "/api/vendor/{$this->vendor->vendor_public_id}/legal-info",
+            [],
+            $this->authHeaders()
+        )
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors([
+                'restaurantName',
+                'legalEntityName',
+                'businessRegistrationNumber',
+                'vatNumber',
+                'companyType',
+                'country',
+                'city',
+                'address',
+            ]);
+    }
+
+    public function test_submit_legal_info_updates_existing_pending_request(): void
+    {
+        $pendingChange = VendorRequestChange::create([
             'vendor_id' => $this->vendor->id,
             'restaurant_name' => 'Old Name',
             'legal_entity_name' => 'Old GmbH',
             'business_registration_number' => 'FN000001a',
             'vat_number' => 'ATU00000001',
+            'company_type' => 'GmbH',
+            'city' => 'Vienna',
             'status' => 'pending',
         ]);
 
@@ -229,9 +278,66 @@ class VendorSettingsTest extends TestCase
                 'legalEntityName' => 'New GmbH',
                 'businessRegistrationNumber' => 'FN999999b',
                 'vatNumber' => 'ATU99999999',
+                'companyType' => 'AG',
+                'city' => 'Graz',
             ],
             $this->authHeaders()
-        )->assertStatus(422);
+        )
+            ->assertOk()
+            ->assertJsonFragment([
+                'message' => 'Pending legal info updated successfully.',
+            ]);
+
+        $this->assertDatabaseCount('vendor_request_changes', 1);
+        $this->assertDatabaseHas('vendor_request_changes', [
+            'id' => $pendingChange->id,
+            'vendor_id' => $this->vendor->id,
+            'legal_entity_name' => 'New GmbH',
+            'business_registration_number' => 'FN999999b',
+            'vat_number' => 'ATU99999999',
+            'company_type' => 'AG',
+            'city' => 'Graz',
+            'status' => 'pending',
+        ]);
+    }
+
+    public function test_existing_pending_request_allows_partial_update(): void
+    {
+        $pendingChange = VendorRequestChange::create([
+            'vendor_id' => $this->vendor->id,
+            'restaurant_name' => 'Pending Restaurant',
+            'legal_entity_name' => 'Pending GmbH',
+            'business_registration_number' => 'FN000001a',
+            'vat_number' => 'ATU00000001',
+            'company_type' => 'GmbH',
+            'country' => 'AT',
+            'city' => 'Vienna',
+            'address' => 'Old Street 1',
+            'status' => 'pending',
+        ]);
+
+        $this->postJson(
+            "/api/vendor/{$this->vendor->vendor_public_id}/legal-info",
+            ['city' => 'Graz'],
+            $this->authHeaders()
+        )
+            ->assertOk()
+            ->assertJsonFragment([
+                'message' => 'Pending legal info updated successfully.',
+            ]);
+
+        $this->assertDatabaseHas('vendor_request_changes', [
+            'id' => $pendingChange->id,
+            'restaurant_name' => 'Pending Restaurant',
+            'legal_entity_name' => 'Pending GmbH',
+            'business_registration_number' => 'FN000001a',
+            'vat_number' => 'ATU00000001',
+            'company_type' => 'GmbH',
+            'country' => 'AT',
+            'city' => 'Graz',
+            'address' => 'Old Street 1',
+            'status' => 'pending',
+        ]);
     }
 
     // ----------------------------------------------------------------
@@ -246,6 +352,10 @@ class VendorSettingsTest extends TestCase
             'legal_entity_name' => 'Test GmbH',
             'business_registration_number' => 'FN123456a',
             'vat_number' => 'ATU12345678',
+            'company_type' => 'GmbH',
+            'country' => 'AT',
+            'city' => 'Vienna',
+            'address' => 'Main Street 1',
             'status' => 'pending',
         ]);
 
@@ -253,7 +363,38 @@ class VendorSettingsTest extends TestCase
             "/api/vendor/{$this->vendor->vendor_public_id}/legal-info/status",
             $this->authHeaders()
         )->assertOk()
-            ->assertJsonFragment(['status' => 'pending']);
+            ->assertJsonPath('status', 'pending')
+            ->assertJsonPath('legalInfo.restaurantName', 'Test')
+            ->assertJsonPath('legalInfo.legalEntityName', 'Test GmbH')
+            ->assertJsonPath('legalInfo.businessRegistrationNumber', 'FN123456a')
+            ->assertJsonPath('legalInfo.vatNumber', 'ATU12345678')
+            ->assertJsonPath('legalInfo.companyType', 'GmbH')
+            ->assertJsonPath('legalInfo.country', 'AT')
+            ->assertJsonPath('legalInfo.city', 'Vienna')
+            ->assertJsonPath('legalInfo.address', 'Main Street 1');
+    }
+
+    public function test_legal_change_status_falls_back_to_current_company_type(): void
+    {
+        $this->vendor->vendorSetting()->create([
+            'company_type' => 'GmbH',
+        ]);
+
+        VendorRequestChange::create([
+            'vendor_id' => $this->vendor->id,
+            'legal_entity_name' => 'Test GmbH',
+            'business_registration_number' => 'FN123456a',
+            'vat_number' => 'ATU12345678',
+            'company_type' => null,
+            'status' => 'pending',
+        ]);
+
+        $this->getJson(
+            "/api/vendor/{$this->vendor->vendor_public_id}/legal-info/status",
+            $this->authHeaders()
+        )
+            ->assertOk()
+            ->assertJsonPath('legalInfo.companyType', 'GmbH');
     }
 
     // ----------------------------------------------------------------

@@ -16,7 +16,6 @@ class VendorSettingFactory extends Factory
             'vendor_id'                => Vendor::factory(),
             'is_live_and_discoverable' => true,
             'description'              => $this->faker->sentence(),
-            'currency'                 => 'EUR',
             'enable_reservations'      => true,
             'loyalty_enabled'          => false,
         ];

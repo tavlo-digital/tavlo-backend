@@ -38,7 +38,6 @@ class RestaurantBrowsingTest extends TestCase
             'vendor_id'                 => $this->vendor->id,
             'is_live_and_discoverable'  => true,
             'description'               => 'A great restaurant',
-            'currency'                  => 'EUR',
         ]);
     }
 
@@ -52,8 +51,18 @@ class RestaurantBrowsingTest extends TestCase
 
         $response->assertOk()
             ->assertJsonPath('data.0.restaurant_name', 'Test Restaurant')
+            ->assertJsonPath('data.0.currency', 'EUR')
             ->assertJsonPath('data.0.payment_methods.on-site', true)
             ->assertJsonPath('data.0.payment_methods.stripe', false);
+    }
+
+    public function test_restaurant_currency_comes_from_selected_country(): void
+    {
+        $this->vendor->update(['country' => 'GB']);
+
+        $this->getJson('/api/customer/restaurants')
+            ->assertOk()
+            ->assertJsonPath('data.0.currency', 'GBP');
     }
 
     public function test_can_filter_restaurants_by_city(): void

@@ -132,6 +132,40 @@ class Vendor extends Authenticatable
         return $this->hasOne(VendorSetting::class);
     }
 
+    public function countryRecord(): \Illuminate\Database\Eloquent\Relations\BelongsTo
+    {
+        return $this->belongsTo(Country::class, 'country', 'code');
+    }
+
+    public function resolveCurrency(): string
+    {
+        $country = trim((string) $this->country);
+
+        if ($country === '') {
+            return 'EUR';
+        }
+
+        $countryRecord = $this->relationLoaded('countryRecord')
+            ? $this->countryRecord
+            : null;
+
+        if (! $countryRecord) {
+            $countryRecord = Country::query()
+                ->where(function ($query) use ($country) {
+                    $query->whereRaw('LOWER(code) = ?', [strtolower($country)])
+                        ->orWhereRaw('LOWER(name) = ?', [strtolower($country)]);
+                })
+                ->first(['currency']);
+        }
+
+        return strtoupper($countryRecord?->currency ?: 'EUR');
+    }
+
+    public function getCurrencyAttribute(): string
+    {
+        return $this->resolveCurrency();
+    }
+
     public function restaurantTables(): \Illuminate\Database\Eloquent\Relations\HasMany
     {
         return $this->hasMany(RestaurantTable::class);

@@ -51,7 +51,8 @@ class RestaurantController extends Controller
     {
         $query = Vendor::whereHas('vendorSetting', fn ($q) => $q->where('is_live_and_discoverable', true))
             ->with([
-                'vendorSetting:id,vendor_id,logo_url,cover_photo_url,business_hours,currency,enable_reservations,loyalty_enabled,points_per_euro,accept_on_site,stripe_enabled,stripe_account_id,stripe_onboarding_complete',
+                'vendorSetting:id,vendor_id,logo_url,cover_photo_url,business_hours,enable_reservations,loyalty_enabled,points_per_euro,accept_on_site,stripe_enabled,stripe_account_id,stripe_onboarding_complete',
+                'countryRecord:id,code,currency',
                 'menuCategories' => fn ($q) => $q->where('is_active', true)->with('masterCategory'),
                 'takeawayQr:id,vendor_id',
             ])
@@ -206,7 +207,7 @@ class RestaurantController extends Controller
                 'longitude' => $vendor->longitude !== null ? (float) $vendor->longitude : null,
                 'logo_url' => $setting?->logo_url,
                 'cover_photo_url' => $setting?->cover_photo_url,
-                'currency' => $setting?->currency,
+                'currency' => $vendor->currency,
                 'cuisines' => $cuisines,
                 'price_label' => $priceLabel,
                 'avg_rating' => round($vendor->reviews_avg_rating ?? 0, 1),
@@ -240,7 +241,8 @@ class RestaurantController extends Controller
         $vendor = Vendor::where('vendor_public_id', $vendorPublicId)
             ->whereHas('vendorSetting', fn ($q) => $q->where('is_live_and_discoverable', true))
             ->with([
-                'vendorSetting:id,vendor_id,logo_url,cover_photo_url,business_hours,currency,accept_on_site,stripe_enabled,stripe_account_id,stripe_onboarding_complete,enable_reservations,loyalty_enabled,points_per_euro',
+                'vendorSetting:id,vendor_id,logo_url,cover_photo_url,business_hours,accept_on_site,stripe_enabled,stripe_account_id,stripe_onboarding_complete,enable_reservations,loyalty_enabled,points_per_euro',
+                'countryRecord:id,code,currency',
                 'menuCategories' => fn ($q) => $q->where('is_active', true)->with('masterCategory'),
                 'takeawayQr:id,vendor_id',
             ])
@@ -294,7 +296,7 @@ class RestaurantController extends Controller
             'longitude' => $vendor->longitude !== null ? (float) $vendor->longitude : null,
             'logo_url' => $setting->logo_url,
             'cover_photo_url' => $setting->cover_photo_url,
-            'currency' => $setting->currency,
+            'currency' => $vendor->currency,
             'cuisines' => $vendor->menuCategories
                 ->map(fn (MenuCategory $category) => $category->display_name)
                 ->values(),

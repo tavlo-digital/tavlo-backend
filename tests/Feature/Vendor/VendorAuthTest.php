@@ -12,6 +12,25 @@ class VendorAuthTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_vendor_can_register_without_country(): void
+    {
+        $this->postJson('/api/vendor/register', [
+            'name' => 'New Vendor',
+            'phone' => '+43123456789',
+            'email' => 'vendor@example.com',
+            'password' => 'password123',
+            'password_confirmation' => 'password123',
+        ])
+            ->assertCreated()
+            ->assertJsonStructure(['user', 'token']);
+
+        $this->assertDatabaseHas('vendors', [
+            'name' => 'New Vendor',
+            'email' => 'vendor@example.com',
+            'country' => null,
+        ]);
+    }
+
     public function test_vendor_owner_can_change_password(): void
     {
         $vendor = Vendor::factory()->create(['password' => 'old-password']);

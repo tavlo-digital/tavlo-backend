@@ -468,7 +468,7 @@ class TableScanController extends Controller
         return [
             'id'       => $vendor->vendor_public_id ?? (string) $vendor->id,
             'name'     => $vendor->name,
-            'currency' => $vendor->vendorSetting?->currency ?? 'EUR',
+            'currency' => $vendor->currency,
         ];
     }
 

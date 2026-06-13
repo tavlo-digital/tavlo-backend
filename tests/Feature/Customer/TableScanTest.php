@@ -28,8 +28,8 @@ class TableScanTest extends TestCase
         parent::setUp();
 
         $this->customer = Customer::factory()->create();
-        $this->vendor   = Vendor::factory()->create();
-        $this->vendor->vendorSetting()->create(['currency' => 'CHF']);
+        $this->vendor   = Vendor::factory()->create(['country' => 'GB']);
+        $this->vendor->vendorSetting()->create();
 
         $this->headers = $this->headersFor($this->customer);
     }
@@ -272,7 +272,7 @@ class TableScanTest extends TestCase
     public function test_valid_scan_creates_active_session_with_pin_without_requiring_pin_entry(): void
     {
         $table = $this->makeTable(['number' => 7, 'name' => 'T7']);
-        $this->vendor->vendorSetting->update(['currency' => 'PKR']);
+        $this->vendor->update(['country' => 'AT']);
 
         $response = $this->postScan($table->qr_token, $this->headers);
 
@@ -285,7 +285,7 @@ class TableScanTest extends TestCase
             ])
             ->assertJsonPath('table.number', 7)
             ->assertJsonPath('table.name', 'T7')
-            ->assertJsonPath('vendor.currency', 'PKR')
+            ->assertJsonPath('vendor.currency', 'EUR')
             ->assertJsonPath('session.status', 'active')
             ->assertJsonPath('requiresPin', false);
 
@@ -501,7 +501,7 @@ class TableScanTest extends TestCase
             ->assertJsonPath('pin', $ownerPin)
             ->assertJsonPath('session.status', 'active')
             ->assertJsonPath('table.id', (string) $table->id)
-            ->assertJsonPath('vendor.currency', 'CHF');
+            ->assertJsonPath('vendor.currency', 'GBP');
 
         $this->assertDatabaseHas('table_scan_sessions', [
             'restaurant_table_id' => $table->id,

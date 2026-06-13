@@ -16,7 +16,6 @@ class AuthController extends Controller
     {
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
-            'country' => ['required', 'string', 'exists:countries,code'],
             'phone' => ['required', 'string', 'max:30', 'unique:vendors,phone'],
             'email' => ['required', 'email', 'max:255', 'unique:vendors,email'],
             'password' => ['required', 'string', 'min:8', 'confirmed'],

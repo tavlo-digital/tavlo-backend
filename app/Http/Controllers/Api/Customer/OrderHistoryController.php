@@ -36,7 +36,7 @@ class OrderHistoryController extends Controller
 
         $orders = (clone $base)
             ->with([
-                'vendor.vendorSetting:id,vendor_id,logo_url,currency,service_fee_rate',
+                'vendor.vendorSetting:id,vendor_id,logo_url,service_fee_rate',
                 'tableScanSession:id,customer_id',
             ])
             ->orderByDesc('created_at')
@@ -56,7 +56,7 @@ class OrderHistoryController extends Controller
                     'restaurant_public_id' => $vendor?->vendor_public_id,
                     'restaurant_name' => $vendor?->restaurant_name,
                     'restaurant_logo_url' => $this->media->url($settings?->logo_url),
-                    'currency' => $settings?->currency ?? $first->currency,
+                    'currency' => $first->currency ?? $vendor?->currency,
                     'orders_count' => $total,
                     'total_spent' => round((float) $vendorOrders->sum(fn (Order $order) => (float) $order->amount), 2),
                     'last_ordered_at' => $vendorOrders->max('created_at')?->toIso8601String(),
@@ -151,7 +151,7 @@ class OrderHistoryController extends Controller
         $order = Order::where('order_public_id', $orderPublicId)
             ->where(fn (Builder $query) => $this->scopeCustomerOrders($query, $customer->id))
             ->with([
-                'vendor.vendorSetting:id,vendor_id,logo_url,currency,service_fee_rate',
+                'vendor.vendorSetting:id,vendor_id,logo_url,service_fee_rate',
                 'tableScanSession:id,customer_id',
             ])
             ->firstOrFail();
@@ -169,7 +169,7 @@ class OrderHistoryController extends Controller
         $order = Order::where('order_public_id', $orderPublicId)
             ->where(fn (Builder $query) => $this->scopeCustomerOrders($query, $customer->id))
             ->with([
-                'vendor.vendorSetting:id,vendor_id,currency,estimated_prep_time,service_fee_rate',
+                'vendor.vendorSetting:id,vendor_id,estimated_prep_time,service_fee_rate',
                 'tableScanSession:id,customer_id',
             ])
             ->firstOrFail();
@@ -259,7 +259,7 @@ class OrderHistoryController extends Controller
                     'time' => $order->created_at?->format('H:i'),
                     'table' => $tableName,
                     'order_id' => $order->order_public_id,
-                    'currency' => $settings?->currency ?? $order->currency ?? 'EUR',
+                    'currency' => $order->currency ?? $vendor?->currency ?? 'EUR',
                     'locale' => $locale,
                 ],
                 'order' => [
@@ -491,7 +491,7 @@ class OrderHistoryController extends Controller
             })->values()->all(),
             'tax_groups' => $taxGroups,
             'totals' => array_merge($totals, [
-                'currency' => $settings?->currency ?? $order->currency,
+                'currency' => $order->currency ?? $vendor?->currency,
             ]),
         ];
     }
@@ -520,7 +520,7 @@ class OrderHistoryController extends Controller
             'status' => $order->status,
             'estimated_delivery_time' => $this->estimatedDeliveryTime($order),
             'total_amount' => round((float) $order->amount, 2),
-            'currency' => $order->vendor?->vendorSetting?->currency ?? $order->currency,
+            'currency' => $order->currency ?? $order->vendor?->currency,
             'order_type' => $order->order_type,
             'payment_method' => $order->payment_method,
             'payment_pending' => (bool) $order->payment_pending,

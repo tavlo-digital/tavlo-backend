@@ -205,7 +205,6 @@ class VendorSeeder extends Seeder
                 ['vendor_id' => $vendor->id],
                 [
                     'is_live_and_discoverable' => true,
-                    'currency' => 'EUR',
                     'accept_on_site' => true,
                     'enable_reservations' => true,
                     'loyalty_enabled' => true,

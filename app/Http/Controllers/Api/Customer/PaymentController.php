@@ -123,7 +123,7 @@ class PaymentController extends Controller
             return response()->json(['message' => 'Order amount must be greater than zero.'], 422);
         }
 
-        $currency = $settings->currency ?: $order->currency;
+        $currency = $order->vendor?->currency ?? $order->currency ?? 'EUR';
         $metadata = [
             'order_id' => (string) $order->id,
             'order_public_id' => (string) $order->order_public_id,
@@ -243,7 +243,7 @@ class PaymentController extends Controller
         }
 
         $settings = $order->vendor?->vendorSetting;
-        $currency = $settings?->currency ?: $order->currency;
+        $currency = $payment->currency ?: $order->currency ?: ($order->vendor?->currency ?? 'EUR');
         $baseAmount = $this->finalOrderAmount($order);
         $tipAmount = round((float) $data['tip_amount'], 2);
         $payableAmount = round($baseAmount + $tipAmount, 2);
@@ -414,6 +414,7 @@ class PaymentController extends Controller
     {
         return Order::with([
             'vendor.vendorSetting',
+            'vendor.countryRecord',
             'tableScanSession',
         ])
             ->where(function (Builder $query) use ($orderId) {
