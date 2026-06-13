@@ -24,6 +24,7 @@ class CountryController extends Controller
                 'name'             => $c->name,
                 'flag'             => $c->flag,
                 'currency'         => $c->currency,
+                'timezone'         => $c->timezone,
                 'isActive'         => $c->is_active,
                 'taxCategoryCount' => $c->tax_categories_count,
             ]);
@@ -40,6 +41,7 @@ class CountryController extends Controller
             'name'      => ['required', 'string', 'max:255'],
             'flag'      => ['nullable', 'string', 'max:10'],
             'currency'  => ['required', 'string', 'max:5'],
+            'timezone'  => ['required', 'string', 'max:50', 'timezone:all'],
             'is_active' => ['boolean'],
         ]);
 
@@ -48,6 +50,7 @@ class CountryController extends Controller
             'name'      => $validated['name'],
             'flag'      => $validated['flag'] ?? null,
             'currency'  => strtoupper($validated['currency']),
+            'timezone'  => $validated['timezone'],
             'is_active' => $validated['is_active'] ?? true,
         ]);
 
@@ -61,6 +64,7 @@ class CountryController extends Controller
             'name'      => ['required', 'string', 'max:255'],
             'flag'      => ['nullable', 'string', 'max:10'],
             'currency'  => ['required', 'string', 'max:5'],
+            'timezone'  => ['required', 'string', 'max:50', 'timezone:all'],
             'is_active' => ['boolean'],
         ]);
 
@@ -69,6 +73,7 @@ class CountryController extends Controller
             'name'      => $validated['name'],
             'flag'      => $validated['flag'] ?? null,
             'currency'  => strtoupper($validated['currency']),
+            'timezone'  => $validated['timezone'],
             'is_active' => $validated['is_active'] ?? false,
         ]);
 

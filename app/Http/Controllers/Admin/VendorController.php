@@ -82,9 +82,11 @@ class VendorController extends Controller
         ]);
     }
 
-    public function show(string $vendorSlug, string $tab = 'overview')
+    public function show(string $vendor, string $tab = 'overview')
     {
-        $vendor = Vendor::where('slug', $vendorSlug)->firstOrFail();
+        $vendor = Vendor::where('slug', $vendor)
+            ->orWhere('vendor_public_id', $vendor)
+            ->firstOrFail();
         $subscription = $vendor->subscriptions()->with('plan')->latest()->first();
 
         $vendorData = [
@@ -143,11 +145,11 @@ class VendorController extends Controller
         return Inertia::render('admin/vendor/[vendor]/show', $props);
     }
 
-    public function approveChange(string $vendorSlug, int $changeId)
+    public function approveChange(string $vendor, int $change)
     {
-        $vendor = Vendor::where('slug', $vendorSlug)->firstOrFail();
+        $vendor = Vendor::where('slug', $vendor)->orWhere('vendor_public_id', $vendor)->firstOrFail();
         $change = VendorRequestChange::where('vendor_id', $vendor->id)
-            ->where('id', $changeId)
+            ->where('id', $change)
             ->where('status', 'pending')
             ->firstOrFail();
 
@@ -180,11 +182,11 @@ class VendorController extends Controller
         return redirect()->back()->with('success', 'Changes approved successfully.');
     }
 
-    public function declineChange(Request $request, string $vendorSlug, int $changeId)
+    public function declineChange(Request $request, string $vendor, int $change)
     {
-        $vendor = Vendor::where('slug', $vendorSlug)->firstOrFail();
+        $vendor = Vendor::where('slug', $vendor)->orWhere('vendor_public_id', $vendor)->firstOrFail();
         $change = VendorRequestChange::where('vendor_id', $vendor->id)
-            ->where('id', $changeId)
+            ->where('id', $change)
             ->where('status', 'pending')
             ->firstOrFail();
 

@@ -9,6 +9,7 @@ type Country = {
     name: string;
     flag: string | null;
     currency: string;
+    timezone: string;
     isActive: boolean;
     taxCategoryCount: number;
 };
@@ -19,6 +20,7 @@ type CountryForm = {
     name: string;
     flag: string;
     currency: string;
+    timezone: string;
     is_active: boolean;
 };
 
@@ -27,6 +29,7 @@ const emptyForm: CountryForm = {
     name: '',
     flag: '',
     currency: 'EUR',
+    timezone: 'UTC',
     is_active: true,
 };
 
@@ -81,6 +84,7 @@ export default function AdminCountriesIndex({ countries }: { countries: Country[
             name: country.name,
             flag: country.flag ?? '',
             currency: country.currency,
+            timezone: country.timezone,
             is_active: country.isActive,
         });
         form.clearErrors();
@@ -167,6 +171,7 @@ export default function AdminCountriesIndex({ countries }: { countries: Country[
                                         <th className="px-4 py-3 text-left text-xs font-medium tracking-wide text-gray-700 uppercase">Country</th>
                                         <th className="px-4 py-3 text-left text-xs font-medium tracking-wide text-gray-700 uppercase">Code</th>
                                         <th className="px-4 py-3 text-left text-xs font-medium tracking-wide text-gray-700 uppercase">Currency</th>
+                                        <th className="px-4 py-3 text-left text-xs font-medium tracking-wide text-gray-700 uppercase">Timezone</th>
                                         <th className="px-4 py-3 text-left text-xs font-medium tracking-wide text-gray-700 uppercase">Tax Rules</th>
                                         <th className="px-4 py-3 text-left text-xs font-medium tracking-wide text-gray-700 uppercase">Status</th>
                                         <th className="px-4 py-3 text-left text-xs font-medium tracking-wide text-gray-700 uppercase">Actions</th>
@@ -175,7 +180,7 @@ export default function AdminCountriesIndex({ countries }: { countries: Country[
                                 <tbody className="divide-y divide-gray-100">
                                     {filteredCountries.length === 0 ? (
                                         <tr>
-                                            <td colSpan={6} className="px-4 py-8 text-center text-sm text-gray-500">
+                                            <td colSpan={7} className="px-4 py-8 text-center text-sm text-gray-500">
                                                 No countries found.
                                             </td>
                                         </tr>
@@ -193,6 +198,9 @@ export default function AdminCountriesIndex({ countries }: { countries: Country[
                                                 </td>
                                                 <td className="px-4 py-3">
                                                     <span className="font-mono text-sm text-gray-600">{country.currency}</span>
+                                                </td>
+                                                <td className="px-4 py-3">
+                                                    <span className="text-sm text-gray-600">{country.timezone}</span>
                                                 </td>
                                                 <td className="px-4 py-3">
                                                     <span className="text-sm text-gray-900">{country.taxCategoryCount}</span>
@@ -300,6 +308,20 @@ export default function AdminCountriesIndex({ countries }: { countries: Country[
                                     placeholder="e.g. EUR, GBP, USD"
                                 />
                                 {form.errors.currency && <p className="mt-1 text-xs text-red-600">{form.errors.currency}</p>}
+                            </label>
+
+                            <label className="block">
+                                <span className="text-sm font-medium text-gray-700">Timezone</span>
+                                <input
+                                    type="text"
+                                    value={form.data.timezone}
+                                    onChange={(e) => form.setData('timezone', e.target.value)}
+                                    maxLength={50}
+                                    className="mt-1.5 w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 focus:border-transparent focus:ring-2 focus:ring-purple-600 focus:outline-none"
+                                    placeholder="e.g. Europe/Vienna, Europe/Berlin"
+                                />
+                                <p className="mt-1 text-xs text-gray-500">IANA timezone identifier</p>
+                                {form.errors.timezone && <p className="mt-1 text-xs text-red-600">{form.errors.timezone}</p>}
                             </label>
 
                             <label className="flex items-center gap-2 text-sm">

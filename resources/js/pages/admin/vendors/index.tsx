@@ -292,10 +292,10 @@ function PaymentCell({ payment }: { payment: Vendor['payment'] }) {
 
 function ActionsCell({ vendor }: { vendor: Vendor }) {
     const [open, setOpen] = useState(false);
-    const slug = vendor.slug;
+    const identifier = vendor.slug || vendor.id;
     return (
         <div className="flex items-center gap-2">
-            <Link href={`/admin/vendor/${slug}/overview`} className="p-1.5 hover:bg-gray-100 rounded transition-colors" title="View vendor details">
+            <Link href={`/admin/vendor/${identifier}/overview`} className="p-1.5 hover:bg-gray-100 rounded transition-colors" title="View vendor details">
                 <Eye className="w-4 h-4 text-gray-600" aria-hidden="true" />
             </Link>
             <button className="p-1.5 hover:bg-red-50 rounded transition-colors" title="Suspend vendor">
@@ -309,23 +309,23 @@ function ActionsCell({ vendor }: { vendor: Vendor }) {
                     <>
                         <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
                         <div className="absolute right-0 top-full mt-1 bg-white rounded-lg shadow-lg border border-gray-200 py-1 min-w-[180px] z-20">
-                            <Link href={`/admin/vendor/${slug}/payments`} className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2">
+                            <Link href={`/admin/vendor/${identifier}/payments`} className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2">
                                 <CreditCard className="w-4 h-4 text-gray-500" aria-hidden="true" />
                                 View Payments
                             </Link>
-                            <Link href={`/admin/vendor/${slug}/subscription`} className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2">
+                            <Link href={`/admin/vendor/${identifier}/subscription`} className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2">
                                 <FileText className="w-4 h-4 text-gray-500" aria-hidden="true" />
                                 View Subscription
                             </Link>
-                            <Link href={`/admin/vendor/${slug}/orders`} className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2">
+                            <Link href={`/admin/vendor/${identifier}/orders`} className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2">
                                 <ShoppingCart className="w-4 h-4 text-gray-500" aria-hidden="true" />
                                 View Orders
                             </Link>
-                            <Link href={`/admin/vendor/${slug}/reviews`} className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2">
+                            <Link href={`/admin/vendor/${identifier}/reviews`} className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2">
                                 <MessageSquare className="w-4 h-4 text-gray-500" aria-hidden="true" />
                                 View Reviews
                             </Link>
-                            <Link href={`/admin/vendor/${slug}/activity`} className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2">
+                            <Link href={`/admin/vendor/${identifier}/activity`} className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2">
                                 <History className="w-4 h-4 text-gray-500" aria-hidden="true" />
                                 View Activity
                             </Link>
