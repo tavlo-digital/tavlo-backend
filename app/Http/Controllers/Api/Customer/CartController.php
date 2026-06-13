@@ -95,7 +95,7 @@ class CartController extends Controller
                     && ! $this->cartItemBelongsToOrderedOrder($item, $orderedOrderIds))
                 ->values();
 
-            $personTaxGroups = TaxCalculationService::computeTaxGroups($personItems, $vendorCountry);
+            $personTaxGroups = TaxCalculationService::computeTaxGroups($personItems, $vendorCountry, true);
             $personTotals = TaxCalculationService::computeTotals($personTaxGroups, $serviceFeeRate);
 
             return [
@@ -406,7 +406,7 @@ class CartController extends Controller
                     ];
                 })->values();
 
-            $personTaxGroups = TaxCalculationService::computeTaxGroups($personCartItems, $vendorCountry);
+            $personTaxGroups = TaxCalculationService::computeTaxGroups($personCartItems, $vendorCountry, true);
             $personTotals = TaxCalculationService::computeTotals($personTaxGroups, $serviceFeeRate);
 
             return [
@@ -786,7 +786,7 @@ class CartController extends Controller
                 return $this->orderPayload($order, $itemRows, $vendor);
             })->values();
 
-            $personTaxGroups = TaxCalculationService::computeTaxGroups($personCartItems, $vendorCountry);
+            $personTaxGroups = TaxCalculationService::computeTaxGroups($personCartItems, $vendorCountry, true);
             $personTotals = TaxCalculationService::computeTotals($personTaxGroups, $serviceFeeRate);
 
             $totalTips = round((float) $personOrders->sum(fn (Order $o) => (float) ($o->tip_amount ?? 0)), 2);
@@ -850,13 +850,15 @@ class CartController extends Controller
         $vendorCountry ??= 'AT';
         $menuItem = $ci->menuItem;
         $itemTaxCategory = $menuItem?->tax_category ?? 'food';
-        $unitPrice = $this->cartItemUnitPrice($ci, $vendorCountry);
-        $lineTotal = $this->cartItemLineTotal($ci, $vendorCountry);
+        $fullUnitPrice = $this->cartItemUnitPrice($ci, $vendorCountry);
+        $fullLineTotal = $this->cartItemLineTotal($ci, $vendorCountry);
         $vatRate = TaxCalculationService::itemVatRate($menuItem, $vendorCountry);
-        $vatAmount = TaxCalculationService::vatFromGross($lineTotal, $vatRate);
         $orderIds = array_values(array_map('intval', is_array($ci->shared_order_ids) ? $ci->shared_order_ids : []));
         $sharedBetween = 1 + count($orderIds);
-        $myShare = round($lineTotal / $sharedBetween, 2);
+        $unitPrice = round($fullUnitPrice / $sharedBetween, 2);
+        $lineTotal = round($fullLineTotal / $sharedBetween, 2);
+        $vatAmount = TaxCalculationService::vatFromGross($lineTotal, $vatRate);
+        $myShare = $lineTotal;
 
         $sharedWith = array_values(array_filter(array_map(function (int $oid) use ($ordersById, $sessionCustomerNames) {
             if ($ordersById === null) {
