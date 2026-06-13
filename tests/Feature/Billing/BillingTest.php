@@ -240,14 +240,18 @@ class BillingTest extends TestCase
         $response->assertOk()
             ->assertJsonStructure([
                 'subscriptionId',
+                'planId',
                 'planName',
                 'billingCycle',
                 'status',
                 'price',
+                'currency',
+                'maxUsers',
                 'interval',
                 'nextBillingDate',
                 'autoRenew',
             ])
+            ->assertJsonPath('planId', $this->planMonthly->id)
             ->assertJsonPath('planName', 'Monthly')
             ->assertJsonPath('billingCycle', 'monthly')
             ->assertJsonPath('status', 'active');

@@ -213,10 +213,13 @@ class BillingService
 
         return [
             'subscriptionId' => $subscription ? (string) $subscription->id : null,
+            'planId' => $subscription?->plan_id,
             'planName' => $subscription?->plan?->name,
             'billingCycle' => $subscription?->billing_cycle ?? 'monthly',
             'status' => $subscription?->status ?? 'none',
             'price' => $this->resolvePrice($subscription),
+            'currency' => $subscription?->plan?->currency,
+            'maxUsers' => $subscription?->plan?->max_users,
             'interval' => $subscription?->billing_cycle === 'yearly' ? 'year' : 'month',
             'nextBillingDate' => $subscription?->next_billing_date?->format('M j, Y'),
             'autoRenew' => $subscription?->auto_renew ?? false,
