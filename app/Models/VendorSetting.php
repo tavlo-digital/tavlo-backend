@@ -52,7 +52,6 @@ class VendorSetting extends Model
         'enable_reviews',
         'enable_menu_reviews',
         'allow_anonymous_reviews',
-        'default_language',
         'dashboard_language',
         'supported_languages',
         'loyalty_enabled',

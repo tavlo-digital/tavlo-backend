@@ -27,7 +27,6 @@ class RestaurantTranslationTest extends TestCase
         VendorSetting::create([
             'vendor_id' => $this->vendor->id,
             'is_live_and_discoverable' => true,
-            'default_language' => 'de',
             'dashboard_language' => 'en',
             'supported_languages' => ['de', 'en'],
         ]);
@@ -83,24 +82,24 @@ class RestaurantTranslationTest extends TestCase
             ->assertJsonPath('0.modifier_groups.0.options.0.name', 'Groß');
     }
 
-    public function test_accept_language_is_used_when_query_language_is_absent(): void
+    public function test_missing_query_language_uses_english_even_with_accept_language(): void
     {
         $this->withHeader('Accept-Language', 'de-DE,de;q=0.9,en;q=0.8')
             ->getJson("/api/customer/restaurants/{$this->vendor->vendor_public_id}/menu/{$this->item->id}")
             ->assertOk()
-            ->assertHeader('Content-Language', 'de')
-            ->assertJsonPath('name', 'Gegrilltes Hähnchen');
+            ->assertHeader('Content-Language', 'en')
+            ->assertJsonPath('name', 'Grilled Chicken');
     }
 
-    public function test_unsupported_language_uses_vendor_default_and_english_can_be_requested(): void
+    public function test_unsupported_language_uses_english(): void
     {
         $url = "/api/customer/restaurants/{$this->vendor->vendor_public_id}/menu";
 
         $this->withHeader('Accept-Language', 'en')
             ->getJson($url.'?lang=fr')
             ->assertOk()
-            ->assertHeader('Content-Language', 'de')
-            ->assertJsonPath('0.name', 'Gegrilltes Hähnchen');
+            ->assertHeader('Content-Language', 'en')
+            ->assertJsonPath('0.name', 'Grilled Chicken');
 
         $this->getJson($url.'?lang=en')
             ->assertOk()

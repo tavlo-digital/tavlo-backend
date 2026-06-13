@@ -766,11 +766,10 @@ class RestaurantController extends Controller
     {
         $vendor = Vendor::where('vendor_public_id', $vendorPublicId)
             ->whereHas('vendorSetting', fn ($q) => $q->where('is_live_and_discoverable', true))
-            ->with('vendorSetting:id,vendor_id,default_language,supported_languages,date_format,time_format')
+            ->with('vendorSetting:id,vendor_id,supported_languages,date_format,time_format')
             ->firstOrFail();
 
         $setting = $vendor->vendorSetting;
-        $defaultLanguage = $this->locales->defaultLanguage($vendor);
         $availableLanguages = collect($this->locales->supportedLanguages($vendor));
 
         return response()->json([
@@ -778,7 +777,7 @@ class RestaurantController extends Controller
                 'id' => $vendor->vendor_public_id,
                 'name' => $vendor->restaurant_name ?? $vendor->name,
             ],
-            'default_language' => $defaultLanguage,
+            'default_language' => 'en',
             'available_languages' => $availableLanguages->all(),
             'date_format' => $setting?->date_format ?? 'DD.MM.YYYY',
             'time_format' => $setting?->time_format ?? '24h',
@@ -786,7 +785,7 @@ class RestaurantController extends Controller
                 ->map(fn (string $code) => [
                     'code' => $code,
                     'name' => $this->languageName($code),
-                    'is_default' => $code === $defaultLanguage,
+                    'is_default' => $code === 'en',
                 ])
                 ->values()
                 ->all(),

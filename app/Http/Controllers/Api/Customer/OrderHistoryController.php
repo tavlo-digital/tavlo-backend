@@ -217,8 +217,7 @@ class OrderHistoryController extends Controller
         $tableName = $table ? ($table->name ?? 'Table '.$table->number) : null;
 
         $countryCode = TaxCalculationService::countryCode($vendorCountry);
-        $defaultLang = $settings?->default_language ?? 'en';
-        $locale = $defaultLang.'-'.$countryCode;
+        $locale = 'en-'.$countryCode;
 
         $receiptItems = $items->map(function (CartItem $item) use ($vendorCountry) {
             $menuItem = $item->menuItem;

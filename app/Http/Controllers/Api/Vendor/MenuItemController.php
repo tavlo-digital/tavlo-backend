@@ -87,7 +87,6 @@ class MenuItemController extends Controller
         $name = $this->baseName($vendor, $data['name'] ?? null, $translations);
         $description = $data['description']
             ?? $translations['en']['description']
-            ?? $translations[$this->locales->defaultLanguage($vendor)]['description']
             ?? null;
 
         $category = $vendor->menuCategories()->findOrFail($data['categoryId']);
@@ -683,14 +682,12 @@ class MenuItemController extends Controller
     private function baseName($vendor, mixed $name, array $translations): string
     {
         $name = is_string($name) ? trim($name) : '';
-        $default = $this->locales->defaultLanguage($vendor);
         $name = $name
-            ?: ($translations['en']['name'] ?? '')
-            ?: ($translations[$default]['name'] ?? '');
+            ?: ($translations['en']['name'] ?? '');
 
         if ($name === '') {
             throw ValidationException::withMessages([
-                'name' => ['A name is required in English or the default language.'],
+                'name' => ['A name is required in English.'],
             ]);
         }
 

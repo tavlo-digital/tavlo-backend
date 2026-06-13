@@ -114,7 +114,6 @@ class VendorSettingsController extends Controller
             'allowAnonymousReviews' => ['sometimes', 'nullable', 'boolean'],
             // language
             'dashboardLanguage' => ['sometimes', 'nullable', 'string', 'max:10'],
-            'defaultLanguage' => ['sometimes', 'nullable', 'string', 'max:10'],
             'supportedLanguages' => ['sometimes', 'nullable', 'array'],
             'supportedLanguages.*' => ['string', 'max:10'],
             // loyalty
@@ -218,7 +217,6 @@ class VendorSettingsController extends Controller
             'enableMenuReviews' => 'enable_menu_reviews',
             'allowAnonymousReviews' => 'allow_anonymous_reviews',
             'dashboardLanguage' => 'dashboard_language',
-            'defaultLanguage' => 'default_language',
             'supportedLanguages' => 'supported_languages',
             'loyaltyEnabled' => 'loyalty_enabled',
             'pointsPerEuro' => 'points_per_euro',
@@ -252,34 +250,24 @@ class VendorSettingsController extends Controller
             }
         }
 
-        foreach (['dashboard_language', 'default_language'] as $languageField) {
-            if (array_key_exists($languageField, $settingsData)) {
-                $normalized = $this->locales->normalize($settingsData[$languageField]);
-                if ($normalized === null) {
-                    return response()->json([
-                        'message' => 'The selected language is not supported.',
-                        'errors' => [$languageField => ['The selected language is not supported.']],
-                    ], 422);
-                }
-                $settingsData[$languageField] = $normalized;
+        if (array_key_exists('dashboard_language', $settingsData)) {
+            $normalized = $this->locales->normalize($settingsData['dashboard_language']);
+            if ($normalized === null) {
+                return response()->json([
+                    'message' => 'The selected language is not supported.',
+                    'errors' => [
+                        'dashboard_language' => ['The selected language is not supported.'],
+                    ],
+                ], 422);
             }
+            $settingsData['dashboard_language'] = $normalized;
         }
 
-        if (array_key_exists('supported_languages', $settingsData)
-            || array_key_exists('default_language', $settingsData)) {
-            $currentSettings = $vendor->vendorSetting;
-            $defaultLanguage = $settingsData['default_language']
-                ?? $this->locales->normalize($currentSettings?->default_language)
-                ?? 'en';
-            $supportedLanguages = $settingsData['supported_languages']
-                ?? $currentSettings?->supported_languages
-                ?? [];
-
+        if (array_key_exists('supported_languages', $settingsData)) {
             $settingsData['supported_languages'] = collect(
-                $this->locales->normalizeList($supportedLanguages)
+                $this->locales->normalizeList($settingsData['supported_languages'])
             )
                 ->prepend('en')
-                ->prepend($defaultLanguage)
                 ->unique()
                 ->values()
                 ->all();
@@ -646,10 +634,8 @@ class VendorSettingsController extends Controller
             'allowAnonymousReviews' => (bool) $settings->allow_anonymous_reviews,
             // language
             'dashboardLanguage' => $settings->dashboard_language ?? 'en',
-            'defaultLanguage' => $settings->default_language ?? 'en',
             'supportedLanguages' => collect($settings->supported_languages ?? [])
                 ->prepend('en')
-                ->prepend($settings->default_language ?? 'en')
                 ->unique()
                 ->values()
                 ->all(),

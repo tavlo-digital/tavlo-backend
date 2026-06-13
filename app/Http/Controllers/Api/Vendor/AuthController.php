@@ -141,10 +141,8 @@ class AuthController extends Controller
             'liveStatus' => $vendor->live_status ?? 'not-live',
             'isLiveAndDiscoverable' => (bool) ($vendor->vendorSetting?->is_live_and_discoverable ?? false),
             'dashboardLanguage' => $vendor->vendorSetting?->dashboard_language ?? 'en',
-            'defaultLanguage' => $vendor->vendorSetting?->default_language ?? 'en',
             'supportedLanguages' => collect($vendor->vendorSetting?->supported_languages ?? [])
                 ->prepend('en')
-                ->prepend($vendor->vendorSetting?->default_language ?? 'en')
                 ->unique()
                 ->values()
                 ->all(),
@@ -171,10 +169,8 @@ class AuthController extends Controller
             'permissions' => $member->permissions ?? [],
             'created_at' => $member->created_at?->toISOString(),
             'dashboardLanguage' => $vendor?->vendorSetting?->dashboard_language ?? 'en',
-            'defaultLanguage' => $vendor?->vendorSetting?->default_language ?? 'en',
             'supportedLanguages' => collect($vendor?->vendorSetting?->supported_languages ?? [])
                 ->prepend('en')
-                ->prepend($vendor?->vendorSetting?->default_language ?? 'en')
                 ->unique()
                 ->values()
                 ->all(),

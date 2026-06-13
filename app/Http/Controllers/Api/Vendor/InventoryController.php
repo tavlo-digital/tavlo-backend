@@ -676,10 +676,8 @@ class InventoryController extends Controller
         string $label
     ): string {
         $value = is_string($value) ? trim($value) : '';
-        $default = $this->locales->defaultLanguage($vendor);
         $value = $value
             ?: ($translations['en'][$field] ?? '')
-            ?: ($translations[$default][$field] ?? '')
             ?: collect($translations)
                 ->pluck($field)
                 ->first(fn ($translation) => is_string($translation) && trim($translation) !== '');

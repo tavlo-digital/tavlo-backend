@@ -22,7 +22,6 @@ class TranslationManagementTest extends TestCase
         VendorSetting::create([
             'vendor_id' => $this->vendor->id,
             'dashboard_language' => 'de',
-            'default_language' => 'de',
             'supported_languages' => ['de', 'en'],
         ]);
     }

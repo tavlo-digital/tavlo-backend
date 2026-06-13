@@ -5,7 +5,6 @@ namespace App\Services;
 use App\Models\Vendor;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
-use Illuminate\Support\Collection;
 
 class LocaleService
 {
@@ -38,21 +37,12 @@ class LocaleService
     public function supportedLanguages(Vendor $vendor): array
     {
         $vendor->loadMissing('vendorSetting');
-        $default = $this->defaultLanguage($vendor);
 
         return collect($this->normalizeList($vendor->vendorSetting?->supported_languages ?? []))
             ->prepend('en')
-            ->prepend($default)
             ->unique()
             ->values()
             ->all();
-    }
-
-    public function defaultLanguage(Vendor $vendor): string
-    {
-        $vendor->loadMissing('vendorSetting');
-
-        return $this->normalize($vendor->vendorSetting?->default_language) ?? 'en';
     }
 
     public function dashboardLanguage(Vendor $vendor): string
@@ -71,23 +61,16 @@ class LocaleService
 
             return in_array($explicit, $supported, true)
                 ? $explicit
-                : $this->defaultLanguage($vendor);
+                : 'en';
         }
 
-        foreach ($this->acceptedLanguages($request) as $language) {
-            if (in_array($language, $supported, true)) {
-                return $language;
-            }
-        }
-
-        return $this->defaultLanguage($vendor);
+        return 'en';
     }
 
     public function fallbackChain(Vendor $vendor, string $locale): array
     {
         return collect([
             $this->normalize($locale),
-            $this->defaultLanguage($vendor),
             'en',
         ])->filter()->unique()->values()->all();
     }
@@ -199,20 +182,4 @@ class LocaleService
         }
     }
 
-    private function acceptedLanguages(Request $request): Collection
-    {
-        return collect(explode(',', (string) $request->header('Accept-Language')))
-            ->map(function (string $part) {
-                [$language, $quality] = array_pad(explode(';q=', trim($part), 2), 2, '1');
-
-                return [
-                    'language' => $this->normalize($language),
-                    'quality' => (float) $quality,
-                ];
-            })
-            ->filter(fn (array $entry) => $entry['language'] !== null && $entry['quality'] > 0)
-            ->sortByDesc('quality')
-            ->pluck('language')
-            ->values();
-    }
 }

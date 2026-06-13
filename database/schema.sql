@@ -799,7 +799,6 @@ CREATE TABLE public.vendor_settings (
     enable_reviews boolean NOT NULL DEFAULT true,
     enable_menu_reviews boolean NOT NULL DEFAULT false,
     allow_anonymous_reviews boolean NOT NULL DEFAULT false,
-    default_language character varying NOT NULL DEFAULT 'en' :: character varying,
     supported_languages json,
     loyalty_enabled boolean NOT NULL DEFAULT false,
     points_per_euro integer NOT NULL DEFAULT 10,

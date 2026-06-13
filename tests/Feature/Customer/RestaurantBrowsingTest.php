@@ -492,8 +492,7 @@ class RestaurantBrowsingTest extends TestCase
     public function test_can_get_restaurant_languages_without_authentication(): void
     {
         $this->vendor->vendorSetting->update([
-            'default_language'    => 'de',
-            'supported_languages' => ['en', 'de', 'it'],
+            'supported_languages' => ['de', 'it'],
             'date_format'         => 'MM/DD/YYYY',
             'time_format'         => '12h',
         ]);
@@ -503,26 +502,25 @@ class RestaurantBrowsingTest extends TestCase
         $response->assertOk()
             ->assertJsonPath('vendor.id', $this->vendor->vendor_public_id)
             ->assertJsonPath('vendor.name', 'Test Restaurant')
-            ->assertJsonPath('default_language', 'de')
-            ->assertJsonPath('available_languages', ['de', 'en', 'it'])
+            ->assertJsonPath('default_language', 'en')
+            ->assertJsonPath('available_languages', ['en', 'de', 'it'])
             ->assertJsonPath('date_format', 'MM/DD/YYYY')
             ->assertJsonPath('time_format', '12h')
-            ->assertJsonPath('languages.0.code', 'de')
-            ->assertJsonPath('languages.0.name', 'Deutsch (German)')
+            ->assertJsonPath('languages.0.code', 'en')
+            ->assertJsonPath('languages.0.name', 'English')
             ->assertJsonPath('languages.0.is_default', true);
     }
 
-    public function test_restaurant_languages_include_default_when_supported_languages_are_empty(): void
+    public function test_restaurant_languages_include_english_when_supported_languages_are_empty(): void
     {
         $this->vendor->vendorSetting->update([
-            'default_language'    => 'fr',
             'supported_languages' => null,
         ]);
 
         $this->getJson("/api/customer/restaurants/{$this->vendor->vendor_public_id}/languages")
             ->assertOk()
-            ->assertJsonPath('default_language', 'fr')
-            ->assertJsonPath('available_languages', ['fr', 'en'])
+            ->assertJsonPath('default_language', 'en')
+            ->assertJsonPath('available_languages', ['en'])
             ->assertJsonPath('languages.0.is_default', true);
     }
 

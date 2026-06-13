@@ -65,6 +65,8 @@ class VendorSettingsTest extends TestCase
         $this->assertArrayNotHasKey('acceptMastercard', $payload);
         $this->assertArrayNotHasKey('acceptAmex', $payload);
         $this->assertArrayNotHasKey('acceptBankTransfer', $payload);
+        $this->assertArrayNotHasKey('defaultLanguage', $payload);
+        $this->assertFalse(Schema::hasColumn('vendor_settings', 'default_language'));
     }
 
     public function test_get_settings_requires_authentication(): void
@@ -171,28 +173,28 @@ class VendorSettingsTest extends TestCase
             ]);
     }
 
-    public function test_language_settings_are_independent_and_keep_english_enabled(): void
+    public function test_language_settings_keep_english_enabled_without_a_vendor_default(): void
     {
-        $this->putJson(
+        $response = $this->putJson(
             "/api/vendor/{$this->vendor->vendor_public_id}/settings",
             [
                 'dashboardLanguage' => 'de',
-                'defaultLanguage' => 'it',
                 'supportedLanguages' => ['it'],
             ],
             $this->authHeaders()
-        )
-            ->assertOk()
+        );
+
+        $response->assertOk()
             ->assertJsonPath('dashboardLanguage', 'de')
-            ->assertJsonPath('defaultLanguage', 'it')
-            ->assertJsonPath('supportedLanguages.0', 'it')
-            ->assertJsonPath('supportedLanguages.1', 'en');
+            ->assertJsonPath('supportedLanguages.0', 'en')
+            ->assertJsonPath('supportedLanguages.1', 'it');
 
         $this->assertDatabaseHas('vendor_settings', [
             'vendor_id' => $this->vendor->id,
             'dashboard_language' => 'de',
-            'default_language' => 'it',
         ]);
+        $this->assertArrayNotHasKey('defaultLanguage', $response->json());
+        $this->assertFalse(Schema::hasColumn('vendor_settings', 'default_language'));
     }
 
     public function test_cannot_update_another_vendors_settings(): void
