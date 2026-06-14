@@ -3,7 +3,6 @@
 namespace App\Http\Controllers\Api\Vendor;
 
 use App\Http\Controllers\Controller;
-use App\Models\Order;
 use App\Models\Vendor;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -19,47 +18,57 @@ class DashboardController extends Controller
         $vendor = $this->resolveVendor($vendorId);
         $this->authorizeVendor($request, $vendor);
 
-        $today = Carbon::today();
+        $today     = Carbon::today();
         $yesterday = Carbon::yesterday();
 
-        // ---- Orders for today / yesterday ---
-        $todayOrders     = $vendor->orders()->whereDate('created_at', $today)->get();
-        $yesterdayOrders = $vendor->orders()->whereDate('created_at', $yesterday)->get();
-
-        $revenueToday     = $todayOrders->where('payment_received', true)->sum('amount');
-        $revenueYesterday = $yesterdayOrders->where('payment_received', true)->sum('amount');
-
-        $ordersToday     = $todayOrders->count();
-        $ordersYesterday = $yesterdayOrders->count();
+        // ---- Revenue / order KPIs — DB aggregates only, no full row hydration ----
+        $revenueToday     = (float) $vendor->orders()->whereDate('created_at', $today)->where('payment_received', true)->sum('amount');
+        $revenueYesterday = (float) $vendor->orders()->whereDate('created_at', $yesterday)->where('payment_received', true)->sum('amount');
+        $ordersToday      = $vendor->orders()->whereDate('created_at', $today)->count();
+        $ordersYesterday  = $vendor->orders()->whereDate('created_at', $yesterday)->count();
 
         $avgToday     = $ordersToday     ? round($revenueToday / $ordersToday, 2)     : 0;
         $avgYesterday = $ordersYesterday ? round($revenueYesterday / $ordersYesterday, 2) : 0;
 
-        // ---- Rating ---
-        $ratingData     = $vendor->reviews()->selectRaw('AVG(rating) as avg, COUNT(*) as total')->first();
-        $ratingToday    = $vendor->reviews()->whereDate('created_at', $today)->avg('rating');
+        // ---- Rating — return 0 when no reviews (no all-time avg fallback) ----
+        $ratingToday     = $vendor->reviews()->whereDate('created_at', $today)->avg('rating');
         $ratingYesterday = $vendor->reviews()->whereDate('created_at', $yesterday)->avg('rating');
 
-        // ---- Active orders ---
+        // ---- Active orders & derived kitchen load ----
         $activeOrders = $vendor->orders()
             ->whereIn('status', ['pending', 'confirmed', 'preparing', 'ready'])
             ->count();
 
-        // ---- Tables waiting to pay ---
+        $kitchenLoad = match (true) {
+            $activeOrders >= 15 => 'high',
+            $activeOrders >= 5  => 'medium',
+            default             => 'low',
+        };
+
+        // ---- Occupied tables: distinct table_numbers with active dine-in orders ----
+        $occupiedTables = $vendor->orders()
+            ->whereIn('status', ['pending', 'confirmed', 'preparing', 'ready'])
+            ->whereNotNull('table_number')
+            ->distinct('table_number')
+            ->count('table_number');
+
+        $totalTables = $vendor->restaurantTables()->where('is_active', true)->count();
+
+        // ---- Tables waiting to pay ----
         $tablesWaitingToPay = $vendor->orders()
             ->where('payment_pending', true)
             ->where('payment_received', false)
             ->whereIn('status', ['ready', 'delivered', 'picked_up'])
             ->count();
 
-        // ---- Alerts: unpaid orders older than 10 minutes ---
+        // ---- Alerts ----
+        $alerts = [];
+
         $unpaidOld = $vendor->orders()
             ->where('payment_pending', true)
             ->where('payment_received', false)
             ->where('created_at', '<=', now()->subMinutes(10))
             ->count();
-
-        $alerts = [];
         if ($unpaidOld > 0) {
             $alerts[] = [
                 'id'         => 'unpaid-old',
@@ -69,11 +78,7 @@ class DashboardController extends Controller
             ];
         }
 
-        // ---- Check critical inventory ---
-        $criticalInventory = $vendor->inventoryItems()
-            ->where('quantity', '<=', 0)
-            ->where('track_stock', true)
-            ->count();
+        $criticalInventory = $vendor->inventoryItems()->where('quantity', '<=', 0)->where('track_stock', true)->count();
         if ($criticalInventory > 0) {
             $alerts[] = [
                 'id'         => 'critical-inventory',
@@ -83,7 +88,6 @@ class DashboardController extends Controller
             ];
         }
 
-        // ---- Low-stock inventory ---
         $lowInventory = $vendor->inventoryItems()
             ->where('quantity', '>', 0)
             ->whereColumn('quantity', '<=', 'min_stock')
@@ -98,7 +102,7 @@ class DashboardController extends Controller
             ];
         }
 
-        // ---- Top items by ordered_count from menu_items ---
+        // ---- Top items (all-time ordered_count) ----
         $topItems = $vendor->menuItems()
             ->where('ordered_count', '>', 0)
             ->orderByDesc('ordered_count')
@@ -111,61 +115,62 @@ class DashboardController extends Controller
                 'orderedCount' => (int) $item->ordered_count,
             ]);
 
-        // ---- Recent orders ---
+        // ---- Recent orders ----
         $recentOrders = $vendor->orders()
             ->with('customer:customers.id,first_name,last_name,phone,customer_public_id')
             ->orderByDesc('created_at')
             ->limit(10)
             ->get()
-            ->map(fn (Order $order) => [
-                'id'           => (string) $order->id,
-                'orderNumber'  => $order->order_number ?? "#{$order->id}",
-                'orderType'    => $order->order_type ?? 'dine-in',
-                'tableNumber'  => $order->table_number,
-                'status'       => $order->status,
-                'amount'       => (float) $order->amount,
-                'currency'     => $order->currency,
+            ->map(fn ($order) => [
+                'id'             => (string) $order->id,
+                'orderNumber'    => $order->order_number ?? "#{$order->id}",
+                'orderType'      => $order->order_type ?? 'dine-in',
+                'tableNumber'    => $order->table_number,
+                'status'         => $order->status,
+                'amount'         => (float) $order->amount,
+                'currency'       => $order->currency,
                 'paymentPending' => (bool) $order->payment_pending,
-                'createdAt'    => $order->created_at->toISOString(),
-                'customer'     => $order->customer ? [
+                'createdAt'      => $order->created_at->toISOString(),
+                'customer'       => $order->customer ? [
                     'name'  => trim($order->customer->first_name . ' ' . $order->customer->last_name),
                     'phone' => $order->customer->phone,
                 ] : null,
             ]);
 
-        // ---- Revenue at risk (unpaid ready/delivered orders) ---
-        $revenueAtRisk = $vendor->orders()
+        // ---- Revenue at risk (unpaid ready/delivered orders) ----
+        $revenueAtRisk = (float) $vendor->orders()
             ->where('payment_pending', true)
             ->where('payment_received', false)
             ->whereIn('status', ['ready', 'delivered', 'picked_up', 'served'])
             ->sum('amount');
 
-        // ---- Open tables count ---
-        $totalTables = $vendor->restaurantTables()->where('is_active', true)->count();
+        $currency = $vendor->currency ?? 'EUR';
 
         return response()->json([
             'liveStatus' => [
-                'openTables'          => $totalTables,
-                'activeOrders'        => $activeOrders,
-                'tablesWaitingToPay'  => $tablesWaitingToPay,
+                'occupiedTables'     => $occupiedTables,
+                'totalTables'        => $totalTables,
+                'activeOrders'       => $activeOrders,
+                'tablesWaitingToPay' => $tablesWaitingToPay,
+                'kitchenLoad'        => $kitchenLoad,
             ],
             'todayKPIs' => [
-                'ordersToday'          => $ordersToday,
-                'ordersYesterday'      => $ordersYesterday,
-                'revenueToday'         => round($revenueToday, 2),
-                'revenueYesterday'     => round($revenueYesterday, 2),
-                'avgOrderValue'        => $avgToday,
-                'avgOrderValueYesterday' => $avgYesterday,
-                'customerRating'       => round($ratingToday ?? $ratingData->avg ?? 0, 1),
+                'ordersToday'             => $ordersToday,
+                'ordersYesterday'         => $ordersYesterday,
+                'revenueToday'            => round($revenueToday, 2),
+                'revenueYesterday'        => round($revenueYesterday, 2),
+                'avgOrderValue'           => $avgToday,
+                'avgOrderValueYesterday'  => $avgYesterday,
+                'customerRating'          => round($ratingToday ?? 0, 1),
                 'customerRatingYesterday' => round($ratingYesterday ?? 0, 1),
+                'currency'                => $currency,
             ],
-            'alerts'        => $alerts,
-            'recentOrders'  => $recentOrders,
-            'topItems'      => $topItems,
+            'alerts'       => $alerts,
+            'recentOrders' => $recentOrders,
+            'topItems'     => $topItems,
             'revenueAtRisk' => [
-                'total'        => round($revenueAtRisk, 2),
-                'unpaidTables' => $tablesWaitingToPay,
-                'currency'     => $vendor->currency ?? 'EUR',
+                'total'    => round($revenueAtRisk, 2),
+                'currency' => $currency,
             ],
         ]);
     }
@@ -182,7 +187,12 @@ class DashboardController extends Controller
     private function authorizeVendor(Request $request, Vendor $vendor): void
     {
         $user = $request->user();
-        if ($user && $user->getTable() === 'vendors' && $user->id !== $vendor->id) {
+
+        if (! $user) {
+            abort(401, 'Unauthenticated');
+        }
+
+        if ($user->getTable() === 'vendors' && $user->id !== $vendor->id) {
             abort(403, 'Unauthorized');
         }
     }
