@@ -172,6 +172,6 @@ Route::middleware(['auth:vendor,team_member', 'vendor.staff.access'])->group(fun
     Route::post('{vendorId}/billing/cancel', [BillingController::class, 'cancel'])->name('billing.cancel');
     Route::post('{vendorId}/billing/portal', [BillingController::class, 'portalSession'])->name('billing.portal');
 
-    // Seed demo data
-    Route::post('seed', [SeedController::class, 'seed'])->name('seed');
+    // Seed demo data — local and staging only, returns 404 in production
+    Route::post('seed', [SeedController::class, 'seed'])->name('seed')->middleware('env:local,staging');
 });
