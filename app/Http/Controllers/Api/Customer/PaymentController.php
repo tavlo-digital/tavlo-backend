@@ -167,6 +167,7 @@ class PaymentController extends Controller
 
             $order->update([
                 'amount' => $amount,
+                'service_fee' => $order->service_fee ?? 0,
                 'currency' => strtoupper($currency),
                 'payment_method' => 'stripe',
                 'transaction_id' => $intent['id'],
@@ -277,6 +278,7 @@ class PaymentController extends Controller
         DB::transaction(function () use ($order, $payment, $baseAmount, $tipAmount, $payableAmount, $currency, $updatedIntent, $metadata) {
             $order->update([
                 'amount' => $baseAmount,
+                'service_fee' => $order->service_fee ?? 0,
                 'tip_amount' => $tipAmount,
                 'currency' => strtoupper($currency),
                 'payment_method' => 'stripe',
@@ -450,6 +452,7 @@ class PaymentController extends Controller
         }
 
         $serviceFee = round($itemsGrossTotal * ($serviceFeeRate / 100), 2);
+        $order->service_fee = $serviceFee;
 
         return round($itemsGrossTotal + $serviceFee, 2);
     }

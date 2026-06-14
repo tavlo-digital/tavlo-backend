@@ -223,10 +223,10 @@ class OrderHistoryController extends Controller
         $settings = $vendor?->vendorSetting;
         $vendorCountry = $vendor?->country ?? 'AT';
         $items = $this->linkedCartItems($order);
-        $serviceFeeRate = (float) ($settings?->service_fee_rate ?? 0);
 
         $taxGroups = TaxCalculationService::computeTaxGroups($items, $vendorCountry, true);
-        $totals = TaxCalculationService::computeTotals($taxGroups, $serviceFeeRate);
+        $totals = TaxCalculationService::computeTotals($taxGroups, 0);
+        $totals = $this->applyStoredServiceFee($totals, $taxGroups, $order);
 
         $receiptTip = round((float) ($order->tip_amount ?? 0), 2);
         $totals['total_tips'] = $receiptTip;
@@ -405,10 +405,10 @@ class OrderHistoryController extends Controller
     {
         $items = $this->linkedCartItems($order);
         $vendorCountry = $order->vendor?->country ?? 'AT';
-        $serviceFeeRate = (float) ($order->vendor?->vendorSetting?->service_fee_rate ?? 0);
 
         $taxGroups = TaxCalculationService::computeTaxGroups($items, $vendorCountry, true);
-        $totals = TaxCalculationService::computeTotals($taxGroups, $serviceFeeRate);
+        $totals = TaxCalculationService::computeTotals($taxGroups, 0);
+        $totals = $this->applyStoredServiceFee($totals, $taxGroups, $order);
 
         $tipAmount = round((float) ($order->tip_amount ?? 0), 2);
         $totals['total_tips'] = $tipAmount;
@@ -527,10 +527,10 @@ class OrderHistoryController extends Controller
         $settings = $vendor?->vendorSetting;
         $items = $this->linkedCartItems($order);
         $vendorCountry = $vendor?->country ?? 'AT';
-        $serviceFeeRate = (float) ($settings?->service_fee_rate ?? 0);
 
         $taxGroups = TaxCalculationService::computeTaxGroups($items, $vendorCountry, true);
-        $totals = TaxCalculationService::computeTotals($taxGroups, $serviceFeeRate);
+        $totals = TaxCalculationService::computeTotals($taxGroups, 0);
+        $totals = $this->applyStoredServiceFee($totals, $taxGroups, $order);
 
         $tipAmount = round((float) ($order->tip_amount ?? 0), 2);
         $totals['total_tips'] = $tipAmount;
@@ -574,9 +574,9 @@ class OrderHistoryController extends Controller
         $sessionCustomerNames = $this->sessionCustomerNames($ordersById);
 
         $allItems = $ownedItems->merge($sharedIntoItems);
-        $serviceFeeRate = (float) ($order->vendor?->vendorSetting?->service_fee_rate ?? 0);
         $taxGroups = TaxCalculationService::computeTaxGroups($allItems, $vendorCountry, true);
-        $totals = TaxCalculationService::computeTotals($taxGroups, $serviceFeeRate);
+        $totals = TaxCalculationService::computeTotals($taxGroups, 0);
+        $totals = $this->applyStoredServiceFee($totals, $taxGroups, $order);
 
         return [
             'id' => $order->id,
@@ -787,6 +787,19 @@ class OrderHistoryController extends Controller
         }
 
         return 'unpaid';
+    }
+
+    private function applyStoredServiceFee(array $totals, array $taxGroups, Order $order): array
+    {
+        $orderAmount = round((float) $order->amount, 2);
+        $itemsGross = round(array_sum(array_column($taxGroups, 'gross_amount')), 2);
+
+        if ($orderAmount > $itemsGross) {
+            $totals['service_fee'] = round($orderAmount - $itemsGross, 2);
+            $totals['grand_total'] = $orderAmount;
+        }
+
+        return $totals;
     }
 
     private function cartItemStatus(CartItem $item): ?string

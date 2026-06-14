@@ -817,7 +817,13 @@ class CartController extends Controller
             })->values();
 
             $personTaxGroups = TaxCalculationService::computeTaxGroups($personCartItems, $vendorCountry, true);
-            $personTotals = TaxCalculationService::computeTotals($personTaxGroups, $serviceFeeRate);
+            $personTotals = TaxCalculationService::computeTotals($personTaxGroups, 0);
+
+            $itemsGross = round(array_sum(array_column($personTaxGroups, 'gross_amount')), 2);
+            if ($personTotal > $itemsGross) {
+                $personTotals['service_fee'] = round($personTotal - $itemsGross, 2);
+                $personTotals['grand_total'] = round($personTotal, 2);
+            }
 
             $totalTips = round((float) $personOrders->sum(fn (Order $o) => (float) ($o->tip_amount ?? 0)), 2);
             $personTotals['total_tips'] = $totalTips;
