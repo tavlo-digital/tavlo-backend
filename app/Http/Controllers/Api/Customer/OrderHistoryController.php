@@ -791,13 +791,9 @@ class OrderHistoryController extends Controller
 
     private function applyStoredServiceFee(array $totals, array $taxGroups, Order $order): array
     {
-        $orderAmount = round((float) $order->amount, 2);
-        $itemsGross = round(array_sum(array_column($taxGroups, 'gross_amount')), 2);
-
-        if ($orderAmount > $itemsGross) {
-            $totals['service_fee'] = round($orderAmount - $itemsGross, 2);
-            $totals['grand_total'] = $orderAmount;
-        }
+        $serviceFee = round((float) ($order->service_fee ?? 0), 2);
+        $totals['service_fee'] = $serviceFee;
+        $totals['grand_total'] = round($totals['grand_total'] + $serviceFee, 2);
 
         return $totals;
     }

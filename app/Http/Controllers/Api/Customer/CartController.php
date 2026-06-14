@@ -86,6 +86,7 @@ class CartController extends Controller
             ->map(fn ($id) => (int) $id)
             ->all();
 
+        $mySession = $sessions->firstWhere('id', $mySession->id) ?? $mySession;
         $vendorCountry = $this->vendorCountry($mySession);
         $serviceFeeRate = $this->serviceFeeRate($mySession);
 
@@ -366,6 +367,7 @@ class CartController extends Controller
             ->whereIn('id', $sessionIds)
             ->get();
 
+        $mySession = $sessions->firstWhere('id', $mySession->id) ?? $mySession;
         $vendorCountry = $this->vendorCountry($mySession);
         $serviceFeeRate = $this->serviceFeeRate($mySession);
         $tableTotal = 0.0;
@@ -819,11 +821,9 @@ class CartController extends Controller
             $personTaxGroups = TaxCalculationService::computeTaxGroups($personCartItems, $vendorCountry, true);
             $personTotals = TaxCalculationService::computeTotals($personTaxGroups, 0);
 
-            $itemsGross = round(array_sum(array_column($personTaxGroups, 'gross_amount')), 2);
-            if ($personTotal > $itemsGross) {
-                $personTotals['service_fee'] = round($personTotal - $itemsGross, 2);
-                $personTotals['grand_total'] = round($personTotal, 2);
-            }
+            $personServiceFee = round((float) $personOrders->sum(fn (Order $o) => (float) ($o->service_fee ?? 0)), 2);
+            $personTotals['service_fee'] = $personServiceFee;
+            $personTotals['grand_total'] = round($personTotals['grand_total'] + $personServiceFee, 2);
 
             $totalTips = round((float) $personOrders->sum(fn (Order $o) => (float) ($o->tip_amount ?? 0)), 2);
             $personTotals['total_tips'] = $totalTips;
