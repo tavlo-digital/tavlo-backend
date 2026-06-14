@@ -622,6 +622,11 @@ class CartController extends Controller
             return response()->json(['message' => 'No open order found.'], 404);
         }
 
+        // Prevent overwriting after redemption has already been committed (cash confirmed)
+        if ((int) ($order->loyalty_points_redeemed ?? 0) > 0 && $order->payment_received) {
+            return response()->json(['message' => 'Payment already confirmed.'], 422);
+        }
+
         $order->update([
             'loyalty_points_redeemed' => $data['loyalty_points_redeemed'],
             'loyalty_discount' => $data['loyalty_discount'],

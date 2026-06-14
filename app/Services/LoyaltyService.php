@@ -105,6 +105,17 @@ class LoyaltyService
     public function commitRedemption(int $customerId, int $vendorId, int $pointsRedeemed, int $orderId): void
     {
         DB::transaction(function () use ($customerId, $vendorId, $pointsRedeemed, $orderId) {
+            // Idempotency guard — do not deduct twice for the same order
+            $alreadyRedeemed = LoyaltyTransaction::where('reference_type', 'order')
+                ->where('reference_id', $orderId)
+                ->where('type', 'redeemed')
+                ->lockForUpdate()
+                ->exists();
+
+            if ($alreadyRedeemed) {
+                return;
+            }
+
             $wallet = CustomerLoyaltyPoint::where('customer_id', $customerId)
                 ->where('vendor_id', $vendorId)
                 ->lockForUpdate()

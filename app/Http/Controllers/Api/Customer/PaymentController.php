@@ -463,8 +463,9 @@ class PaymentController extends Controller
         }
 
         $serviceFee = round($itemsGrossTotal * ($serviceFeeRate / 100), 2);
+        $promotionDiscount = round((float) ($order->promotion_discount ?? 0), 2);
 
-        return round($itemsGrossTotal + $serviceFee, 2);
+        return round(max(0.01, $itemsGrossTotal + $serviceFee - $promotionDiscount), 2);
     }
 
     private function computeTableOrderAmount(Order $order, string $vendorCountry = 'AT'): float
