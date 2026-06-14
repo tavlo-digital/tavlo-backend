@@ -215,6 +215,8 @@ class PaymentController extends Controller
             ],
             'customer_id' => ['required', 'integer'],
             'tip_amount' => ['required', 'numeric', 'min:0', 'max:999999.99'],
+            'loyalty_discount' => ['sometimes', 'numeric', 'min:0', 'max:999999.99'],
+            'loyalty_points_redeemed' => ['sometimes', 'integer', 'min:0'],
         ]);
 
         $customer = $request->user();
@@ -249,7 +251,9 @@ class PaymentController extends Controller
         $currency = $payment->currency ?: $order->currency ?: ($order->vendor?->currency ?? 'EUR');
         $baseAmount = $this->finalOrderAmount($order);
         $tipAmount = round((float) $data['tip_amount'], 2);
-        $payableAmount = round($baseAmount + $tipAmount, 2);
+        $loyaltyDiscount = round((float) ($data['loyalty_discount'] ?? 0), 2);
+        $loyaltyPointsRedeemed = (int) ($data['loyalty_points_redeemed'] ?? 0);
+        $payableAmount = round(max(0.01, $baseAmount - $loyaltyDiscount + $tipAmount), 2);
 
         if ($payableAmount <= 0) {
             return response()->json(['message' => 'Payment amount must be greater than zero.'], 422);
@@ -262,6 +266,7 @@ class PaymentController extends Controller
             'customer_id' => (string) $customer->id,
             'tip_amount' => number_format($tipAmount, 2, '.', ''),
             'base_amount' => number_format($baseAmount, 2, '.', ''),
+            'loyalty_discount' => number_format($loyaltyDiscount, 2, '.', ''),
             'payable_amount' => number_format($payableAmount, 2, '.', ''),
         ]);
 
@@ -277,8 +282,8 @@ class PaymentController extends Controller
             return response()->json(['message' => 'PaymentIntent could not be updated.'], 422);
         }
 
-        DB::transaction(function () use ($order, $payment, $baseAmount, $tipAmount, $payableAmount, $currency, $updatedIntent, $metadata) {
-            $order->update([
+        DB::transaction(function () use ($order, $payment, $baseAmount, $tipAmount, $loyaltyDiscount, $loyaltyPointsRedeemed, $payableAmount, $currency, $updatedIntent, $metadata) {
+            $orderUpdates = [
                 'amount' => $baseAmount,
                 'tip_amount' => $tipAmount,
                 'currency' => strtoupper($currency),
@@ -286,7 +291,12 @@ class PaymentController extends Controller
                 'transaction_id' => $updatedIntent['id'],
                 'payment_pending' => true,
                 'payment_received' => false,
-            ]);
+            ];
+            if ($loyaltyPointsRedeemed > 0) {
+                $orderUpdates['loyalty_points_redeemed'] = $loyaltyPointsRedeemed;
+                $orderUpdates['loyalty_discount'] = $loyaltyDiscount;
+            }
+            $order->update($orderUpdates);
 
             $payment->update([
                 'amount' => $payableAmount,
@@ -537,6 +547,10 @@ class PaymentController extends Controller
             ]);
 
             try { $this->loyaltyService->earnPointsForOrder($order->load('vendor')); } catch (\Throwable) {}
+
+            if ($order->customer_id && $order->vendor_id && (int) ($order->loyalty_points_redeemed ?? 0) > 0) {
+                try { $this->loyaltyService->commitRedemption($order->customer_id, $order->vendor_id, (int) $order->loyalty_points_redeemed, $order->id); } catch (\Throwable) {}
+            }
 
             return;
         }

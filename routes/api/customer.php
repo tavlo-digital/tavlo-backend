@@ -87,6 +87,7 @@ Route::middleware(['auth:customer', 'track.session.activity'])->group(function (
     Route::post('table/order/draft',     [CartController::class, 'createOrderDraft'])->name('table.order.draft');
     Route::put('table/order/update/{order_id}', [CartController::class, 'updateOrder'])->name('table.order.update');
     Route::post('table/order/confirmed', [CartController::class, 'createOrderConfirmed'])->name('table.order.confirmed');
+    Route::patch('table/order/loyalty',  [CartController::class, 'saveLoyaltyRedemption'])->name('table.order.loyalty');
     Route::get('table/history',          [CartController::class, 'tableHistory'])->name('table.history');
 
     // Table cart

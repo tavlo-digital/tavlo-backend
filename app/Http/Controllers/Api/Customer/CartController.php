@@ -600,6 +600,37 @@ class CartController extends Controller
     }
 
     /**
+     * PATCH /api/customer/table/order/loyalty
+     *
+     * Save loyalty redemption intent on the customer's current open order.
+     * Points are not deducted here; deduction happens at payment confirmation.
+     */
+    public function saveLoyaltyRedemption(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'loyalty_points_redeemed' => ['required', 'integer', 'min:0'],
+            'loyalty_discount' => ['required', 'numeric', 'min:0'],
+        ]);
+
+        $mySession = $this->activeSession($request);
+        if (! $mySession) {
+            return response()->json(['message' => 'No active table session found.'], 422);
+        }
+
+        $order = $this->currentOpenOrder($request->user()->id, $mySession->id);
+        if (! $order) {
+            return response()->json(['message' => 'No open order found.'], 404);
+        }
+
+        $order->update([
+            'loyalty_points_redeemed' => $data['loyalty_points_redeemed'],
+            'loyalty_discount' => $data['loyalty_discount'],
+        ]);
+
+        return response()->json(['message' => 'Loyalty redemption saved.']);
+    }
+
+    /**
      * POST /api/customer/table/order/confirmed
      *
      * Confirm the customer's latest draft order. Recomputes the final amount
@@ -623,7 +654,24 @@ class CartController extends Controller
 
         $total = $this->computeOrderAmount($order, $mySession->id, includeOpenOwnedItems: true, vendorCountry: $this->vendorCountry($mySession));
 
-        DB::transaction(function () use ($order, $mySession, $total) {
+        // Evaluate active promotion and apply discount to the confirmed total
+        $promotionId = null;
+        $promotionDiscount = 0.0;
+        try {
+            $vendor = $mySession->relationLoaded('vendor') ? $mySession->vendor : $mySession->load('vendor')->vendor;
+            if ($vendor) {
+                $promo = app(\App\Services\LoyaltyService::class)->evaluatePromotion($vendor->id, now());
+                if ($promo) {
+                    $promotionId = $promo->id;
+                    $promotionDiscount = $promo->discount_type === 'percentage'
+                        ? round($total * ($promo->discount_value / 100), 2)
+                        : round(min((float) $promo->discount_value, $total), 2);
+                    $total = round($total - $promotionDiscount, 2);
+                }
+            }
+        } catch (\Throwable) {}
+
+        DB::transaction(function () use ($order, $mySession, $total, $promotionId, $promotionDiscount) {
             CartItem::where('table_scan_session_id', $mySession->id)
                 ->whereNull('order_id')
                 ->update([
@@ -631,10 +679,13 @@ class CartController extends Controller
                     'received_at' => now(),
                 ]);
 
-            $order->update([
-                'status' => 'confirmed',
-                'amount' => $total,
-            ]);
+            $updates = ['status' => 'confirmed', 'amount' => $total];
+            if ($promotionId) {
+                $updates['promotion_id'] = $promotionId;
+                $updates['promotion_discount'] = $promotionDiscount;
+            }
+
+            $order->update($updates);
         });
 
         $customerName = $this->customerName($request->user());

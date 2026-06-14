@@ -176,6 +176,10 @@ class OrderController extends Controller
 
         try { app(\App\Services\LoyaltyService::class)->earnPointsForOrder($order->load('vendor')); } catch (\Throwable) {}
 
+        if ($order->customer_id && $order->vendor_id && (int) ($order->loyalty_points_redeemed ?? 0) > 0) {
+            try { app(\App\Services\LoyaltyService::class)->commitRedemption($order->customer_id, $order->vendor_id, (int) $order->loyalty_points_redeemed, $order->id); } catch (\Throwable) {}
+        }
+
         $this->notifySessionCustomers($order, 'payment_updated', 'Your cash payment has been confirmed.');
 
         return response()->json($this->formatOrder($order->fresh()->load('customer')));
