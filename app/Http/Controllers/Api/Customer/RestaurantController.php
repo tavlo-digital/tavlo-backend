@@ -409,8 +409,9 @@ class RestaurantController extends Controller
         $ranked = $items->sortByDesc('ordered_count')->values();
 
         $vendorCountry = $vendor->country;
+        $showNutrition = (bool) ($vendor->vendorSetting?->show_nutrition ?? true);
 
-        $data = $items->map(function ($item) use ($ranked, $vendorCountry, $vendor, $locale) {
+        $data = $items->map(function ($item) use ($ranked, $vendorCountry, $vendor, $locale, $showNutrition) {
             $rank = $ranked->search(fn ($r) => $r->id === $item->id);
             $vatRate = TaxCalculationService::itemVatRate($item, $vendorCountry);
 
@@ -445,10 +446,10 @@ class RestaurantController extends Controller
                 'review_count' => (int) ($item->review_count ?? 0),
                 'ordered_count' => (int) ($item->ordered_count ?? 0),
                 'popularity_rank' => $rank !== false ? $rank + 1 : null,
-                'calories' => $item->calories,
-                'fat' => $item->fat ? (float) $item->fat : null,
-                'carbs' => $item->carbs ? (float) $item->carbs : null,
-                'protein' => $item->protein ? (float) $item->protein : null,
+                'calories' => $showNutrition ? $item->calories : null,
+                'fat' => $showNutrition && $item->fat ? (float) $item->fat : null,
+                'carbs' => $showNutrition && $item->carbs ? (float) $item->carbs : null,
+                'protein' => $showNutrition && $item->protein ? (float) $item->protein : null,
                 'dietary_preference' => $item->dietary_preference,
                 'paid_addons' => $this->formatPaidAddonsGross($item->paid_addons ?? [], $item->tax_category ?? 'food', $vendorCountry),
                 'free_addons' => $item->free_addons ?? [],
@@ -514,6 +515,7 @@ class RestaurantController extends Controller
 
         $vendorCountry = $vendor->country;
         $vatRate = TaxCalculationService::itemVatRate($item, $vendorCountry);
+        $showNutrition = (bool) ($vendor->vendorSetting?->show_nutrition ?? true);
 
         return response()->json([
             'id' => $item->id,
@@ -546,10 +548,10 @@ class RestaurantController extends Controller
             'rating' => (float) ($item->rating ?? 0),
             'review_count' => (int) ($item->review_count ?? 0),
             'ordered_count' => (int) ($item->ordered_count ?? 0),
-            'calories' => $item->calories,
-            'fat' => $item->fat ? (float) $item->fat : null,
-            'carbs' => $item->carbs ? (float) $item->carbs : null,
-            'protein' => $item->protein ? (float) $item->protein : null,
+            'calories' => $showNutrition ? $item->calories : null,
+            'fat' => $showNutrition && $item->fat ? (float) $item->fat : null,
+            'carbs' => $showNutrition && $item->carbs ? (float) $item->carbs : null,
+            'protein' => $showNutrition && $item->protein ? (float) $item->protein : null,
             'dietary_preference' => $item->dietary_preference,
             'paid_addons' => $this->formatPaidAddonsGross($item->paid_addons ?? [], $item->tax_category ?? 'food', $vendorCountry),
             'free_addons' => $item->free_addons ?? [],

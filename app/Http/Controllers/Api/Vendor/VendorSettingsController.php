@@ -146,6 +146,7 @@ class VendorSettingsController extends Controller
             'showPhonePublic' => ['sometimes', 'nullable', 'boolean'],
             'showEmailPublic' => ['sometimes', 'nullable', 'boolean'],
             'showWebsitePublic' => ['sometimes', 'nullable', 'boolean'],
+            'showNutrition' => ['sometimes', 'nullable', 'boolean'],
         ]);
 
         // ---- Update core vendor fields ----
@@ -242,6 +243,7 @@ class VendorSettingsController extends Controller
             'showPhonePublic' => 'show_phone_public',
             'showEmailPublic' => 'show_email_public',
             'showWebsitePublic' => 'show_website_public',
+            'showNutrition' => 'show_nutrition',
         ];
 
         $settingsData = [];
@@ -666,6 +668,7 @@ class VendorSettingsController extends Controller
             'showPhonePublic' => $settings->show_phone_public ?? true,
             'showEmailPublic' => $settings->show_email_public ?? false,
             'showWebsitePublic' => $settings->show_website_public ?? true,
+            'showNutrition' => $settings->show_nutrition ?? true,
         ];
     }
 
