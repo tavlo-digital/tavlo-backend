@@ -95,7 +95,7 @@ class CartController extends Controller
                     && ! $this->cartItemBelongsToOrderedOrder($item, $orderedOrderIds))
                 ->values();
 
-            $personTaxGroups = TaxCalculationService::computeTaxGroups($personItems, $vendorCountry);
+            $personTaxGroups = TaxCalculationService::computeTaxGroups($personItems, $vendorCountry, true);
             $personTotals = TaxCalculationService::computeTotals($personTaxGroups, $serviceFeeRate);
 
             return [
@@ -406,7 +406,7 @@ class CartController extends Controller
                     ];
                 })->values();
 
-            $personTaxGroups = TaxCalculationService::computeTaxGroups($personCartItems, $vendorCountry);
+            $personTaxGroups = TaxCalculationService::computeTaxGroups($personCartItems, $vendorCountry, true);
             $personTotals = TaxCalculationService::computeTotals($personTaxGroups, $serviceFeeRate);
 
             return [
@@ -542,6 +542,8 @@ class CartController extends Controller
 
         $sessionIds = $this->tableSessionIds($mySession);
 
+        $affectedOrderIds = collect([$order->id]);
+
         if (! empty($data['shared_item'])) {
             $cartItem = CartItem::where('id', $data['shared_item'])
                 ->whereIn('table_scan_session_id', $sessionIds)
@@ -562,6 +564,11 @@ class CartController extends Controller
             $existing = is_array($cartItem->shared_order_ids) ? $cartItem->shared_order_ids : [];
             $existing = array_values(array_unique(array_map('intval', array_merge($existing, [$order->id]))));
             $cartItem->update(['shared_order_ids' => $existing]);
+
+            if ($cartItem->order_id) {
+                $affectedOrderIds->push($cartItem->order_id);
+            }
+            $affectedOrderIds = $affectedOrderIds->merge(array_map('intval', $existing));
         }
 
         if (! empty($data['unshared_item'])) {
@@ -586,11 +593,34 @@ class CartController extends Controller
             }
 
             $existing = is_array($cartItem->shared_order_ids) ? $cartItem->shared_order_ids : [];
+            $affectedOrderIds = $affectedOrderIds->merge(array_map('intval', $existing));
+            if ($cartItem->order_id) {
+                $affectedOrderIds->push($cartItem->order_id);
+            }
+
             $filtered = array_values(array_filter(
                 array_map('intval', $existing),
                 fn (int $id) => $id !== $order->id
             ));
             $cartItem->update(['shared_order_ids' => $filtered]);
+        }
+
+        if (! $mySession->relationLoaded('vendor')) {
+            $mySession->load('vendor.vendorSetting');
+        }
+        $vendorCountry = $this->vendorCountry($mySession);
+        $ordersToRecalc = Order::whereIn('id', $affectedOrderIds->unique()->values()->all())
+            ->where('payment_received', false)
+            ->whereNotNull('table_scan_session_id')
+            ->get();
+
+        foreach ($ordersToRecalc as $affectedOrder) {
+            $newAmount = $this->computeOrderAmount(
+                $affectedOrder,
+                $affectedOrder->table_scan_session_id,
+                vendorCountry: $vendorCountry
+            );
+            $affectedOrder->update(['amount' => $newAmount]);
         }
 
         $customerName = $this->customerName($request->user());
@@ -786,7 +816,7 @@ class CartController extends Controller
                 return $this->orderPayload($order, $itemRows, $vendor);
             })->values();
 
-            $personTaxGroups = TaxCalculationService::computeTaxGroups($personCartItems, $vendorCountry);
+            $personTaxGroups = TaxCalculationService::computeTaxGroups($personCartItems, $vendorCountry, true);
             $personTotals = TaxCalculationService::computeTotals($personTaxGroups, $serviceFeeRate);
 
             $totalTips = round((float) $personOrders->sum(fn (Order $o) => (float) ($o->tip_amount ?? 0)), 2);

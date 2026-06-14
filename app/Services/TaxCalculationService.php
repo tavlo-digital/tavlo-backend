@@ -161,7 +161,7 @@ class TaxCalculationService
      * Each item's line total is decomposed into base / addon / modifier contributions,
      * each attributed to its own tax category.
      */
-    public static function computeTaxGroups(Collection $cartItems, string $vendorCountry): array
+    public static function computeTaxGroups(Collection $cartItems, string $vendorCountry, bool $applySharing = false): array
     {
         $buckets = [];
 
@@ -174,14 +174,15 @@ class TaxCalculationService
             $qty = (int) $item->quantity;
             $itemTaxCategory = $menuItem->tax_category ?? 'food';
             $itemVatRate = self::itemVatRate($menuItem, $vendorCountry);
+            $shareCount = $applySharing ? (1 + count($item->shared_order_ids ?? [])) : 1;
 
-            $baseGross = self::itemBaseGross($menuItem, $vendorCountry) * $qty;
+            $baseGross = self::itemBaseGross($menuItem, $vendorCountry) * $qty / $shareCount;
             self::addToBucket($buckets, $itemTaxCategory, $itemVatRate, $baseGross);
 
             foreach ($item->paid_addons ?? [] as $addon) {
                 $addonSlug = $addon['taxCategory'] ?? $addon['tax_category'] ?? $itemTaxCategory;
                 $addonVatRate = self::addonVatRate($addon, $itemTaxCategory, $vendorCountry);
-                $addonGross = self::gross((float) ($addon['price'] ?? 0), $addonVatRate) * $qty;
+                $addonGross = self::gross((float) ($addon['price'] ?? 0), $addonVatRate) * $qty / $shareCount;
                 self::addToBucket($buckets, $addonSlug, $addonVatRate, $addonGross);
             }
 
@@ -190,7 +191,7 @@ class TaxCalculationService
                 $groupVatRate = self::modifierGroupVatRate($groupSlug, $itemTaxCategory, $vendorCountry);
 
                 foreach ($group['options'] ?? [] as $option) {
-                    $optGross = self::gross((float) ($option['price_adjustment'] ?? 0), $groupVatRate) * $qty;
+                    $optGross = self::gross((float) ($option['price_adjustment'] ?? 0), $groupVatRate) * $qty / $shareCount;
                     self::addToBucket($buckets, $groupSlug, $groupVatRate, $optGross);
                 }
             }

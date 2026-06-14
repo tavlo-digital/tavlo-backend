@@ -225,7 +225,7 @@ class OrderHistoryController extends Controller
         $items = $this->linkedCartItems($order);
         $serviceFeeRate = (float) ($settings?->service_fee_rate ?? 0);
 
-        $taxGroups = TaxCalculationService::computeTaxGroups($items, $vendorCountry);
+        $taxGroups = TaxCalculationService::computeTaxGroups($items, $vendorCountry, true);
         $totals = TaxCalculationService::computeTotals($taxGroups, $serviceFeeRate);
 
         $receiptTip = round((float) ($order->tip_amount ?? 0), 2);
@@ -245,12 +245,16 @@ class OrderHistoryController extends Controller
         $countryCode = TaxCalculationService::countryCode($vendorCountry);
         $locale = 'en-'.$countryCode;
 
-        $receiptItems = $items->map(function (CartItem $item) use ($vendorCountry) {
+        $receiptItems = $items->map(function (CartItem $item) use ($order, $vendorCountry) {
             $menuItem = $item->menuItem;
             $unitPrice = $this->cartItemUnitPrice($item, $vendorCountry);
             $lineGross = round($unitPrice * $item->quantity, 2);
             $taxCategory = $menuItem?->tax_category ?? 'food';
             $vatRate = TaxCalculationService::itemVatRate($menuItem, $vendorCountry);
+            $vatAmount = TaxCalculationService::vatFromGross($lineGross, $vatRate);
+
+            $sharedBetween = 1 + count(is_array($item->shared_order_ids) ? $item->shared_order_ids : []);
+            $myShare = round($lineGross / $sharedBetween, 2);
 
             return [
                 'id' => $item->id,
@@ -260,6 +264,10 @@ class OrderHistoryController extends Controller
                 'line_gross' => $lineGross,
                 'tax_category' => strtoupper($taxCategory),
                 'vat_rate' => $vatRate,
+                'vat_amount' => $vatAmount,
+                'is_mine' => (int) $item->order_id === (int) $order->id,
+                'shared_between' => $sharedBetween,
+                'my_share' => $myShare,
             ];
         })->values()->all();
 
@@ -399,52 +407,83 @@ class OrderHistoryController extends Controller
         $vendorCountry = $order->vendor?->country ?? 'AT';
         $serviceFeeRate = (float) ($order->vendor?->vendorSetting?->service_fee_rate ?? 0);
 
-        $taxGroups = TaxCalculationService::computeTaxGroups($items, $vendorCountry);
+        $taxGroups = TaxCalculationService::computeTaxGroups($items, $vendorCountry, true);
         $totals = TaxCalculationService::computeTotals($taxGroups, $serviceFeeRate);
 
         $tipAmount = round((float) ($order->tip_amount ?? 0), 2);
         $totals['total_tips'] = $tipAmount;
         $totals['grand_total'] = round($totals['grand_total'] + $tipAmount, 2);
 
+        $ordersById = $this->sharingOrdersById($items);
+        $sessionCustomerNames = $this->sessionCustomerNames($ordersById);
+        $vendor = $order->vendor;
+
         return [
             'order_id' => $order->order_number ?? (string) $order->id,
             'order_public_id' => $order->order_public_id,
-            'created_at' => $this->dateTimes->formatDateTime($order->created_at, $order->vendor),
+            'created_at' => $this->dateTimes->formatDateTime($order->created_at, $vendor),
             'order_type' => $order->order_type,
             'payment_status' => $this->paymentStatus($order),
             'payment_method' => $order->payment_method,
             'items_count' => (int) $items->sum('quantity'),
             'total_amount' => round((float) $order->amount, 2),
             'tip_amount' => $tipAmount,
-            'items' => $items->map(fn (CartItem $item) => $this->formatHistoryItem($item, $vendorCountry))->values()->all(),
+            'items' => $items->map(fn (CartItem $item) => $this->formatHistoryItem($item, $order, $ordersById, $sessionCustomerNames, $vendorCountry, $vendor))->values()->all(),
             'tax_groups' => $taxGroups,
             'totals' => $totals,
         ];
     }
 
-    private function formatHistoryItem(CartItem $item, string $vendorCountry = 'AT'): array
+    private function formatHistoryItem(CartItem $item, Order $order, Collection $ordersById, Collection $sessionCustomerNames, string $vendorCountry = 'AT', $vendor = null): array
     {
         $menuItem = $item->menuItem;
         $itemTaxCategory = $menuItem?->tax_category ?? 'food';
         $unitPrice = $this->cartItemUnitPrice($item, $vendorCountry);
         $lineTotal = round($unitPrice * $item->quantity, 2);
         $vatRate = TaxCalculationService::itemVatRate($menuItem, $vendorCountry);
+        $vatAmount = TaxCalculationService::vatFromGross($lineTotal, $vatRate);
+
+        $orderIds = array_values(array_map('intval', is_array($item->shared_order_ids) ? $item->shared_order_ids : []));
+        $sharedBetween = 1 + count($orderIds);
+        $myShare = round($lineTotal / $sharedBetween, 2);
+
+        $sharedWith = array_values(array_filter(array_map(function (int $oid) use ($ordersById, $sessionCustomerNames) {
+            $o = $ordersById->get($oid);
+            if (! $o) {
+                return null;
+            }
+
+            return [
+                'order_id' => $o->id,
+                'customer_id' => $o->customer_id,
+                'customer_name' => $sessionCustomerNames->get($o->table_scan_session_id, 'Guest'),
+            ];
+        }, $orderIds)));
 
         return [
-            'id' => $item->id,
+            'cart_item_id' => $item->id,
             'menu_item_id' => $item->menu_item_id,
             'name' => $menuItem?->name,
+            'image_url' => $this->media->url($menuItem?->image_url),
             'quantity' => $item->quantity,
             'unit_price' => $unitPrice,
-            'line_total' => $lineTotal,
-            'vat_rate' => $vatRate,
-            'tax_category' => $itemTaxCategory,
-            'image_url' => $this->media->url($menuItem?->image_url),
-            'notes' => $item->notes,
             'paid_addons' => $this->formatPaidAddons($item, $itemTaxCategory, $vendorCountry),
             'free_addons' => $item->free_addons ?? [],
             'removed_items' => $item->removed_items ?? [],
             'selected_modifiers' => $this->formatSelectedModifiers($item, $itemTaxCategory, $vendorCountry),
+            'vat_rate' => $vatRate,
+            'tax_category' => $itemTaxCategory,
+            'vat_amount' => $vatAmount,
+            'line_total' => $lineTotal,
+            'is_mine' => (int) $item->order_id === (int) $order->id,
+            'shared_between' => $sharedBetween,
+            'shared_with' => $sharedWith,
+            'my_share' => $myShare,
+            'status' => $this->cartItemStatus($item),
+            'received_at' => $this->dateTimes->formatDateTime($item->received_at, $vendor),
+            'preparing_start_at' => $this->dateTimes->formatDateTime($item->preparing_start_at, $vendor),
+            'ready_at' => $this->dateTimes->formatDateTime($item->ready_at, $vendor),
+            'served_at' => $this->dateTimes->formatDateTime($item->served_at, $vendor),
         ];
     }
 
@@ -490,12 +529,15 @@ class OrderHistoryController extends Controller
         $vendorCountry = $vendor?->country ?? 'AT';
         $serviceFeeRate = (float) ($settings?->service_fee_rate ?? 0);
 
-        $taxGroups = TaxCalculationService::computeTaxGroups($items, $vendorCountry);
+        $taxGroups = TaxCalculationService::computeTaxGroups($items, $vendorCountry, true);
         $totals = TaxCalculationService::computeTotals($taxGroups, $serviceFeeRate);
 
         $tipAmount = round((float) ($order->tip_amount ?? 0), 2);
         $totals['total_tips'] = $tipAmount;
         $totals['grand_total'] = round($totals['grand_total'] + $tipAmount, 2);
+
+        $ordersById = $this->sharingOrdersById($items);
+        $sessionCustomerNames = $this->sessionCustomerNames($ordersById);
 
         return [
             'order_id' => $order->order_number ?? (string) $order->id,
@@ -511,12 +553,7 @@ class OrderHistoryController extends Controller
             'payment_status' => $this->paymentStatus($order),
             'payment_method' => $order->payment_method,
             'tip_amount' => $tipAmount,
-            'items' => $items->map(function (CartItem $item) use ($vendorCountry) {
-                $historyItem = $this->formatHistoryItem($item, $vendorCountry);
-                unset($historyItem['id']);
-
-                return $historyItem;
-            })->values()->all(),
+            'items' => $items->map(fn (CartItem $item) => $this->formatHistoryItem($item, $order, $ordersById, $sessionCustomerNames, $vendorCountry, $vendor))->values()->all(),
             'tax_groups' => $taxGroups,
             'totals' => array_merge($totals, [
                 'currency' => $order->currency ?? $vendor?->currency,
@@ -538,7 +575,7 @@ class OrderHistoryController extends Controller
 
         $allItems = $ownedItems->merge($sharedIntoItems);
         $serviceFeeRate = (float) ($order->vendor?->vendorSetting?->service_fee_rate ?? 0);
-        $taxGroups = TaxCalculationService::computeTaxGroups($allItems, $vendorCountry);
+        $taxGroups = TaxCalculationService::computeTaxGroups($allItems, $vendorCountry, true);
         $totals = TaxCalculationService::computeTotals($taxGroups, $serviceFeeRate);
 
         return [
