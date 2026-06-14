@@ -110,6 +110,107 @@ class InventoryController extends Controller
     }
 
     /**
+     * POST /api/vendor/{vendorId}/inventory/items/bulk
+     *
+     * Accepts a JSON array of items (already parsed + mapped by the frontend).
+     * Each item is upserted by name (case-insensitive): creates if new, updates if exists.
+     * Returns a summary of created / updated / skipped counts plus per-row errors.
+     */
+    public function bulkImport(Request $request, string $vendorId): JsonResponse
+    {
+        $vendor = $this->resolveVendor($vendorId);
+        $this->authorizeVendor($request, $vendor);
+
+        $request->validate([
+            'items' => ['required', 'array', 'min:1', 'max:500'],
+            'items.*.ingredientName' => ['required', 'string', 'max:255'],
+            'items.*.unit'           => ['required', 'string', 'max:20'],
+            'items.*.category'       => ['nullable', 'string', 'max:255'],
+            'items.*.currentStock'   => ['nullable', 'numeric', 'min:0'],
+            'items.*.reorderLevel'   => ['nullable', 'numeric', 'min:0'],
+            'items.*.reorderQuantity'=> ['nullable', 'numeric', 'min:0'],
+            'items.*.supplier'       => ['nullable', 'string', 'max:255'],
+            'items.*.costPerUnit'    => ['nullable', 'numeric', 'min:0'],
+        ]);
+
+        $locale = $this->locales->dashboardLanguage($vendor);
+        $created = 0;
+        $updated = 0;
+        $errors  = [];
+
+        DB::transaction(function () use ($request, $vendor, $locale, &$created, &$updated, &$errors) {
+            foreach ($request->input('items') as $index => $row) {
+                try {
+                    $name = trim($row['ingredientName']);
+                    $existing = $vendor->inventoryItems()
+                        ->whereRaw('LOWER(name) = ?', [mb_strtolower($name)])
+                        ->first();
+
+                    $category = null;
+                    if (!empty($row['category'])) {
+                        $catName = trim($row['category']);
+                        $category = $vendor->inventoryCategories()
+                            ->whereRaw('LOWER(name) = ?', [mb_strtolower($catName)])
+                            ->first();
+                        if (!$category) {
+                            $category = $vendor->inventoryCategories()->create([
+                                'name' => $catName,
+                                'sort_order' => ($vendor->inventoryCategories()->max('sort_order') ?? -1) + 1,
+                            ]);
+                            $this->locales->syncTranslations(
+                                $category, 'localizedTranslations',
+                                ['en' => ['name' => $catName]], ['name']
+                            );
+                        }
+                    }
+
+                    $fields = [
+                        'inventory_category_id' => $category?->id,
+                        'category'         => $category?->name ?? $row['category'] ?? null,
+                        'unit'             => $row['unit'],
+                        'quantity'         => (float) ($row['currentStock'] ?? 0),
+                        'min_stock'        => (float) ($row['reorderLevel'] ?? 0),
+                        'reorder_quantity' => (float) ($row['reorderQuantity'] ?? 0),
+                        'cost_per_unit'    => (float) ($row['costPerUnit'] ?? 0),
+                        'supplier'         => $row['supplier'] ?? null,
+                    ];
+
+                    if ($existing) {
+                        $existing->update($fields);
+                        $this->locales->syncTranslations(
+                            $existing, 'localizedTranslations',
+                            ['en' => array_filter(['name' => $name, 'supplier' => $fields['supplier']])],
+                            ['name', 'supplier']
+                        );
+                        $updated++;
+                    } else {
+                        $item = $vendor->inventoryItems()->create(array_merge(['name' => $name], $fields));
+                        $this->locales->syncTranslations(
+                            $item, 'localizedTranslations',
+                            ['en' => array_filter(['name' => $name, 'supplier' => $fields['supplier']])],
+                            ['name', 'supplier']
+                        );
+                        $created++;
+                    }
+                } catch (\Throwable $e) {
+                    $errors[] = [
+                        'row'     => $index + 1,
+                        'name'    => $row['ingredientName'] ?? '',
+                        'message' => $e->getMessage(),
+                    ];
+                }
+            }
+        });
+
+        return response()->json([
+            'created' => $created,
+            'updated' => $updated,
+            'skipped' => count($errors),
+            'errors'  => $errors,
+        ]);
+    }
+
+    /**
      * PATCH /api/vendor/{vendorId}/inventory/items/{itemId}
      */
     public function update(Request $request, string $vendorId, int $itemId): JsonResponse

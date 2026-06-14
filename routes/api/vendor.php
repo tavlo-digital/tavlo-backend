@@ -78,6 +78,7 @@ Route::middleware(['auth:vendor,team_member', 'vendor.staff.access'])->group(fun
     // Inventory
     Route::get('{vendorId}/inventory/items', [InventoryController::class, 'index'])->name('inventory.index');
     Route::post('{vendorId}/inventory/items', [InventoryController::class, 'store'])->name('inventory.store');
+    Route::post('{vendorId}/inventory/items/bulk', [InventoryController::class, 'bulkImport'])->name('inventory.bulk-import');
     Route::patch('{vendorId}/inventory/items/{itemId}', [InventoryController::class, 'update'])->name('inventory.update');
     Route::delete('{vendorId}/inventory/items/{itemId}', [InventoryController::class, 'destroy'])->name('inventory.destroy');
     Route::get('{vendorId}/inventory/settings', [InventoryController::class, 'settings'])->name('inventory.settings');
