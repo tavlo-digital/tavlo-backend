@@ -12,6 +12,7 @@ use App\Services\LocaleService;
 use App\Services\MediaService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
@@ -155,6 +156,143 @@ class MenuItemController extends Controller
                 $this->locales->dashboardLanguage($vendor)
             ),
         ], 201);
+    }
+
+    /**
+     * POST /api/vendor/menu/items/bulk
+     *
+     * Accepts a pre-parsed JSON array from the frontend (papaparse / SheetJS).
+     * Upserts by name (case-insensitive): creates new items, updates existing ones.
+     * Categories are auto-created if they don't exist yet.
+     * Returns { created, updated, skipped, errors[] }.
+     */
+    public function bulkImport(Request $request): JsonResponse
+    {
+        $vendor = $request->user();
+
+        $request->validate([
+            'items'                       => ['required', 'array', 'min:1', 'max:500'],
+            'items.*.name'                => ['required', 'string', 'max:255'],
+            'items.*.category'            => ['required', 'string', 'max:255'],
+            'items.*.price'               => ['required', 'numeric', 'min:0'],
+            'items.*.description'         => ['nullable', 'string', 'max:5000'],
+            'items.*.available'           => ['nullable', 'boolean'],
+            'items.*.dietaryPreference'   => ['nullable', 'string', 'max:64'],
+            'items.*.calories'            => ['nullable', 'integer', 'min:0'],
+            'items.*.fat'                 => ['nullable', 'numeric', 'min:0'],
+            'items.*.carbs'               => ['nullable', 'numeric', 'min:0'],
+            'items.*.protein'             => ['nullable', 'numeric', 'min:0'],
+            'items.*.allergies'           => ['nullable', 'string', 'max:500'],
+        ]);
+
+        $created = 0;
+        $updated = 0;
+        $errors  = [];
+
+        DB::transaction(function () use ($request, $vendor, &$created, &$updated, &$errors) {
+            // Cache resolved categories within the batch to avoid N+1
+            $categoryCache = [];
+
+            foreach ($request->input('items') as $index => $row) {
+                try {
+                    $name = trim($row['name']);
+
+                    // Resolve or create category
+                    $catName = trim($row['category']);
+                    if (! isset($categoryCache[$catName])) {
+                        $category = $vendor->menuCategories()
+                            ->whereRaw('LOWER(name) = ?', [mb_strtolower($catName)])
+                            ->first();
+                        if (! $category) {
+                            $maxSort = $vendor->menuCategories()->max('sort_order') ?? -1;
+                            $category = $vendor->menuCategories()->create([
+                                'name'       => $catName,
+                                'sort_order' => $maxSort + 1,
+                            ]);
+                            $this->locales->syncTranslations(
+                                $category,
+                                'localizedTranslations',
+                                ['en' => ['name' => $catName]],
+                                ['name']
+                            );
+                        }
+                        $categoryCache[$catName] = $category;
+                    }
+                    $category = $categoryCache[$catName];
+
+                    [$vatRate, $taxSlug] = $this->resolveTax([], $category, $vendor);
+
+                    // Parse allergies from comma-separated string
+                    $allergies = [];
+                    if (! empty($row['allergies'])) {
+                        $allergies = array_values(array_filter(
+                            array_map('trim', explode(',', $row['allergies']))
+                        ));
+                    }
+
+                    $fields = [
+                        'menu_category_id'   => $category->id,
+                        'price'              => (float) $row['price'],
+                        'description'        => $row['description'] ?? null,
+                        'available'          => (bool) ($row['available'] ?? true),
+                        'calories'           => (int) ($row['calories'] ?? 0),
+                        'fat'                => (float) ($row['fat'] ?? 0),
+                        'carbs'              => (float) ($row['carbs'] ?? 0),
+                        'protein'            => (float) ($row['protein'] ?? 0),
+                        'vat_rate'           => $vatRate,
+                        'tax_category'       => $taxSlug,
+                        'dietary_preference' => $row['dietaryPreference'] ?? null,
+                        'allergies'          => $allergies,
+                    ];
+
+                    $existing = $vendor->menuItems()
+                        ->whereRaw('LOWER(name) = ?', [mb_strtolower($name)])
+                        ->first();
+
+                    if ($existing) {
+                        $existing->update($fields);
+                        $this->locales->syncTranslations(
+                            $existing,
+                            'itemTranslations',
+                            ['en' => ['name' => $name, 'description' => $fields['description']]],
+                            ['name', 'description']
+                        );
+                        $updated++;
+                    } else {
+                        $maxSort = $vendor->menuItems()
+                            ->where('menu_category_id', $category->id)
+                            ->max('sort_order') ?? -1;
+
+                        $item = $vendor->menuItems()->create(array_merge([
+                            'name'       => $name,
+                            'sort_order' => $maxSort + 1,
+                            'translations' => ['en' => ['name' => $name, 'description' => $fields['description']]],
+                        ], $fields));
+
+                        $this->locales->syncTranslations(
+                            $item,
+                            'itemTranslations',
+                            ['en' => ['name' => $name, 'description' => $fields['description']]],
+                            ['name', 'description']
+                        );
+                        $created++;
+                    }
+                } catch (\Throwable $e) {
+                    $errors[] = [
+                        'row'     => $index + 1,
+                        'name'    => $row['name'] ?? '',
+                        'message' => $e->getMessage(),
+                    ];
+                }
+            }
+        });
+
+        return response()->json([
+            'created' => $created,
+            'updated' => $updated,
+            'skipped' => count($errors),
+            'errors'  => $errors,
+        ]);
     }
 
     /**
