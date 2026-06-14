@@ -611,18 +611,23 @@ class CartController extends Controller
             $mySession->load('vendor.vendorSetting');
         }
         $vendorCountry = $this->vendorCountry($mySession);
+        $serviceFeeRate = $this->serviceFeeRate($mySession);
         $ordersToRecalc = Order::whereIn('id', $affectedOrderIds->unique()->values()->all())
             ->where('payment_received', false)
             ->whereNotNull('table_scan_session_id')
             ->get();
 
         foreach ($ordersToRecalc as $affectedOrder) {
-            $newAmount = $this->computeOrderAmount(
+            $itemsTotal = $this->computeOrderAmount(
                 $affectedOrder,
                 $affectedOrder->table_scan_session_id,
                 vendorCountry: $vendorCountry
             );
-            $affectedOrder->update(['amount' => $newAmount]);
+            $serviceFee = round($itemsTotal * ($serviceFeeRate / 100), 2);
+            $affectedOrder->update([
+                'amount' => round($itemsTotal + $serviceFee, 2),
+                'service_fee' => $serviceFee,
+            ]);
         }
 
         $customerName = $this->customerName($request->user());
@@ -653,9 +658,17 @@ class CartController extends Controller
             return response()->json(['message' => 'No open draft order found.'], 404);
         }
 
-        $total = $this->computeOrderAmount($order, $mySession->id, includeOpenOwnedItems: true, vendorCountry: $this->vendorCountry($mySession));
+        if (! $mySession->relationLoaded('vendor')) {
+            $mySession->load('vendor.vendorSetting');
+        }
 
-        DB::transaction(function () use ($order, $mySession, $total) {
+        $vendorCountry = $this->vendorCountry($mySession);
+        $itemsTotal = $this->computeOrderAmount($order, $mySession->id, includeOpenOwnedItems: true, vendorCountry: $vendorCountry);
+        $serviceFeeRate = $this->serviceFeeRate($mySession);
+        $serviceFee = round($itemsTotal * ($serviceFeeRate / 100), 2);
+        $total = round($itemsTotal + $serviceFee, 2);
+
+        DB::transaction(function () use ($order, $mySession, $total, $serviceFee) {
             CartItem::where('table_scan_session_id', $mySession->id)
                 ->whereNull('order_id')
                 ->update([
@@ -666,6 +679,7 @@ class CartController extends Controller
             $order->update([
                 'status' => 'confirmed',
                 'amount' => $total,
+                'service_fee' => $serviceFee,
             ]);
         });
 
