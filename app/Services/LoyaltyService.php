@@ -35,8 +35,8 @@ class LoyaltyService
             return;
         }
 
-        // Points earned on final charged amount (after discounts)
-        $chargedAmount = $order->amount; // already net amount
+        // Points earned on final charged amount (after promotion and loyalty discounts)
+        $chargedAmount = max(0, (float) $order->amount - (float) ($order->loyalty_discount ?? 0));
         $pointsPerEuro = (int) ($settings->points_per_euro ?? 10);
         $points = (int) floor($chargedAmount * $pointsPerEuro);
 
