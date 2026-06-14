@@ -5,13 +5,17 @@ namespace App\Http\Controllers\Api\Customer;
 use App\Http\Controllers\Controller;
 use App\Models\CustomerLoyaltyPoint;
 use App\Models\LoyaltyTransaction;
+use App\Services\LoyaltyService;
 use App\Services\VendorDateTimeService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class LoyaltyController extends Controller
 {
-    public function __construct(private readonly VendorDateTimeService $dateTimes) {}
+    public function __construct(
+        private readonly VendorDateTimeService $dateTimes,
+        private readonly LoyaltyService $loyaltyService,
+    ) {}
 
     /**
      * Get all loyalty wallets (one per restaurant).
@@ -87,6 +91,82 @@ class LoyaltyController extends Controller
                 'reward_value_eur' => round(($settings?->minimum_redemption_points ?? 100) * ($settings?->point_value ?? 0.01), 2),
             ],
             'transactions' => $transactions,
+        ]);
+    }
+
+    /**
+     * GET /api/customer/loyalty/{vendorPublicId}/info
+     * Payment-screen info: balance + redemption options for a specific vendor.
+     */
+    public function info(Request $request, string $vendorPublicId): JsonResponse
+    {
+        $customer = $request->user();
+        $vendor = \App\Models\Vendor::with('vendorSetting')
+            ->where('vendor_public_id', $vendorPublicId)
+            ->firstOrFail();
+
+        $settings = $vendor->vendorSetting;
+        if (! $settings?->loyalty_enabled) {
+            return response()->json(['loyalty_enabled' => false]);
+        }
+
+        $wallet = CustomerLoyaltyPoint::where('customer_id', $customer->id)
+            ->where('vendor_id', $vendor->id)
+            ->first();
+
+        $minRedemption = (int) ($settings->minimum_redemption_points ?? 100);
+        $pointValue = (float) ($settings->point_value ?? 0.01);
+        $pointsPerEuro = (int) ($settings->points_per_euro ?? 10);
+        $balance = $wallet?->points_balance ?? 0;
+
+        // Build quick-select buttons (multiples of minimum that customer can afford)
+        $options = [];
+        for ($i = 1; $i <= 3; $i++) {
+            $pts = $minRedemption * $i;
+            if ($pts <= $balance) {
+                $options[] = ['points' => $pts, 'value_eur' => round($pts * $pointValue, 2)];
+            }
+        }
+
+        return response()->json([
+            'loyalty_enabled'       => true,
+            'points_balance'        => $balance,
+            'minimum_redemption'    => $minRedemption,
+            'point_value'           => $pointValue,
+            'points_per_euro'       => $pointsPerEuro,
+            'is_redeemable'         => $balance >= $minRedemption,
+            'points_to_next_reward' => max(0, $minRedemption - $balance),
+            'redemption_options'    => $options,
+        ]);
+    }
+
+    /**
+     * POST /api/customer/loyalty/{vendorPublicId}/redeem
+     * Validate a redemption (does not commit — call after order is saved).
+     */
+    public function redeem(Request $request, string $vendorPublicId): JsonResponse
+    {
+        $data = $request->validate([
+            'points_to_redeem' => ['required', 'integer', 'min:1'],
+            'order_total'      => ['required', 'numeric', 'min:0'],
+        ]);
+
+        $vendor = \App\Models\Vendor::where('vendor_public_id', $vendorPublicId)->firstOrFail();
+
+        try {
+            $discount = $this->loyaltyService->redeemPoints(
+                $request->user()->id,
+                $vendor->id,
+                (int) $data['points_to_redeem'],
+                (float) $data['order_total'],
+            );
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json([
+            'points_to_redeem' => (int) $data['points_to_redeem'],
+            'discount_eur'     => $discount,
         ]);
     }
 }

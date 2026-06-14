@@ -117,8 +117,10 @@ Route::middleware(['auth:customer', 'track.session.activity'])->group(function (
     Route::post('reservations/{reservationPublicId}/cancel', [ReservationController::class, 'cancel'])->name('reservations.cancel');
 
     // Loyalty Points
-    Route::get('loyalty',                     [LoyaltyController::class, 'index'])->name('loyalty.index');
-    Route::get('loyalty/{vendorPublicId}',    [LoyaltyController::class, 'show'])->name('loyalty.show');
+    Route::get('loyalty',                                  [LoyaltyController::class, 'index'])->name('loyalty.index');
+    Route::get('loyalty/{vendorPublicId}',                 [LoyaltyController::class, 'show'])->name('loyalty.show');
+    Route::get('loyalty/{vendorPublicId}/info',            [LoyaltyController::class, 'info'])->name('loyalty.info');
+    Route::post('loyalty/{vendorPublicId}/redeem',         [LoyaltyController::class, 'redeem'])->name('loyalty.redeem');
 
     // Favorites
     Route::get('favorites',                                  [FavoriteController::class, 'index'])->name('favorites.index');

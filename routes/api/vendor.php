@@ -19,6 +19,8 @@ use App\Http\Controllers\Api\Vendor\StripeConnectController;
 use App\Http\Controllers\Api\Vendor\SubscriptionWebhookController;
 use App\Http\Controllers\Api\Vendor\TableController;
 use App\Http\Controllers\Api\Vendor\TeamController;
+use App\Http\Controllers\Api\Vendor\LoyaltyStatsController;
+use App\Http\Controllers\Api\Vendor\PromotionController;
 use App\Http\Controllers\Api\Vendor\VendorSettingsController;
 use App\Models\Country;
 use Illuminate\Support\Facades\Route;
@@ -173,6 +175,16 @@ Route::middleware(['auth:vendor,team_member', 'vendor.staff.access'])->group(fun
     Route::post('{vendorId}/billing/payment-method', [BillingController::class, 'updatePaymentMethod'])->name('billing.paymentMethod');
     Route::post('{vendorId}/billing/cancel', [BillingController::class, 'cancel'])->name('billing.cancel');
     Route::post('{vendorId}/billing/portal', [BillingController::class, 'portalSession'])->name('billing.portal');
+
+    // Promotions
+    Route::get('{vendorId}/promotions', [PromotionController::class, 'index'])->name('promotions.index');
+    Route::post('{vendorId}/promotions', [PromotionController::class, 'store'])->name('promotions.store');
+    Route::patch('{vendorId}/promotions/{promotionId}', [PromotionController::class, 'update'])->name('promotions.update');
+    Route::delete('{vendorId}/promotions/{promotionId}', [PromotionController::class, 'destroy'])->name('promotions.destroy');
+    Route::patch('{vendorId}/promotions/{promotionId}/toggle', [PromotionController::class, 'toggle'])->name('promotions.toggle');
+
+    // Loyalty stats
+    Route::get('{vendorId}/loyalty/stats', [LoyaltyStatsController::class, 'stats'])->name('loyalty.stats');
 
     // Seed demo data — local and staging only, returns 404 in production
     Route::post('seed', [SeedController::class, 'seed'])->name('seed')->middleware('env:local,staging');

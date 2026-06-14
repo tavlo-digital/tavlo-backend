@@ -174,6 +174,8 @@ class OrderController extends Controller
             'payment_pending' => false,
         ]);
 
+        try { app(\App\Services\LoyaltyService::class)->earnPointsForOrder($order->load('vendor')); } catch (\Throwable) {}
+
         $this->notifySessionCustomers($order, 'payment_updated', 'Your cash payment has been confirmed.');
 
         return response()->json($this->formatOrder($order->fresh()->load('customer')));

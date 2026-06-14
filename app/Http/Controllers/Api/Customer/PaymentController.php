@@ -8,6 +8,7 @@ use App\Models\Order;
 use App\Models\OrderPayment;
 use App\Models\StripeWebhookLog;
 use App\Models\Vendor;
+use App\Services\LoyaltyService;
 use App\Services\NotificationService;
 use App\Services\StripePaymentService;
 use App\Services\TaxCalculationService;
@@ -23,8 +24,10 @@ use UnexpectedValueException;
 
 class PaymentController extends Controller
 {
-    public function __construct(private readonly StripePaymentService $stripe)
-    {
+    public function __construct(
+        private readonly StripePaymentService $stripe,
+        private readonly LoyaltyService $loyaltyService,
+    ) {
     }
 
     /**
@@ -532,6 +535,8 @@ class PaymentController extends Controller
                 'payment_received' => true,
                 'payment_confirmed_at' => $order->payment_confirmed_at ?? $now,
             ]);
+
+            try { $this->loyaltyService->earnPointsForOrder($order->load('vendor')); } catch (\Throwable) {}
 
             return;
         }

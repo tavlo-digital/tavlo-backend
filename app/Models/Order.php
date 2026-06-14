@@ -40,6 +40,11 @@ class Order extends Model
         'table_scan_session_id',
         'waiter_confirmed',
         'waiter_confirmed_at',
+        // loyalty & promotions
+        'loyalty_points_redeemed',
+        'loyalty_discount',
+        'promotion_id',
+        'promotion_discount',
     ];
 
     protected function casts(): array
@@ -56,6 +61,8 @@ class Order extends Model
             'cancelled_at'         => 'datetime',
             'waiter_confirmed'     => 'boolean',
             'waiter_confirmed_at'  => 'datetime',
+            'loyalty_discount'     => 'decimal:2',
+            'promotion_discount'   => 'decimal:2',
         ];
     }
 
