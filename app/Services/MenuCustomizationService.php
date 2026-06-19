@@ -99,8 +99,8 @@ class MenuCustomizationService
         $definitions = $this->paidAddonDefinitions($item->paid_addons ?? [])->keyBy('id');
 
         return collect($selected)->map(function ($addon) use ($definitions, $vendor, $locale, $itemTaxCategory, $vendorCountry) {
-            $id = $this->selectionId($addon);
-            $definition = $id !== null ? $definitions->get($id) : null;
+            $definition = $this->findDefinition($definitions, $addon);
+            $id = $definition['id'] ?? $this->selectionId($addon);
             $legacyName = is_array($addon) ? ($addon['name'] ?? null) : null;
             $vatRate = TaxCalculationService::addonVatRate(is_array($addon) ? $addon : [], $itemTaxCategory, $vendorCountry);
 
@@ -120,8 +120,7 @@ class MenuCustomizationService
         $definitions = $this->namedDefinitions($configured)->keyBy('id');
 
         return collect($selected)->map(function ($selection) use ($definitions, $vendor, $locale) {
-            $id = $this->selectionId($selection);
-            $definition = $id !== null ? $definitions->get($id) : null;
+            $definition = $this->findDefinition($definitions, $selection);
 
             if ($definition) {
                 return $this->definitionName($definition, $vendor, $locale);
@@ -210,17 +209,42 @@ class MenuCustomizationService
 
     public function menuItemName(MenuItem $item, Vendor $vendor, string $locale): string
     {
-        return (string) $this->locales->translated(
-            $item,
-            'itemTranslations',
-            'name',
-            $vendor,
-            $locale,
-            $item->name,
-        );
+        $translations = $item->relationLoaded('itemTranslations')
+            ? $item->itemTranslations
+            : $item->itemTranslations()->get();
+
+        foreach ($this->locales->fallbackChain($vendor, $locale) as $language) {
+            $relationalName = $translations->firstWhere('language', $language)?->name;
+            if (is_string($relationalName) && trim($relationalName) !== '') {
+                return trim($relationalName);
+            }
+
+            $legacyName = $item->translations[$language]['name'] ?? null;
+            if (is_string($legacyName) && trim($legacyName) !== '') {
+                return trim($legacyName);
+            }
+
+            if ($language === 'en' && trim((string) $item->name) !== '') {
+                return (string) $item->name;
+            }
+        }
+
+        return (string) $item->name;
     }
 
     private function matchDefinition(Collection $definitions, mixed $selection, string $field): array
+    {
+        $matched = $this->findDefinition($definitions, $selection);
+        if ($matched) {
+            return $matched;
+        }
+
+        throw ValidationException::withMessages([
+            $field => ["The selected {$field} value is not available for this menu item."],
+        ]);
+    }
+
+    private function findDefinition(Collection $definitions, mixed $selection): ?array
     {
         $id = $this->selectionId($selection);
         if ($id !== null) {
@@ -231,16 +255,13 @@ class MenuCustomizationService
         }
 
         $name = $this->selectionName($selection);
-        if ($name !== null) {
-            $matched = $definitions->first(fn (array $definition) => $this->definitionMatchesName($definition, $name));
-            if ($matched) {
-                return $matched;
-            }
+        if ($name === null) {
+            return null;
         }
 
-        throw ValidationException::withMessages([
-            $field => ["The selected {$field} value is not available for this menu item."],
-        ]);
+        return $definitions->first(
+            fn (array $definition) => $this->definitionMatchesName($definition, $name)
+        );
     }
 
     private function selectionId(mixed $selection): ?int

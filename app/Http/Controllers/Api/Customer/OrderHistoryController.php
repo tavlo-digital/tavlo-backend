@@ -42,7 +42,7 @@ class OrderHistoryController extends Controller
 
         $orders = (clone $base)
             ->with([
-                'vendor.vendorSetting:id,vendor_id,logo_url,service_fee_rate,date_format,time_format',
+                'vendor.vendorSetting:id,vendor_id,logo_url,service_fee_rate,date_format,time_format,supported_languages',
                 'tableScanSession:id,customer_id',
             ])
             ->orderByDesc('created_at')
@@ -181,7 +181,7 @@ class OrderHistoryController extends Controller
         $order = Order::where('order_public_id', $orderPublicId)
             ->where(fn (Builder $query) => $this->scopeCustomerOrders($query, $customer->id))
             ->with([
-                'vendor.vendorSetting:id,vendor_id,logo_url,service_fee_rate,date_format,time_format',
+                'vendor.vendorSetting:id,vendor_id,logo_url,service_fee_rate,date_format,time_format,supported_languages',
                 'tableScanSession:id,customer_id',
             ])
             ->firstOrFail();
@@ -199,7 +199,7 @@ class OrderHistoryController extends Controller
         $order = Order::where('order_public_id', $orderPublicId)
             ->where(fn (Builder $query) => $this->scopeCustomerOrders($query, $customer->id))
             ->with([
-                'vendor.vendorSetting:id,vendor_id,estimated_prep_time,service_fee_rate,date_format,time_format',
+                'vendor.vendorSetting:id,vendor_id,estimated_prep_time,service_fee_rate,date_format,time_format,supported_languages',
                 'tableScanSession:id,customer_id',
             ])
             ->firstOrFail();
@@ -226,7 +226,7 @@ class OrderHistoryController extends Controller
         $vendor = $order->vendor;
         $settings = $vendor?->vendorSetting;
         $vendorCountry = $vendor?->country ?? 'AT';
-        $locale = $vendor ? $this->locales->resolveCustomerLocaleFromHeader($request, $vendor) : 'en';
+        $contentLocale = $vendor ? $this->locales->resolveCustomerLocaleFromHeader($request, $vendor) : 'en';
         $items = $this->linkedCartItems($order);
 
         $taxGroups = TaxCalculationService::computeTaxGroups($items, $vendorCountry, true);
@@ -248,9 +248,9 @@ class OrderHistoryController extends Controller
         $tableName = $table ? ($table->name ?? 'Table '.$table->number) : null;
 
         $countryCode = TaxCalculationService::countryCode($vendorCountry);
-        $locale = 'en-'.$countryCode;
+        $receiptLocale = 'en-'.$countryCode;
 
-        $receiptItems = $items->map(function (CartItem $item) use ($order, $vendorCountry, $vendor, $locale) {
+        $receiptItems = $items->map(function (CartItem $item) use ($order, $vendorCountry, $vendor, $contentLocale) {
             $menuItem = $item->menuItem;
             $unitPrice = $this->cartItemUnitPrice($item, $vendorCountry);
             $lineGross = round($unitPrice * $item->quantity, 2);
@@ -264,11 +264,15 @@ class OrderHistoryController extends Controller
             return [
                 'id' => $item->id,
                 'name' => $menuItem && $vendor
-                    ? $this->customizations->menuItemName($menuItem, $vendor, $locale)
+                    ? $this->customizations->menuItemName($menuItem, $vendor, $contentLocale)
                     : $menuItem?->name,
                 'quantity' => $item->quantity,
                 'unit_price_gross' => $unitPrice,
                 'line_gross' => $lineGross,
+                'paid_addons' => $this->formatPaidAddons($item, $taxCategory, $vendorCountry, $vendor, $contentLocale),
+                'free_addons' => $this->formatNamedSelections($item, 'free_addons', $vendor, $contentLocale),
+                'removed_items' => $this->formatNamedSelections($item, 'removed_items', $vendor, $contentLocale),
+                'selected_modifiers' => $this->formatSelectedModifiers($item, $taxCategory, $vendorCountry, $vendor, $contentLocale),
                 'tax_category' => strtoupper($taxCategory),
                 'vat_rate' => $vatRate,
                 'vat_amount' => $vatAmount,
@@ -300,7 +304,7 @@ class OrderHistoryController extends Controller
                     'table' => $tableName,
                     'order_id' => $order->order_public_id,
                     'currency' => $order->currency ?? $vendor?->currency ?? 'EUR',
-                    'locale' => $locale,
+                    'locale' => $receiptLocale,
                 ],
                 'order' => [
                     'items' => $receiptItems,
@@ -717,7 +721,7 @@ class OrderHistoryController extends Controller
             return collect();
         }
 
-        return CartItem::with('menuItem:id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category,paid_addons,free_addons,removable_items')
+        return CartItem::with('menuItem:id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category,paid_addons,free_addons,removable_items,translations')
             ->where(function (Builder $query) use ($order) {
                 if ($order->status === 'draft') {
                     $query->where('table_scan_session_id', $order->table_scan_session_id)
@@ -738,7 +742,7 @@ class OrderHistoryController extends Controller
             return collect();
         }
 
-        return CartItem::with('menuItem:id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category,paid_addons,free_addons,removable_items')
+        return CartItem::with('menuItem:id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category,paid_addons,free_addons,removable_items,translations')
             ->whereJsonContains('shared_order_ids', $order->id)
             ->where('table_scan_session_id', '!=', $order->table_scan_session_id)
             ->orderBy('id')
@@ -796,7 +800,7 @@ class OrderHistoryController extends Controller
 
     private function linkedCartItems(Order $order): Collection
     {
-        $items = CartItem::with('menuItem:id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category,paid_addons,free_addons,removable_items')
+        $items = CartItem::with('menuItem:id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category,paid_addons,free_addons,removable_items,translations')
             ->where(function (Builder $query) use ($order) {
                 if ($order->status === 'draft' && $order->table_scan_session_id) {
                     $query->where('table_scan_session_id', $order->table_scan_session_id);
@@ -816,7 +820,7 @@ class OrderHistoryController extends Controller
 
         $orderedAt = $order->updated_at ?? $order->created_at;
 
-        return CartItem::with('menuItem:id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category,paid_addons,free_addons,removable_items')
+        return CartItem::with('menuItem:id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category,paid_addons,free_addons,removable_items,translations')
             ->where('table_scan_session_id', $order->table_scan_session_id)
             ->whereNull('order_id')
             ->when($orderedAt, fn (Builder $query) => $query->where('created_at', '<=', $orderedAt))

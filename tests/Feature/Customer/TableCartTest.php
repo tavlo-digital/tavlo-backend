@@ -81,6 +81,70 @@ class TableCartTest extends TestCase
         ]);
     }
 
+    private function configureArabicCustomizations(): array
+    {
+        VendorSetting::updateOrCreate(
+            ['vendor_id' => $this->vendor->id],
+            [
+                'supported_languages' => ['en', 'ar'],
+                'is_live_and_discoverable' => true,
+            ],
+        );
+
+        $this->menuItem->update([
+            'paid_addons' => [
+                [
+                    'id' => 5,
+                    'name' => 'Cheese sauce',
+                    'price' => 1.50,
+                    'translations' => ['ar' => ['name' => 'صلصة الجبن']],
+                ],
+            ],
+            'free_addons' => [
+                ['id' => 8, 'name' => 'Ketchup', 'translations' => ['ar' => ['name' => 'كاتشب']]],
+            ],
+            'removable_items' => [
+                ['id' => 11, 'name' => 'Salt', 'translations' => ['ar' => ['name' => 'ملح']]],
+            ],
+        ]);
+        $this->menuItem->itemTranslations()->updateOrCreate(
+            ['language' => 'ar'],
+            ['name' => 'بطاطس مقلية', 'description' => 'بطاطس مقرمشة'],
+        );
+
+        $group = ModifierGroup::create([
+            'vendor_id' => $this->vendor->id,
+            'name' => 'Choose your side',
+            'type' => 'single',
+            'min_selection' => 1,
+            'max_selection' => 1,
+            'is_required' => true,
+            'is_active' => true,
+        ]);
+        $group->localizedTranslations()->create(['language' => 'ar', 'name' => 'اختر الطبق الجانبي']);
+
+        $option = ModifierOption::create([
+            'modifier_group_id' => $group->id,
+            'name' => 'Onion Rings',
+            'price_adjustment' => 1.50,
+            'is_active' => true,
+        ]);
+        $option->localizedTranslations()->create(['language' => 'ar', 'name' => 'حلقات البصل']);
+        $this->menuItem->modifierGroups()->sync([$group->id => ['sort_order' => 0]]);
+
+        return [$group, $option];
+    }
+
+    private function assertArabicCustomizationPayload(array $payload): void
+    {
+        $this->assertSame('بطاطس مقلية', data_get($payload, 'menu_item.name', $payload['name'] ?? null));
+        $this->assertSame('صلصة الجبن', data_get($payload, 'paid_addons.0.name'));
+        $this->assertSame('كاتشب', data_get($payload, 'free_addons.0'));
+        $this->assertSame('ملح', data_get($payload, 'removed_items.0'));
+        $this->assertSame('اختر الطبق الجانبي', data_get($payload, 'selected_modifiers.0.name'));
+        $this->assertSame('حلقات البصل', data_get($payload, 'selected_modifiers.0.options.0.name'));
+    }
+
     // ----------------------------------------------------------------
     // GET /api/customer/cart
     // ----------------------------------------------------------------
@@ -355,54 +419,7 @@ class TableCartTest extends TestCase
 
     public function test_add_item_accepts_id_based_customizations_and_returns_language_based_names(): void
     {
-        VendorSetting::updateOrCreate(
-            ['vendor_id' => $this->vendor->id],
-            [
-                'supported_languages' => ['en', 'ar'],
-                'is_live_and_discoverable' => true,
-            ],
-        );
-
-        $this->menuItem->update([
-            'paid_addons' => [
-                [
-                    'id' => 5,
-                    'name' => 'Cheese sauce',
-                    'price' => 1.50,
-                    'translations' => ['ar' => ['name' => 'صلصة الجبن']],
-                ],
-            ],
-            'free_addons' => [
-                ['id' => 8, 'name' => 'Ketchup', 'translations' => ['ar' => ['name' => 'كاتشب']]],
-            ],
-            'removable_items' => [
-                ['id' => 11, 'name' => 'Salt', 'translations' => ['ar' => ['name' => 'ملح']]],
-            ],
-        ]);
-        $this->menuItem->itemTranslations()->create([
-            'language' => 'ar',
-            'name' => 'بطاطس مقلية',
-            'description' => 'بطاطس مقرمشة',
-        ]);
-
-        $group = ModifierGroup::create([
-            'vendor_id' => $this->vendor->id,
-            'name' => 'Choose your side',
-            'type' => 'single',
-            'min_selection' => 1,
-            'max_selection' => 1,
-            'is_required' => true,
-            'is_active' => true,
-        ]);
-        $group->localizedTranslations()->create(['language' => 'ar', 'name' => 'اختر الطبق الجانبي']);
-        $option = ModifierOption::create([
-            'modifier_group_id' => $group->id,
-            'name' => 'Onion Rings',
-            'price_adjustment' => 1.50,
-            'is_active' => true,
-        ]);
-        $option->localizedTranslations()->create(['language' => 'ar', 'name' => 'حلقات البصل']);
-        $this->menuItem->modifierGroups()->sync([$group->id => ['sort_order' => 0]]);
+        [$group, $option] = $this->configureArabicCustomizations();
 
         $headers = array_merge($this->headers, ['Accept-Language' => 'ar']);
 
@@ -437,6 +454,82 @@ class TableCartTest extends TestCase
         $this->assertSame($group->id, $cartItem->selected_modifiers[0]['modifier_group_id']);
         $this->assertArrayNotHasKey('name', $cartItem->selected_modifiers[0]);
         $this->assertArrayNotHasKey('name', $cartItem->selected_modifiers[0]['options'][0]);
+    }
+
+    public function test_accept_language_localizes_cart_and_all_order_item_responses(): void
+    {
+        [$group, $option] = $this->configureArabicCustomizations();
+        $this->menuItem->itemTranslations()->delete();
+        $this->menuItem->update([
+            'translations' => [
+                'ar' => ['name' => 'بطاطس مقلية', 'description' => 'بطاطس مقرمشة'],
+            ],
+        ]);
+
+        $legacyCustomizations = [
+            'paid_addons' => [['name' => 'Cheese sauce', 'price' => 1.50]],
+            'free_addons' => ['Ketchup'],
+            'removed_items' => ['Salt'],
+            'selected_modifiers' => [[
+                'modifier_group_id' => $group->id,
+                'name' => 'Choose your side',
+                'options' => [[
+                    'id' => $option->id,
+                    'name' => 'Onion Rings',
+                    'price_adjustment' => 1.50,
+                ]],
+            ]],
+        ];
+
+        CartItem::create(array_merge($legacyCustomizations, [
+            'table_scan_session_id' => $this->session->id,
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 1,
+        ]));
+
+        $order = Order::create([
+            'order_public_id' => 'ord-arabic-responses',
+            'customer_id' => $this->customer->id,
+            'vendor_id' => $this->vendor->id,
+            'table_scan_session_id' => $this->session->id,
+            'status' => 'confirmed',
+            'amount' => 7,
+            'currency' => 'EUR',
+            'order_type' => 'dine-in',
+            'payment_received' => true,
+            'payment_pending' => false,
+            'payment_confirmed_at' => now(),
+        ]);
+
+        CartItem::create(array_merge($legacyCustomizations, [
+            'table_scan_session_id' => $this->session->id,
+            'menu_item_id' => $this->menuItem->id,
+            'order_id' => $order->id,
+            'quantity' => 1,
+        ]));
+
+        $headers = array_merge($this->headers, ['Accept-Language' => 'ar']);
+
+        $cart = $this->withHeaders($headers)->getJson('/api/customer/cart')->assertOk();
+        $this->assertArabicCustomizationPayload($cart->json('people.0.personal_items.0'));
+
+        $history = $this->withHeaders($headers)->getJson('/api/customer/orders/history')->assertOk();
+        $this->assertArabicCustomizationPayload($history->json('history.0.orders.0.items.0'));
+
+        $detail = $this->withHeaders($headers)
+            ->getJson("/api/customer/orders/{$order->order_public_id}")
+            ->assertOk();
+        $this->assertArabicCustomizationPayload($detail->json('items.0'));
+
+        $tracking = $this->withHeaders($headers)
+            ->getJson("/api/customer/orders/{$order->order_public_id}/tracking")
+            ->assertOk();
+        $this->assertArabicCustomizationPayload($tracking->json('items.0'));
+
+        $receipt = $this->withHeaders($headers)
+            ->getJson("/api/customer/orders/{$order->order_public_id}/receipt")
+            ->assertOk();
+        $this->assertArabicCustomizationPayload($receipt->json('data.order.items.0'));
     }
 
     public function test_add_item_accepts_translated_customization_names_for_legacy_clients(): void

@@ -76,10 +76,10 @@ class CartController extends Controller
 
         $sessions = TableScanSession::with([
             'customer:id,first_name,last_name',
-            'cartItems.menuItem:id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category,paid_addons,free_addons,removable_items',
+            'cartItems.menuItem:id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category,paid_addons,free_addons,removable_items,translations',
             'restaurantTable:id,number,name',
             'vendor:id,vendor_public_id,restaurant_name,country',
-            'vendor.vendorSetting:id,vendor_id,service_fee_rate',
+            'vendor.vendorSetting:id,vendor_id,service_fee_rate,supported_languages',
         ])
             ->whereIn('id', $sessionIds)
             ->get();
@@ -231,7 +231,7 @@ class CartController extends Controller
             ]);
         }
 
-        $item->load('menuItem:id,vendor_id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category,paid_addons,free_addons,removable_items');
+        $item->load('menuItem:id,vendor_id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category,paid_addons,free_addons,removable_items,translations');
 
         $customerName = $this->customerName($request->user());
         $vendor = $mySession->vendor;
@@ -321,7 +321,7 @@ class CartController extends Controller
         }
 
         $item->update($updates);
-        $item->load('menuItem:id,vendor_id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category,paid_addons,free_addons,removable_items');
+        $item->load('menuItem:id,vendor_id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category,paid_addons,free_addons,removable_items,translations');
 
         $customerName = $this->customerName($request->user());
         $vendor = $mySession->vendor;
@@ -407,9 +407,9 @@ class CartController extends Controller
         $sessions = TableScanSession::with([
             'customer:id,first_name,last_name',
             'restaurantTable:id,number,name',
-            'cartItems.menuItem:id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category,paid_addons,free_addons,removable_items',
+            'cartItems.menuItem:id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category,paid_addons,free_addons,removable_items,translations',
             'vendor:id,vendor_public_id,restaurant_name,country',
-            'vendor.vendorSetting:id,vendor_id,service_fee_rate',
+            'vendor.vendorSetting:id,vendor_id,service_fee_rate,supported_languages',
         ])
             ->whereIn('id', $sessionIds)
             ->get();
@@ -515,7 +515,7 @@ class CartController extends Controller
             return response()->json($this->buildTableHistoryResponse($mySession, $request));
         }
 
-        $myCartItems = CartItem::with('menuItem:id,name,price,has_discount,discounted_price,vat_rate,tax_category,paid_addons,free_addons,removable_items')
+        $myCartItems = CartItem::with('menuItem:id,name,price,has_discount,discounted_price,vat_rate,tax_category,paid_addons,free_addons,removable_items,translations')
             ->where('table_scan_session_id', $mySession->id)
             ->whereNull('order_id')
             ->get();
@@ -803,7 +803,7 @@ class CartController extends Controller
      */
     private function computeOrderAmount(Order $order, int $ownerSessionId, bool $includeOpenOwnedItems = false, string $vendorCountry = 'AT'): float
     {
-        $owned = CartItem::with('menuItem:id,price,has_discount,discounted_price,vat_rate,tax_category,paid_addons,free_addons,removable_items')
+        $owned = CartItem::with('menuItem:id,price,has_discount,discounted_price,vat_rate,tax_category,paid_addons,free_addons,removable_items,translations')
             ->where(function ($query) use ($order, $ownerSessionId, $includeOpenOwnedItems) {
                 $query->where('order_id', $order->id);
 
@@ -816,7 +816,7 @@ class CartController extends Controller
             })
             ->get();
 
-        $sharedInto = CartItem::with('menuItem:id,price,has_discount,discounted_price,vat_rate,tax_category,paid_addons,free_addons,removable_items')
+        $sharedInto = CartItem::with('menuItem:id,price,has_discount,discounted_price,vat_rate,tax_category,paid_addons,free_addons,removable_items,translations')
             ->whereJsonContains('shared_order_ids', $order->id)
             ->where('table_scan_session_id', '!=', $ownerSessionId)
             ->get();
@@ -873,7 +873,7 @@ class CartController extends Controller
             ->get()
             ->groupBy('table_scan_session_id');
 
-        $allCartItems = CartItem::with('menuItem:id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category,paid_addons,free_addons,removable_items')
+        $allCartItems = CartItem::with('menuItem:id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category,paid_addons,free_addons,removable_items,translations')
             ->whereIn('table_scan_session_id', $sessionIds)
             ->get();
 
