@@ -8,6 +8,8 @@ use App\Models\MenuItem;
 use App\Models\Order;
 use App\Models\TableScanSession;
 use App\Models\Vendor;
+use App\Services\LocaleService;
+use App\Services\MenuCustomizationService;
 use App\Services\NotificationService;
 use App\Services\TaxCalculationService;
 use App\Services\VendorDateTimeService;
@@ -20,7 +22,11 @@ use Illuminate\Validation\ValidationException;
 
 class CartController extends Controller
 {
-    public function __construct(private readonly VendorDateTimeService $dateTimes) {}
+    public function __construct(
+        private readonly VendorDateTimeService $dateTimes,
+        private readonly LocaleService $locales,
+        private readonly MenuCustomizationService $customizations,
+    ) {}
 
     /**
      * Resolve the authenticated customer's active session.
@@ -70,7 +76,7 @@ class CartController extends Controller
 
         $sessions = TableScanSession::with([
             'customer:id,first_name,last_name',
-            'cartItems.menuItem:id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category',
+            'cartItems.menuItem:id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category,paid_addons,free_addons,removable_items',
             'restaurantTable:id,number,name',
             'vendor:id,vendor_public_id,restaurant_name,country',
             'vendor.vendorSetting:id,vendor_id,service_fee_rate',
@@ -89,8 +95,12 @@ class CartController extends Controller
         $mySession = $sessions->firstWhere('id', $mySession->id) ?? $mySession;
         $vendorCountry = $this->vendorCountry($mySession);
         $serviceFeeRate = $this->serviceFeeRate($mySession);
+        $vendor = $mySession->vendor;
+        $locale = $vendor
+            ? $this->locales->resolveCustomerLocaleFromHeader($request, $vendor)
+            : 'en';
 
-        $people = $sessions->map(function (TableScanSession $s) use ($mySession, $orderedOrderIds, $vendorCountry, $serviceFeeRate) {
+        $people = $sessions->map(function (TableScanSession $s) use ($mySession, $orderedOrderIds, $vendorCountry, $serviceFeeRate, $vendor, $locale) {
             $personItems = $s->cartItems
                 ->filter(fn (CartItem $item) => $item->order_id === null
                     && ! $this->cartItemBelongsToOrderedOrder($item, $orderedOrderIds))
@@ -107,14 +117,13 @@ class CartController extends Controller
                     ? trim($s->customer->first_name.' '.$s->customer->last_name)
                     : 'Guest',
                 'personal_items' => $personItems
-                    ->map(fn (CartItem $item) => $this->itemPayload($item, $vendorCountry)),
+                    ->map(fn (CartItem $item) => $this->itemPayload($item, $vendorCountry, $vendor, $locale)),
                 'tax_groups' => $personTaxGroups,
                 'totals' => $personTotals,
             ];
         });
 
         $table = $mySession->restaurantTable;
-        $vendor = $mySession->vendor;
 
         return response()->json([
             'table' => $table ? [
@@ -153,14 +162,12 @@ class CartController extends Controller
             'quantity' => ['sometimes', 'integer', 'min:1', 'max:99'],
             'notes' => ['nullable', 'string', 'max:500'],
             'paid_addons' => ['sometimes', 'array'],
-            'paid_addons.*.name' => ['required_with:paid_addons', 'string', 'max:255'],
+            'paid_addons.*.id' => ['sometimes', 'integer', 'min:1'],
+            'paid_addons.*.name' => ['sometimes', 'string', 'max:255'],
             'paid_addons.*.price' => ['sometimes', 'numeric', 'min:0'],
             'free_addons' => ['sometimes', 'array'],
-            'free_addons.*' => ['string', 'max:255'],
             'removed_items' => ['sometimes', 'array'],
-            'removed_items.*' => ['string', 'max:255'],
             'removable_items' => ['sometimes', 'array'],
-            'removable_items.*' => ['string', 'max:255'],
             'selected_modifiers' => ['sometimes', 'array'],
             'selected_modifiers.*.modifier_group_id' => ['sometimes', 'integer'],
             'selected_modifiers.*.group_id' => ['sometimes', 'integer'],
@@ -224,13 +231,28 @@ class CartController extends Controller
             ]);
         }
 
-        $item->load('menuItem:id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category');
+        $item->load('menuItem:id,vendor_id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category,paid_addons,free_addons,removable_items');
 
         $customerName = $this->customerName($request->user());
-        $itemName = $item->menuItem?->name ?? 'an item';
-        NotificationService::notifyTableCustomers($mySession->restaurant_table_id, 'cart_updated', "{$customerName} added {$itemName} to the cart.");
+        $vendor = $mySession->vendor;
+        $locale = $vendor ? $this->locales->resolveCustomerLocaleFromHeader($request, $vendor) : 'en';
+        $itemName = $item->menuItem && $vendor
+            ? $this->customizations->menuItemName($item->menuItem, $vendor, $locale)
+            : ($item->menuItem?->name ?? 'an item');
+        NotificationService::notifyTableCustomers(
+            $mySession->restaurant_table_id,
+            'cart_updated',
+            "{$customerName} added {$itemName} to the cart.",
+            [
+                'template' => 'cart.item_added',
+                'customer_id' => $request->user()->id,
+                'customer_name' => $customerName,
+                'menu_item_id' => $item->menu_item_id,
+                'item_name' => $itemName,
+            ],
+        );
 
-        return response()->json($this->itemPayload($item, $mySession->vendor?->country), 201);
+        return response()->json($this->itemPayload($item, $mySession->vendor?->country, $vendor, $locale), 201);
     }
 
     /**
@@ -244,14 +266,12 @@ class CartController extends Controller
             'quantity' => ['sometimes', 'integer', 'min:1', 'max:99'],
             'notes' => ['nullable', 'string', 'max:500'],
             'paid_addons' => ['sometimes', 'array'],
-            'paid_addons.*.name' => ['required_with:paid_addons', 'string', 'max:255'],
+            'paid_addons.*.id' => ['sometimes', 'integer', 'min:1'],
+            'paid_addons.*.name' => ['sometimes', 'string', 'max:255'],
             'paid_addons.*.price' => ['sometimes', 'numeric', 'min:0'],
             'free_addons' => ['sometimes', 'array'],
-            'free_addons.*' => ['string', 'max:255'],
             'removed_items' => ['sometimes', 'array'],
-            'removed_items.*' => ['string', 'max:255'],
             'removable_items' => ['sometimes', 'array'],
-            'removable_items.*' => ['string', 'max:255'],
             'selected_modifiers' => ['sometimes', 'array'],
             'selected_modifiers.*.modifier_group_id' => ['sometimes', 'integer'],
             'selected_modifiers.*.group_id' => ['sometimes', 'integer'],
@@ -301,13 +321,28 @@ class CartController extends Controller
         }
 
         $item->update($updates);
-        $item->load('menuItem:id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category');
+        $item->load('menuItem:id,vendor_id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category,paid_addons,free_addons,removable_items');
 
         $customerName = $this->customerName($request->user());
-        $itemName = $item->menuItem?->name ?? 'an item';
-        NotificationService::notifyTableCustomers($mySession->restaurant_table_id, 'cart_updated', "{$customerName} updated {$itemName} in the cart.");
+        $vendor = $mySession->vendor;
+        $locale = $vendor ? $this->locales->resolveCustomerLocaleFromHeader($request, $vendor) : 'en';
+        $itemName = $item->menuItem && $vendor
+            ? $this->customizations->menuItemName($item->menuItem, $vendor, $locale)
+            : ($item->menuItem?->name ?? 'an item');
+        NotificationService::notifyTableCustomers(
+            $mySession->restaurant_table_id,
+            'cart_updated',
+            "{$customerName} updated {$itemName} in the cart.",
+            [
+                'template' => 'cart.item_updated',
+                'customer_id' => $request->user()->id,
+                'customer_name' => $customerName,
+                'menu_item_id' => $item->menu_item_id,
+                'item_name' => $itemName,
+            ],
+        );
 
-        return response()->json($this->itemPayload($item, $mySession->vendor?->country));
+        return response()->json($this->itemPayload($item, $mySession->vendor?->country, $vendor, $locale));
     }
 
     /**
@@ -331,10 +366,22 @@ class CartController extends Controller
         }
 
         $itemName = $item->menuItem?->name ?? 'an item';
+        $menuItemId = $item->menu_item_id;
         $item->delete();
 
         $customerName = $this->customerName($request->user());
-        NotificationService::notifyTableCustomers($mySession->restaurant_table_id, 'cart_updated', "{$customerName} removed {$itemName} from the cart.");
+        NotificationService::notifyTableCustomers(
+            $mySession->restaurant_table_id,
+            'cart_updated',
+            "{$customerName} removed {$itemName} from the cart.",
+            [
+                'template' => 'cart.item_removed',
+                'customer_id' => $request->user()->id,
+                'customer_name' => $customerName,
+                'menu_item_id' => $menuItemId,
+                'item_name' => $itemName,
+            ],
+        );
 
         return response()->json(null, 204);
     }
@@ -360,7 +407,7 @@ class CartController extends Controller
         $sessions = TableScanSession::with([
             'customer:id,first_name,last_name',
             'restaurantTable:id,number,name',
-            'cartItems.menuItem:id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category',
+            'cartItems.menuItem:id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category,paid_addons,free_addons,removable_items',
             'vendor:id,vendor_public_id,restaurant_name,country',
             'vendor.vendorSetting:id,vendor_id,service_fee_rate',
         ])
@@ -370,10 +417,14 @@ class CartController extends Controller
         $mySession = $sessions->firstWhere('id', $mySession->id) ?? $mySession;
         $vendorCountry = $this->vendorCountry($mySession);
         $serviceFeeRate = $this->serviceFeeRate($mySession);
+        $vendor = $mySession->vendor;
+        $locale = $vendor
+            ? $this->locales->resolveCustomerLocaleFromHeader($request, $vendor)
+            : 'en';
         $tableTotal = 0.0;
         $tableItemCount = 0;
 
-        $people = $sessions->map(function (TableScanSession $s) use ($mySession, $vendorCountry, $serviceFeeRate, &$tableTotal, &$tableItemCount) {
+        $people = $sessions->map(function (TableScanSession $s) use ($mySession, $vendorCountry, $serviceFeeRate, $vendor, $locale, &$tableTotal, &$tableItemCount) {
             $personalTotal = 0.0;
             $personalCount = 0;
             $isMe = $s->id === $mySession->id;
@@ -395,14 +446,16 @@ class CartController extends Controller
                     return [
                         'cart_item_id' => $item->id,
                         'menu_item_id' => $item->menu_item_id,
-                        'name' => $item->menuItem?->name,
+                        'name' => $item->menuItem && $vendor
+                            ? $this->customizations->menuItemName($item->menuItem, $vendor, $locale)
+                            : $item->menuItem?->name,
                         'image_url' => $item->menuItem?->image_url,
                         'quantity' => $item->quantity,
                         'unit_price' => $unitPrice,
-                        'paid_addons' => $this->formatCartPaidAddons($item, $itc, $vendorCountry),
-                        'free_addons' => $item->free_addons ?? [],
-                        'removed_items' => $item->removed_items ?? [],
-                        'selected_modifiers' => $this->formatCartSelectedModifiers($item, $itc, $vendorCountry),
+                        'paid_addons' => $this->formatCartPaidAddons($item, $itc, $vendorCountry, $vendor, $locale),
+                        'free_addons' => $this->formatCartNamedSelections($item, 'free_addons', $vendor, $locale),
+                        'removed_items' => $this->formatCartNamedSelections($item, 'removed_items', $vendor, $locale),
+                        'selected_modifiers' => $this->formatCartSelectedModifiers($item, $itc, $vendorCountry, $vendor, $locale),
                         'total_price' => $lineTotal,
                         'is_mine' => $isMe,
                     ];
@@ -459,10 +512,10 @@ class CartController extends Controller
         $existingOrder = $this->currentOpenOrder($request->user()->id, $mySession->id);
 
         if ($existingOrder && $existingOrder->status === 'confirmed') {
-            return response()->json($this->buildTableHistoryResponse($mySession));
+            return response()->json($this->buildTableHistoryResponse($mySession, $request));
         }
 
-        $myCartItems = CartItem::with('menuItem:id,name,price,has_discount,discounted_price,vat_rate,tax_category')
+        $myCartItems = CartItem::with('menuItem:id,name,price,has_discount,discounted_price,vat_rate,tax_category,paid_addons,free_addons,removable_items')
             ->where('table_scan_session_id', $mySession->id)
             ->whereNull('order_id')
             ->get();
@@ -481,9 +534,19 @@ class CartController extends Controller
         if ($existingOrder) {
             $existingOrder->update(['amount' => $myTotal]);
 
-            NotificationService::notifyTableCustomers($mySession->restaurant_table_id, 'order_updated', "{$customerName} updated their order draft.");
+            NotificationService::notifyTableCustomers(
+                $mySession->restaurant_table_id,
+                'order_updated',
+                "{$customerName} updated their order draft.",
+                [
+                    'template' => 'order.draft_updated',
+                    'customer_id' => $request->user()->id,
+                    'customer_name' => $customerName,
+                    'order_id' => $existingOrder->id,
+                ],
+            );
 
-            return response()->json($this->buildTableHistoryResponse($mySession));
+            return response()->json($this->buildTableHistoryResponse($mySession, $request));
         }
 
         DB::transaction(function () use ($request, $mySession, $myTotal) {
@@ -503,9 +566,18 @@ class CartController extends Controller
             ]);
         });
 
-        NotificationService::notifyTableCustomers($mySession->restaurant_table_id, 'order_updated', "{$customerName} created an order draft.");
+        NotificationService::notifyTableCustomers(
+            $mySession->restaurant_table_id,
+            'order_updated',
+            "{$customerName} created an order draft.",
+            [
+                'template' => 'order.draft_created',
+                'customer_id' => $request->user()->id,
+                'customer_name' => $customerName,
+            ],
+        );
 
-        return response()->json($this->buildTableHistoryResponse($mySession), 201);
+        return response()->json($this->buildTableHistoryResponse($mySession, $request), 201);
     }
 
     /**
@@ -631,9 +703,19 @@ class CartController extends Controller
         }
 
         $customerName = $this->customerName($request->user());
-        NotificationService::notifyTableCustomers($mySession->restaurant_table_id, 'order_updated', "{$customerName} updated item sharing on the order.");
+        NotificationService::notifyTableCustomers(
+            $mySession->restaurant_table_id,
+            'order_updated',
+            "{$customerName} updated item sharing on the order.",
+            [
+                'template' => 'order.sharing_updated',
+                'customer_id' => $request->user()->id,
+                'customer_name' => $customerName,
+                'order_id' => $order->id,
+            ],
+        );
 
-        return response()->json($this->buildTableHistoryResponse($mySession));
+        return response()->json($this->buildTableHistoryResponse($mySession, $request));
     }
 
     /**
@@ -684,9 +766,19 @@ class CartController extends Controller
         });
 
         $customerName = $this->customerName($request->user());
-        NotificationService::notifyTableCustomers($mySession->restaurant_table_id, 'order_updated', "{$customerName} confirmed their order.");
+        NotificationService::notifyTableCustomers(
+            $mySession->restaurant_table_id,
+            'order_updated',
+            "{$customerName} confirmed their order.",
+            [
+                'template' => 'order.confirmed',
+                'customer_id' => $request->user()->id,
+                'customer_name' => $customerName,
+                'order_id' => $order->id,
+            ],
+        );
 
-        return response()->json($this->buildTableHistoryResponse($mySession));
+        return response()->json($this->buildTableHistoryResponse($mySession, $request));
     }
 
     /**
@@ -701,7 +793,7 @@ class CartController extends Controller
             return response()->json(['message' => 'No active table session found.'], 422);
         }
 
-        return response()->json($this->buildTableHistoryResponse($mySession));
+        return response()->json($this->buildTableHistoryResponse($mySession, $request));
     }
 
     /**
@@ -711,7 +803,7 @@ class CartController extends Controller
      */
     private function computeOrderAmount(Order $order, int $ownerSessionId, bool $includeOpenOwnedItems = false, string $vendorCountry = 'AT'): float
     {
-        $owned = CartItem::with('menuItem:id,price,has_discount,discounted_price,vat_rate,tax_category')
+        $owned = CartItem::with('menuItem:id,price,has_discount,discounted_price,vat_rate,tax_category,paid_addons,free_addons,removable_items')
             ->where(function ($query) use ($order, $ownerSessionId, $includeOpenOwnedItems) {
                 $query->where('order_id', $order->id);
 
@@ -724,7 +816,7 @@ class CartController extends Controller
             })
             ->get();
 
-        $sharedInto = CartItem::with('menuItem:id,price,has_discount,discounted_price,vat_rate,tax_category')
+        $sharedInto = CartItem::with('menuItem:id,price,has_discount,discounted_price,vat_rate,tax_category,paid_addons,free_addons,removable_items')
             ->whereJsonContains('shared_order_ids', $order->id)
             ->where('table_scan_session_id', '!=', $ownerSessionId)
             ->get();
@@ -750,7 +842,7 @@ class CartController extends Controller
      * Build the unified table-view response: per-session people, with each
      * person's orders enriched with computed items (owned + shared-into).
      */
-    private function buildTableHistoryResponse(TableScanSession $mySession): array
+    private function buildTableHistoryResponse(TableScanSession $mySession, ?Request $request = null): array
     {
         if (! $mySession->relationLoaded('vendor')) {
             $mySession->load('vendor.vendorSetting');
@@ -759,6 +851,9 @@ class CartController extends Controller
         $vendorCountry = $this->vendorCountry($mySession);
         $serviceFeeRate = $this->serviceFeeRate($mySession);
         $vendor = $mySession->vendor;
+        $locale = $request && $vendor
+            ? $this->locales->resolveCustomerLocaleFromHeader($request, $vendor)
+            : 'en';
 
         $sessions = TableScanSession::with([
             'customer:id,first_name,last_name',
@@ -778,7 +873,7 @@ class CartController extends Controller
             ->get()
             ->groupBy('table_scan_session_id');
 
-        $allCartItems = CartItem::with('menuItem:id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category')
+        $allCartItems = CartItem::with('menuItem:id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category,paid_addons,free_addons,removable_items')
             ->whereIn('table_scan_session_id', $sessionIds)
             ->get();
 
@@ -793,7 +888,7 @@ class CartController extends Controller
         $tableTotal = 0.0;
         $tableOrderCount = 0;
 
-        $people = $sessions->map(function (TableScanSession $s) use ($mySession, $orders, $allCartItems, $ordersById, $sessionCustomerNames, $vendorCountry, $serviceFeeRate, $vendor, &$tableTotal, &$tableOrderCount) {
+        $people = $sessions->map(function (TableScanSession $s) use ($mySession, $orders, $allCartItems, $ordersById, $sessionCustomerNames, $vendorCountry, $serviceFeeRate, $vendor, $locale, &$tableTotal, &$tableOrderCount) {
             $personOrders = $orders->get($s->id, collect());
             $personTotal = (float) $personOrders->sum(fn (Order $o) => (float) $o->amount);
 
@@ -802,7 +897,7 @@ class CartController extends Controller
 
             $personCartItems = collect();
 
-            $orderPayloads = $personOrders->map(function (Order $order) use ($s, $allCartItems, $mySession, $ordersById, $sessionCustomerNames, $vendorCountry, $vendor, &$personCartItems) {
+            $orderPayloads = $personOrders->map(function (Order $order) use ($s, $allCartItems, $mySession, $ordersById, $sessionCustomerNames, $vendorCountry, $vendor, $locale, &$personCartItems) {
                 $ownedCartItems = $allCartItems->filter(function (CartItem $ci) use ($s, $order) {
                     if ($order->status === 'draft') {
                         return (int) $ci->table_scan_session_id === (int) $s->id
@@ -825,7 +920,7 @@ class CartController extends Controller
                 $personCartItems = $personCartItems->merge($orderItems);
 
                 $itemRows = $orderItems
-                    ->map(fn (CartItem $ci) => $this->cartItemPayload($ci, $order, $mySession, $ordersById, $sessionCustomerNames, $vendorCountry, $vendor))
+                    ->map(fn (CartItem $ci) => $this->cartItemPayload($ci, $order, $mySession, $ordersById, $sessionCustomerNames, $vendorCountry, $vendor, $locale))
                     ->values()
                     ->all();
 
@@ -896,6 +991,7 @@ class CartController extends Controller
         $sessionCustomerNames = null,
         ?string $vendorCountry = null,
         ?Vendor $vendor = null,
+        string $locale = 'en',
     ): array {
         $vendorCountry ??= 'AT';
         $menuItem = $ci->menuItem;
@@ -927,14 +1023,16 @@ class CartController extends Controller
         return [
             'cart_item_id' => $ci->id,
             'menu_item_id' => $ci->menu_item_id,
-            'name' => $menuItem?->name,
+            'name' => $menuItem && $vendor
+                ? $this->customizations->menuItemName($menuItem, $vendor, $locale)
+                : $menuItem?->name,
             'image_url' => $menuItem?->image_url,
             'quantity' => $ci->quantity,
             'unit_price' => $unitPrice,
-            'paid_addons' => $this->formatCartPaidAddons($ci, $itemTaxCategory, $vendorCountry),
-            'free_addons' => $ci->free_addons ?? [],
-            'removed_items' => $ci->removed_items ?? [],
-            'selected_modifiers' => $this->formatCartSelectedModifiers($ci, $itemTaxCategory, $vendorCountry),
+            'paid_addons' => $this->formatCartPaidAddons($ci, $itemTaxCategory, $vendorCountry, $vendor, $locale),
+            'free_addons' => $this->formatCartNamedSelections($ci, 'free_addons', $vendor, $locale),
+            'removed_items' => $this->formatCartNamedSelections($ci, 'removed_items', $vendor, $locale),
+            'selected_modifiers' => $this->formatCartSelectedModifiers($ci, $itemTaxCategory, $vendorCountry, $vendor, $locale),
             'vat_rate' => $vatRate,
             'tax_category' => $itemTaxCategory,
             'vat_amount' => $vatAmount,
@@ -1045,59 +1143,12 @@ class CartController extends Controller
 
     private function normalizePaidAddons(MenuItem $menuItem, array $selected): array
     {
-        $configured = collect($menuItem->paid_addons ?? [])
-            ->filter(fn ($addon) => is_array($addon) && isset($addon['name']))
-            ->mapWithKeys(fn ($addon) => [
-                strtolower(trim((string) $addon['name'])) => [
-                    'name' => (string) $addon['name'],
-                    'price' => round((float) ($addon['price'] ?? 0), 2),
-                ],
-            ]);
-
-        $normalized = collect($selected)
-            ->map(function ($addon) use ($configured) {
-                $name = is_array($addon) ? trim((string) ($addon['name'] ?? '')) : '';
-                $matched = $configured->get(strtolower($name));
-
-                if (! $matched) {
-                    throw ValidationException::withMessages([
-                        'paid_addons' => ["The selected paid add-on '{$name}' is not available for this menu item."],
-                    ]);
-                }
-
-                return $matched;
-            })
-            ->unique('name')
-            ->sortBy('name')
-            ->values()
-            ->all();
-
-        return $normalized;
+        return $this->customizations->normalizePaidAddons($menuItem, $selected);
     }
 
     private function normalizeStringSelections(string $field, array $configured, array $selected): array
     {
-        $available = collect($configured)
-            ->filter(fn ($item) => is_string($item) && trim($item) !== '')
-            ->mapWithKeys(fn ($item) => [strtolower(trim($item)) => trim($item)]);
-
-        return collect($selected)
-            ->map(function ($item) use ($field, $available) {
-                $value = trim((string) $item);
-                $matched = $available->get(strtolower($value));
-
-                if (! $matched) {
-                    throw ValidationException::withMessages([
-                        $field => ["The selected {$field} value '{$value}' is not available for this menu item."],
-                    ]);
-                }
-
-                return $matched;
-            })
-            ->unique()
-            ->sort()
-            ->values()
-            ->all();
+        return $this->customizations->normalizeNamedSelections($field, $configured, $selected);
     }
 
     private function normalizeSelectedModifiers(MenuItem $menuItem, array $selected): array
@@ -1170,18 +1221,17 @@ class CartController extends Controller
 
                 return [
                     'id' => $option->id,
-                    'name' => $option->name,
                     'price_adjustment' => round((float) $option->price_adjustment, 2),
                 ];
             })->values()->all();
 
             $normalized[] = [
                 'modifier_group_id' => $group->id,
-                'name' => $group->name,
                 'type' => $group->type,
                 'is_required' => (bool) $group->is_required,
                 'min_selection' => (int) $group->min_selection,
                 'max_selection' => (int) $group->max_selection,
+                'tax_category' => $group->tax_category,
                 'options' => $options,
             ];
         }
@@ -1232,7 +1282,7 @@ class CartController extends Controller
         return TaxCalculationService::cartItemLineTotalGross($item, $vendorCountry);
     }
 
-    private function itemPayload(CartItem $item, ?string $vendorCountry = null): array
+    private function itemPayload(CartItem $item, ?string $vendorCountry = null, ?Vendor $vendor = null, string $locale = 'en'): array
     {
         $vendorCountry ??= 'AT';
         $menuItem = $item->relationLoaded('menuItem') ? $item->menuItem : null;
@@ -1248,16 +1298,18 @@ class CartController extends Controller
             'quantity' => $item->quantity,
             'notes' => $item->notes,
             'price' => $unitPrice,
-            'paid_addons' => $this->formatCartPaidAddons($item, $itemTaxCategory, $vendorCountry),
-            'free_addons' => $item->free_addons ?? [],
-            'removed_items' => $item->removed_items ?? [],
-            'selected_modifiers' => $this->formatCartSelectedModifiers($item, $itemTaxCategory, $vendorCountry),
+            'paid_addons' => $this->formatCartPaidAddons($item, $itemTaxCategory, $vendorCountry, $vendor, $locale),
+            'free_addons' => $this->formatCartNamedSelections($item, 'free_addons', $vendor, $locale),
+            'removed_items' => $this->formatCartNamedSelections($item, 'removed_items', $vendor, $locale),
+            'selected_modifiers' => $this->formatCartSelectedModifiers($item, $itemTaxCategory, $vendorCountry, $vendor, $locale),
             'vat_rate' => $vatRate,
             'vat_amount' => $vatAmount,
             'line_total' => $lineTotal,
             'menu_item' => $menuItem ? [
                 'id' => $menuItem->id,
-                'name' => $menuItem->name,
+                'name' => $vendor
+                    ? $this->customizations->menuItemName($menuItem, $vendor, $locale)
+                    : $menuItem->name,
                 'price' => $baseGross,
                 'vat_rate' => $vatRate,
                 'tax_category' => $menuItem->tax_category,
@@ -1266,21 +1318,53 @@ class CartController extends Controller
         ];
     }
 
-    private function formatCartPaidAddons(CartItem $item, string $itemTaxCategory, string $vendorCountry): array
+    private function formatCartPaidAddons(CartItem $item, string $itemTaxCategory, string $vendorCountry, ?Vendor $vendor, string $locale): array
     {
-        return collect($item->paid_addons ?? [])->map(function ($addon) use ($itemTaxCategory, $vendorCountry) {
-            $vatRate = TaxCalculationService::addonVatRate($addon, $itemTaxCategory, $vendorCountry);
+        $menuItem = $item->relationLoaded('menuItem') ? $item->menuItem : null;
 
-            return [
-                'name' => $addon['name'],
-                'price' => TaxCalculationService::gross((float) ($addon['price'] ?? 0), $vatRate),
-                'vat_rate' => $vatRate,
-            ];
-        })->values()->all();
+        if (! $menuItem || ! $vendor) {
+            return collect($item->paid_addons ?? [])->map(function ($addon) use ($itemTaxCategory, $vendorCountry) {
+                $vatRate = TaxCalculationService::addonVatRate(is_array($addon) ? $addon : [], $itemTaxCategory, $vendorCountry);
+
+                return [
+                    'id' => is_array($addon) ? ($addon['id'] ?? null) : null,
+                    'name' => is_array($addon) ? ($addon['name'] ?? '') : '',
+                    'price' => TaxCalculationService::gross((float) (is_array($addon) ? ($addon['price'] ?? 0) : 0), $vatRate),
+                    'vat_rate' => $vatRate,
+                ];
+            })->values()->all();
+        }
+
+        return $this->customizations->formatPaidAddons($menuItem, $item->paid_addons ?? [], $vendor, $locale, $itemTaxCategory, $vendorCountry);
     }
 
-    private function formatCartSelectedModifiers(CartItem $item, string $itemTaxCategory, string $vendorCountry): array
+    private function formatCartNamedSelections(CartItem $item, string $field, ?Vendor $vendor, string $locale): array
     {
+        $menuItem = $item->relationLoaded('menuItem') ? $item->menuItem : null;
+        $selected = $field === 'free_addons'
+            ? ($item->free_addons ?? [])
+            : ($item->removed_items ?? []);
+
+        if (! $menuItem || ! $vendor) {
+            return collect($selected)->map(fn ($value) => is_array($value) ? (string) ($value['name'] ?? '') : (string) $value)
+                ->filter()
+                ->values()
+                ->all();
+        }
+
+        $configured = $field === 'free_addons'
+            ? ($menuItem->free_addons ?? [])
+            : ($menuItem->removable_items ?? []);
+
+        return $this->customizations->formatNamedSelections($configured, $selected, $vendor, $locale);
+    }
+
+    private function formatCartSelectedModifiers(CartItem $item, string $itemTaxCategory, string $vendorCountry, ?Vendor $vendor, string $locale): array
+    {
+        if ($vendor) {
+            return $this->customizations->formatSelectedModifiers($item->selected_modifiers ?? [], $vendor, $locale, $itemTaxCategory, $vendorCountry);
+        }
+
         return collect($item->selected_modifiers ?? [])->map(function ($group) use ($itemTaxCategory, $vendorCountry) {
             $groupTaxCategory = $group['tax_category'] ?? '';
             $vatRate = TaxCalculationService::modifierGroupVatRate($groupTaxCategory, $itemTaxCategory, $vendorCountry);

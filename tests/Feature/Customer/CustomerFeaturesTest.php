@@ -852,14 +852,14 @@ class CustomerFeaturesTest extends TestCase
             ->assertOk()
             ->assertJsonPath(
                 'notifications.0.created_at',
-                $notification->created_at->format('m/d/Y g:i A')
+                $notification->created_at->copy()->setTimezone($this->vendor->resolveTimezone())->format('m/d/Y g:i A')
             );
 
         $this->getJson("/api/customer/loyalty/{$this->vendor->vendor_public_id}", $this->headers)
             ->assertOk()
             ->assertJsonPath(
                 'transactions.data.0.created_at',
-                $transaction->created_at->format('m/d/Y g:i A')
+                $transaction->created_at->copy()->setTimezone($this->vendor->resolveTimezone())->format('m/d/Y g:i A')
             );
     }
 

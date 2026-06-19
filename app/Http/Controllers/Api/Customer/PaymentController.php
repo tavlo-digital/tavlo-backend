@@ -180,7 +180,17 @@ class PaymentController extends Controller
             $tableId = $order->tableScanSession?->restaurant_table_id;
             if ($tableId) {
                 $customerName = trim(($customer->first_name ?? '') . ' ' . ($customer->last_name ?? '')) ?: 'A guest';
-                NotificationService::notifyTableCustomers($tableId, 'payment_updated', "{$customerName} initiated a payment.");
+                NotificationService::notifyTableCustomers(
+                    $tableId,
+                    'payment_updated',
+                    "{$customerName} initiated a payment.",
+                    [
+                        'template' => 'payment.initiated',
+                        'customer_id' => $customer->id,
+                        'customer_name' => $customerName,
+                        'order_id' => $order->id,
+                    ],
+                );
             }
         }
 
@@ -300,7 +310,18 @@ class PaymentController extends Controller
             $tableId = $order->tableScanSession?->restaurant_table_id;
             if ($tableId) {
                 $customerName = trim(($customer->first_name ?? '') . ' ' . ($customer->last_name ?? '')) ?: 'A guest';
-                NotificationService::notifyTableCustomers($tableId, 'payment_updated', "{$customerName} updated the payment.");
+                NotificationService::notifyTableCustomers(
+                    $tableId,
+                    'payment_updated',
+                    "{$customerName} updated the payment.",
+                    [
+                        'template' => 'payment.updated',
+                        'customer_id' => $customer->id,
+                        'customer_name' => $customerName,
+                        'order_id' => $order->id,
+                        'payment_id' => $payment->id,
+                    ],
+                );
             }
         }
 
@@ -394,7 +415,16 @@ class PaymentController extends Controller
         if ($type === 'payment_intent.succeeded' && $payment->table_scan_session_id) {
             $session = $payment->order?->tableScanSession;
             if ($session) {
-                NotificationService::notifyTableCustomers($session->restaurant_table_id, 'payment_updated', 'A payment has been completed on this table.');
+                NotificationService::notifyTableCustomers(
+                    $session->restaurant_table_id,
+                    'payment_updated',
+                    'A payment has been completed on this table.',
+                    [
+                        'template' => 'payment.completed',
+                        'order_id' => $payment->order_id,
+                        'payment_id' => $payment->id,
+                    ],
+                );
             }
         }
 

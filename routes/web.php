@@ -3,6 +3,7 @@
 use App\Http\Controllers\Admin\CustomerController;
 use App\Http\Controllers\Admin\DiagnosticsController;
 use App\Http\Controllers\Admin\CountryController;
+use App\Http\Controllers\Admin\LanguageController;
 use App\Http\Controllers\Admin\MenuCategoryController;
 use App\Http\Controllers\Admin\TaxCategoryController;
 use App\Http\Controllers\Admin\RoleController;
@@ -42,6 +43,9 @@ Route::middleware(['auth', 'verified', 'admin'])->prefix('admin')->name('admin.'
     Route::post('countries', [CountryController::class, 'store'])->name('countries.store');
     Route::put('countries/{country}', [CountryController::class, 'update'])->name('countries.update');
     Route::delete('countries/{country}', [CountryController::class, 'destroy'])->name('countries.destroy');
+
+    Route::get('languages', [LanguageController::class, 'index'])->name('languages.index');
+    Route::post('languages/notifications', [LanguageController::class, 'updateNotifications'])->name('languages.notifications.update');
     Route::get('customer/{customer}/{tab}', [CustomerController::class, 'show'])
         ->name('customer.show')
         ->where('tab', 'overview|orders|refunds|reviews|activity|gdpr');

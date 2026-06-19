@@ -34,6 +34,7 @@ const navItems: NavItem[] = [
     { title: 'Menu Categories', href: '/admin/menu-categories', icon: Tags },
     { title: 'Tax Management', href: '/admin/tax-categories', icon: Receipt },
     { title: 'Countries', href: '/admin/countries', icon: Globe },
+    { title: 'Languages', href: '/admin/languages', icon: Globe },
     { title: 'Reviews & Complaints', href: '/admin/reviews', icon: MessageSquareWarning, disabled: true },
     { title: 'Insights & Analysis', href: '/admin/insights', icon: Sparkles, disabled: true },
     { title: 'Diagnostics', href: '/admin/diagnostics', icon: Stethoscope },

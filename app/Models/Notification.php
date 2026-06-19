@@ -15,12 +15,14 @@ class Notification extends Model
         'admin_id',
         'event',
         'message',
+        'metadata',
         'read',
     ];
 
     protected function casts(): array
     {
         return [
+            'metadata' => 'array',
             'read' => 'boolean',
         ];
     }

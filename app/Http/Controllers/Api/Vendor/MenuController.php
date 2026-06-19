@@ -8,12 +8,15 @@ use App\Models\MenuCategory;
 use App\Models\MenuItem;
 use App\Models\ModifierGroup;
 use App\Models\ModifierOption;
+use App\Services\MenuCustomizationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 
 class MenuController extends Controller
 {
+    public function __construct(private readonly MenuCustomizationService $customizations) {}
+
     /**
      * GET /api/restaurants/{vendorId}/menu
      *
@@ -133,6 +136,8 @@ class MenuController extends Controller
                     $existingItem = $vendor->menuItems()->find($itemData['id']);
                 }
 
+                $itemData = $this->customizations->normalizeMenuPayloadCustomizations($itemData);
+
                 $attributes = [
                     'menu_category_id' => $categoryId,
                     'name' => $itemData['name'],
@@ -247,9 +252,9 @@ class MenuController extends Controller
             'hasDiscount' => $item->has_discount,
             'discountPercent' => (float) $item->discount_percent,
             'discountedPrice' => $item->discounted_price ? (float) $item->discounted_price : null,
-            'paidAddons' => $item->paid_addons ?? [],
-            'freeAddons' => $item->free_addons ?? [],
-            'removableItems' => $item->removable_items ?? [],
+            'paidAddons' => $this->customizations->paidAddonDefinitions($item->paid_addons ?? [])->values()->all(),
+            'freeAddons' => $this->customizations->namedDefinitions($item->free_addons ?? [])->values()->all(),
+            'removableItems' => $this->customizations->namedDefinitions($item->removable_items ?? [])->values()->all(),
             'modifierGroupIds' => $item->modifierGroups->pluck('id')->values()->all(),
             'modifierGroups' => $item->modifierGroups
                 ->map(fn (ModifierGroup $group) => $this->formatModifierGroup($group))

@@ -9,6 +9,8 @@ use App\Models\TableScanSession;
 use App\Models\TableSession;
 use App\Models\TeamMember;
 use App\Models\Vendor;
+use App\Services\LocaleService;
+use App\Services\MenuCustomizationService;
 use App\Services\NotificationService;
 use App\Services\TaxCalculationService;
 use Illuminate\Http\JsonResponse;
@@ -17,6 +19,11 @@ use Illuminate\Support\Collection;
 
 class OrderController extends Controller
 {
+    public function __construct(
+        private readonly LocaleService $locales,
+        private readonly MenuCustomizationService $customizations,
+    ) {}
+
     /**
      * GET /api/vendor/{vendorId}/orders
      * Returns orders grouped by table session (dine-in) and flat list (takeaway).
@@ -134,7 +141,10 @@ class OrderController extends Controller
 
         $order->update($mapped);
 
-        $this->notifySessionCustomers($order, 'order_updated', 'Your order status has been updated.');
+        $this->notifySessionCustomers($order, 'order_updated', 'Your order status has been updated.', [
+            'template' => 'order.status_updated',
+            'order_id' => $order->id,
+        ]);
 
         return response()->json($this->formatOrder($order->fresh()->load('customer')));
     }
@@ -154,7 +164,10 @@ class OrderController extends Controller
             'waiter_confirmed_at' => now(),
         ]);
 
-        $this->notifySessionCustomers($order, 'order_updated', 'Your order has been confirmed by the waiter.');
+        $this->notifySessionCustomers($order, 'order_updated', 'Your order has been confirmed by the waiter.', [
+            'template' => 'order.waiter_confirmed',
+            'order_id' => $order->id,
+        ]);
 
         return response()->json($this->formatOrder($order->fresh()->load('customer')));
     }
@@ -174,7 +187,10 @@ class OrderController extends Controller
             'payment_pending' => false,
         ]);
 
-        $this->notifySessionCustomers($order, 'payment_updated', 'Your cash payment has been confirmed.');
+        $this->notifySessionCustomers($order, 'payment_updated', 'Your cash payment has been confirmed.', [
+            'template' => 'payment.cash_confirmed',
+            'order_id' => $order->id,
+        ]);
 
         return response()->json($this->formatOrder($order->fresh()->load('customer')));
     }
@@ -202,7 +218,10 @@ class OrderController extends Controller
 
         $order->update(['status' => 'ready']);
 
-        $this->notifySessionCustomers($order, 'order_updated', 'Your order is ready!');
+        $this->notifySessionCustomers($order, 'order_updated', 'Your order is ready!', [
+            'template' => 'order.ready',
+            'order_id' => $order->id,
+        ]);
 
         return response()->json($this->formatOrder($order->fresh()->load('customer')));
     }
@@ -256,6 +275,12 @@ class OrderController extends Controller
         $item->update($updates);
         $this->syncOrderStatusFromCartItems($order);
 
+        $template = match ($data['status']) {
+            'preparing' => 'cart.item_preparing',
+            'ready' => 'cart.item_ready',
+            'served' => 'cart.item_served',
+            default => 'cart.item_status_updated',
+        };
         $statusLabel = match ($data['status']) {
             'preparing' => 'is now being prepared',
             'ready' => 'is ready',
@@ -263,7 +288,13 @@ class OrderController extends Controller
             default => 'has been updated',
         };
         $itemName = $item->menuItem?->name ?? 'An item';
-        $this->notifySessionCustomers($order, 'cart_item_updated', "{$itemName} {$statusLabel}.");
+        $this->notifySessionCustomers($order, 'cart_item_updated', "{$itemName} {$statusLabel}.", [
+            'template' => $template,
+            'order_id' => $order->id,
+            'cart_item_id' => $item->id,
+            'menu_item_id' => $item->menu_item_id,
+            'item_name' => $itemName,
+        ]);
 
         return response()->json($this->formatOrder(
             $order->fresh()->load(['customer', 'tableScanSession.restaurantTable'])
@@ -280,7 +311,10 @@ class OrderController extends Controller
 
         $order->update(['status' => 'picked_up']);
 
-        $this->notifySessionCustomers($order, 'order_updated', 'Your order has been picked up.');
+        $this->notifySessionCustomers($order, 'order_updated', 'Your order has been picked up.', [
+            'template' => 'order.picked_up',
+            'order_id' => $order->id,
+        ]);
 
         return response()->json($this->formatOrder($order->fresh()->load('customer')));
     }
@@ -308,7 +342,10 @@ class OrderController extends Controller
             'served_at' => $now,
         ]);
 
-        $this->notifySessionCustomers($order, 'order_updated', 'Your order has been served. Enjoy!');
+        $this->notifySessionCustomers($order, 'order_updated', 'Your order has been served. Enjoy!', [
+            'template' => 'order.served',
+            'order_id' => $order->id,
+        ]);
 
         return response()->json($this->formatOrder($order->fresh()->load('customer')));
     }
@@ -331,7 +368,10 @@ class OrderController extends Controller
             'cancelled_reason' => $data['reason'] ?? null,
         ]);
 
-        $this->notifySessionCustomers($order, 'order_updated', 'Your order has been cancelled.');
+        $this->notifySessionCustomers($order, 'order_updated', 'Your order has been cancelled.', [
+            'template' => 'order.cancelled',
+            'order_id' => $order->id,
+        ]);
 
         return response()->json($this->formatOrder($order->fresh()->load('customer')));
     }
@@ -503,6 +543,7 @@ class OrderController extends Controller
     {
         $vendor = $order->relationLoaded('vendor') ? $order->vendor : ($order->vendor ?? null);
         $vendorCountry = $vendor?->country ?? 'AT';
+        $locale = $vendor ? $this->locales->dashboardLanguage($vendor) : 'en';
         $serviceFeeRate = (float) ($vendor?->vendorSetting?->service_fee_rate ?? 0);
         $total = (float) $order->amount;
 
@@ -546,7 +587,7 @@ class OrderController extends Controller
             $timeline[] = ['status' => 'cancelled', 'timestamp' => $order->cancelled_at->toISOString()];
         }
 
-        $items = $linkedItems->map(function (CartItem $ci) use ($vendorCountry) {
+        $items = $linkedItems->map(function (CartItem $ci) use ($vendorCountry, $vendor, $locale) {
             $itemTaxCategory = $ci->menuItem?->tax_category ?? 'food';
             $unitPrice = $this->cartItemUnitPrice($ci, $vendorCountry);
             $lineTotal = round($unitPrice * $ci->quantity, 2);
@@ -554,7 +595,11 @@ class OrderController extends Controller
             $orderIds = array_values(array_map('intval', is_array($ci->shared_order_ids) ? $ci->shared_order_ids : []));
             $sharedBetween = 1 + count($orderIds);
             $itemStatus = $this->cartItemStatus($ci);
-            $modifiers = $this->cartItemModifiers($ci, $vendorCountry);
+            $paidAddons = $this->formatPaidAddons($ci, $itemTaxCategory, $vendorCountry, $vendor, $locale);
+            $freeAddons = $this->formatNamedSelections($ci, 'free_addons', $vendor, $locale);
+            $removedItems = $this->formatNamedSelections($ci, 'removed_items', $vendor, $locale);
+            $selectedModifiers = $this->formatSelectedModifiers($ci, $itemTaxCategory, $vendorCountry, $vendor, $locale);
+            $modifiers = $this->cartItemModifiers($ci, $vendorCountry, $vendor, $locale);
 
             return [
                 'cartItemId' => $ci->id,
@@ -577,14 +622,14 @@ class OrderController extends Controller
                 'vat_rate' => $vatRate,
                 'taxCategory' => $itemTaxCategory,
                 'tax_category' => $itemTaxCategory,
-                'paidAddons' => $ci->paid_addons ?? [],
-                'paid_addons' => $ci->paid_addons ?? [],
-                'freeAddons' => $ci->free_addons ?? [],
-                'free_addons' => $ci->free_addons ?? [],
-                'removedItems' => $ci->removed_items ?? [],
-                'removed_items' => $ci->removed_items ?? [],
-                'selectedModifiers' => $ci->selected_modifiers ?? [],
-                'selected_modifiers' => $ci->selected_modifiers ?? [],
+                'paidAddons' => $paidAddons,
+                'paid_addons' => $paidAddons,
+                'freeAddons' => $freeAddons,
+                'free_addons' => $freeAddons,
+                'removedItems' => $removedItems,
+                'removed_items' => $removedItems,
+                'selectedModifiers' => $selectedModifiers,
+                'selected_modifiers' => $selectedModifiers,
                 'modifiers' => $modifiers,
                 'status' => $itemStatus,
                 'sharedBetween' => $sharedBetween,
@@ -658,7 +703,7 @@ class OrderController extends Controller
      */
     private function loadLinkedCartItems(Order $order)
     {
-        return CartItem::with('menuItem:id,name,price,has_discount,discounted_price,image_url,menu_category_id,vat_rate,tax_category', 'menuItem.category.masterCategory')
+        return CartItem::with('menuItem:id,name,price,has_discount,discounted_price,image_url,menu_category_id,vat_rate,tax_category,paid_addons,free_addons,removable_items', 'menuItem.category.masterCategory')
             ->where(function ($q) use ($order) {
                 if ($order->status === 'draft' && $order->table_scan_session_id) {
                     $q->where(function ($owned) use ($order) {
@@ -679,42 +724,85 @@ class OrderController extends Controller
         return TaxCalculationService::cartItemUnitPriceGross($item, $vendorCountry);
     }
 
-    private function cartItemModifiers(CartItem $item, string $vendorCountry = 'AT'): array
+    private function formatPaidAddons(CartItem $item, string $itemTaxCategory, string $vendorCountry, ?Vendor $vendor, string $locale): array
+    {
+        $menuItem = $item->relationLoaded('menuItem') ? $item->menuItem : null;
+
+        if ($menuItem && $vendor) {
+            return $this->customizations->formatPaidAddons($menuItem, $item->paid_addons ?? [], $vendor, $locale, $itemTaxCategory, $vendorCountry);
+        }
+
+        return collect($item->paid_addons ?? [])->map(function ($addon) use ($itemTaxCategory, $vendorCountry) {
+            $addon = is_array($addon) ? $addon : [];
+            $vatRate = TaxCalculationService::addonVatRate($addon, $itemTaxCategory, $vendorCountry);
+
+            return [
+                'id' => $addon['id'] ?? null,
+                'name' => $addon['name'] ?? '',
+                'price' => TaxCalculationService::gross((float) ($addon['price'] ?? 0), $vatRate),
+                'vat_rate' => $vatRate,
+            ];
+        })->values()->all();
+    }
+
+    private function formatNamedSelections(CartItem $item, string $field, ?Vendor $vendor, string $locale): array
+    {
+        $menuItem = $item->relationLoaded('menuItem') ? $item->menuItem : null;
+        $selected = $field === 'free_addons'
+            ? ($item->free_addons ?? [])
+            : ($item->removed_items ?? []);
+
+        if ($menuItem && $vendor) {
+            $configured = $field === 'free_addons'
+                ? ($menuItem->free_addons ?? [])
+                : ($menuItem->removable_items ?? []);
+
+            return $this->customizations->formatNamedSelections($configured, $selected, $vendor, $locale);
+        }
+
+        return collect($selected)->map(fn ($value) => is_array($value) ? (string) ($value['name'] ?? '') : (string) $value)
+            ->filter()
+            ->values()
+            ->all();
+    }
+
+    private function formatSelectedModifiers(CartItem $item, string $itemTaxCategory, string $vendorCountry, ?Vendor $vendor, string $locale): array
+    {
+        if ($vendor) {
+            return $this->customizations->formatSelectedModifiers($item->selected_modifiers ?? [], $vendor, $locale, $itemTaxCategory, $vendorCountry);
+        }
+
+        return $item->selected_modifiers ?? [];
+    }
+
+    private function cartItemModifiers(CartItem $item, string $vendorCountry = 'AT', ?Vendor $vendor = null, string $locale = 'en'): array
     {
         $itemTaxCategory = $item->menuItem?->tax_category ?? 'food';
 
-        $paidAddons = collect($item->paid_addons ?? [])
-            ->map(function ($addon) use ($itemTaxCategory, $vendorCountry) {
-                $vatRate = TaxCalculationService::addonVatRate($addon, $itemTaxCategory, $vendorCountry);
+        $paidAddons = collect($this->formatPaidAddons($item, $itemTaxCategory, $vendorCountry, $vendor, $locale))
+            ->map(fn (array $addon) => [
+                'name' => (string) ($addon['name'] ?? ''),
+                'price' => (float) ($addon['price'] ?? 0),
+            ]);
 
-                return [
-                    'name' => (string) ($addon['name'] ?? ''),
-                    'price' => TaxCalculationService::gross((float) ($addon['price'] ?? 0), $vatRate),
-                ];
-            });
-
-        $freeAddons = collect($item->free_addons ?? [])
+        $freeAddons = collect($this->formatNamedSelections($item, 'free_addons', $vendor, $locale))
             ->map(fn ($name) => [
                 'name' => (string) $name,
                 'price' => 0.0,
             ]);
 
-        $removedItems = collect($item->removed_items ?? [])
+        $removedItems = collect($this->formatNamedSelections($item, 'removed_items', $vendor, $locale))
             ->map(fn ($name) => [
                 'name' => 'No '.(string) $name,
                 'price' => 0.0,
             ]);
 
-        $selectedModifiers = collect($item->selected_modifiers ?? [])
-            ->flatMap(function ($group) use ($itemTaxCategory, $vendorCountry) {
-                $groupTaxCategory = $group['tax_category'] ?? '';
-                $vatRate = TaxCalculationService::modifierGroupVatRate($groupTaxCategory, $itemTaxCategory, $vendorCountry);
-
-                return collect($group['options'] ?? [])->map(fn ($option) => [
+        $selectedModifiers = collect($this->formatSelectedModifiers($item, $itemTaxCategory, $vendorCountry, $vendor, $locale))
+            ->flatMap(fn ($group) => collect($group['options'] ?? [])
+                ->map(fn ($option) => [
                     'name' => (string) ($option['name'] ?? ''),
-                    'price' => TaxCalculationService::gross((float) ($option['price_adjustment'] ?? 0), $vatRate),
-                ]);
-            });
+                    'price' => (float) ($option['price_adjustment'] ?? 0),
+                ]));
 
         return $paidAddons
             ->merge($freeAddons)
@@ -725,7 +813,7 @@ class OrderController extends Controller
             ->all();
     }
 
-    private function notifySessionCustomers(Order $order, string $event, string $message): void
+    private function notifySessionCustomers(Order $order, string $event, string $message, array $metadata = []): void
     {
         if (! $order->table_scan_session_id) {
             return;
@@ -736,7 +824,7 @@ class OrderController extends Controller
             : TableScanSession::find($order->table_scan_session_id);
 
         if ($session) {
-            NotificationService::notifyTableCustomers($session->restaurant_table_id, $event, $message);
+            NotificationService::notifyTableCustomers($session->restaurant_table_id, $event, $message, $metadata);
         }
     }
 

@@ -8,6 +8,7 @@ use App\Models\MenuCategory;
 use App\Models\MenuItem;
 use App\Models\ModifierGroup;
 use App\Models\ModifierOption;
+use App\Models\NotificationTemplate;
 use App\Models\Order;
 use App\Models\RestaurantTable;
 use App\Models\TableScanSession;
@@ -350,6 +351,172 @@ class TableCartTest extends TestCase
             ->assertJsonPath('people.0.personal_items.0.free_addons.0', 'Ketchup')
             ->assertJsonPath('people.0.personal_items.0.removed_items.0', 'Salt')
             ->assertJsonPath('people.0.personal_items.0.line_total', 11);
+    }
+
+    public function test_add_item_accepts_id_based_customizations_and_returns_language_based_names(): void
+    {
+        VendorSetting::updateOrCreate(
+            ['vendor_id' => $this->vendor->id],
+            [
+                'supported_languages' => ['en', 'ar'],
+                'is_live_and_discoverable' => true,
+            ],
+        );
+
+        $this->menuItem->update([
+            'paid_addons' => [
+                [
+                    'id' => 5,
+                    'name' => 'Cheese sauce',
+                    'price' => 1.50,
+                    'translations' => ['ar' => ['name' => 'صلصة الجبن']],
+                ],
+            ],
+            'free_addons' => [
+                ['id' => 8, 'name' => 'Ketchup', 'translations' => ['ar' => ['name' => 'كاتشب']]],
+            ],
+            'removable_items' => [
+                ['id' => 11, 'name' => 'Salt', 'translations' => ['ar' => ['name' => 'ملح']]],
+            ],
+        ]);
+        $this->menuItem->itemTranslations()->create([
+            'language' => 'ar',
+            'name' => 'بطاطس مقلية',
+            'description' => 'بطاطس مقرمشة',
+        ]);
+
+        $group = ModifierGroup::create([
+            'vendor_id' => $this->vendor->id,
+            'name' => 'Choose your side',
+            'type' => 'single',
+            'min_selection' => 1,
+            'max_selection' => 1,
+            'is_required' => true,
+            'is_active' => true,
+        ]);
+        $group->localizedTranslations()->create(['language' => 'ar', 'name' => 'اختر الطبق الجانبي']);
+        $option = ModifierOption::create([
+            'modifier_group_id' => $group->id,
+            'name' => 'Onion Rings',
+            'price_adjustment' => 1.50,
+            'is_active' => true,
+        ]);
+        $option->localizedTranslations()->create(['language' => 'ar', 'name' => 'حلقات البصل']);
+        $this->menuItem->modifierGroups()->sync([$group->id => ['sort_order' => 0]]);
+
+        $headers = array_merge($this->headers, ['Accept-Language' => 'ar']);
+
+        $response = $this->withHeaders($headers)
+            ->postJson('/api/customer/cart/items', [
+                'menu_item_id' => $this->menuItem->id,
+                'paid_addons' => [['id' => 5]],
+                'free_addons' => [['id' => 8]],
+                'removed_items' => [['id' => 11]],
+                'selected_modifiers' => [
+                    [
+                        'modifier_group_id' => $group->id,
+                        'option_ids' => [$option->id],
+                    ],
+                ],
+            ]);
+
+        $response->assertCreated()
+            ->assertJsonPath('menu_item.name', 'بطاطس مقلية')
+            ->assertJsonPath('paid_addons.0.id', 5)
+            ->assertJsonPath('paid_addons.0.name', 'صلصة الجبن')
+            ->assertJsonPath('free_addons.0', 'كاتشب')
+            ->assertJsonPath('removed_items.0', 'ملح')
+            ->assertJsonPath('selected_modifiers.0.name', 'اختر الطبق الجانبي')
+            ->assertJsonPath('selected_modifiers.0.options.0.name', 'حلقات البصل');
+
+        $cartItem = CartItem::firstOrFail();
+        $this->assertSame(5, $cartItem->paid_addons[0]['id']);
+        $this->assertArrayNotHasKey('name', $cartItem->paid_addons[0]);
+        $this->assertSame([8], $cartItem->free_addons);
+        $this->assertSame([11], $cartItem->removed_items);
+        $this->assertSame($group->id, $cartItem->selected_modifiers[0]['modifier_group_id']);
+        $this->assertArrayNotHasKey('name', $cartItem->selected_modifiers[0]);
+        $this->assertArrayNotHasKey('name', $cartItem->selected_modifiers[0]['options'][0]);
+    }
+
+    public function test_add_item_accepts_translated_customization_names_for_legacy_clients(): void
+    {
+        VendorSetting::updateOrCreate(
+            ['vendor_id' => $this->vendor->id],
+            [
+                'supported_languages' => ['en', 'ar'],
+                'is_live_and_discoverable' => true,
+            ],
+        );
+
+        $this->menuItem->update([
+            'paid_addons' => [
+                [
+                    'id' => 5,
+                    'name' => 'Cheese sauce',
+                    'price' => 1.50,
+                    'translations' => ['ar' => ['name' => 'صلصة الجبن']],
+                ],
+            ],
+            'free_addons' => [
+                ['id' => 8, 'name' => 'Ketchup', 'translations' => ['ar' => ['name' => 'كاتشب']]],
+            ],
+            'removable_items' => [
+                ['id' => 11, 'name' => 'Salt', 'translations' => ['ar' => ['name' => 'ملح']]],
+            ],
+        ]);
+
+        $response = $this->withHeaders(array_merge($this->headers, ['Accept-Language' => 'ar']))
+            ->postJson('/api/customer/cart/items', [
+                'menu_item_id' => $this->menuItem->id,
+                'paid_addons' => [['name' => 'صلصة الجبن']],
+                'free_addons' => ['كاتشب'],
+                'removed_items' => ['ملح'],
+            ]);
+
+        $response->assertCreated()
+            ->assertJsonPath('paid_addons.0.id', 5)
+            ->assertJsonPath('paid_addons.0.name', 'صلصة الجبن')
+            ->assertJsonPath('free_addons.0', 'كاتشب')
+            ->assertJsonPath('removed_items.0', 'ملح');
+
+        $cartItem = CartItem::firstOrFail();
+        $this->assertSame(5, $cartItem->paid_addons[0]['id']);
+        $this->assertArrayNotHasKey('name', $cartItem->paid_addons[0]);
+        $this->assertSame([8], $cartItem->free_addons);
+        $this->assertSame([11], $cartItem->removed_items);
+    }
+
+    public function test_notifications_use_admin_template_for_requested_language(): void
+    {
+        VendorSetting::updateOrCreate(
+            ['vendor_id' => $this->vendor->id],
+            [
+                'supported_languages' => ['en', 'ar'],
+                'is_live_and_discoverable' => true,
+            ],
+        );
+        $this->menuItem->itemTranslations()->create([
+            'language' => 'ar',
+            'name' => 'بطاطس مقلية',
+            'description' => null,
+        ]);
+        NotificationTemplate::create([
+            'key' => 'cart.item_added',
+            'language' => 'ar',
+            'message' => '{customer_name} أضاف {item_name}',
+        ]);
+
+        $this->withHeaders(array_merge($this->headers, ['Accept-Language' => 'ar']))
+            ->postJson('/api/customer/cart/items', [
+                'menu_item_id' => $this->menuItem->id,
+            ])
+            ->assertCreated();
+
+        $this->withHeaders(array_merge($this->headers, ['Accept-Language' => 'ar']))
+            ->getJson('/api/customer/notifications')
+            ->assertOk()
+            ->assertJsonPath('notifications.0.message', 'Alice Smith أضاف بطاطس مقلية');
     }
 
     public function test_add_item_accepts_selected_modifier_groups_and_prices_them(): void

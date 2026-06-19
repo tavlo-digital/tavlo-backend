@@ -143,9 +143,9 @@ class VendorController extends Controller
         return Inertia::render('admin/vendor/[vendor]/show', $props);
     }
 
-    public function approveChange(int $vendor, int $change)
+    public function approveChange(int|string $vendor, int $change)
     {
-        $vendor = Vendor::findOrFail($vendor);
+        $vendor = $this->resolveVendorRouteValue($vendor);
         $change = VendorRequestChange::where('vendor_id', $vendor->id)
             ->where('id', $change)
             ->where('status', 'pending')
@@ -180,9 +180,9 @@ class VendorController extends Controller
         return redirect()->back()->with('success', 'Changes approved successfully.');
     }
 
-    public function declineChange(Request $request, int $vendor, int $change)
+    public function declineChange(Request $request, int|string $vendor, int $change)
     {
-        $vendor = Vendor::findOrFail($vendor);
+        $vendor = $this->resolveVendorRouteValue($vendor);
         $change = VendorRequestChange::where('vendor_id', $vendor->id)
             ->where('id', $change)
             ->where('status', 'pending')
@@ -196,6 +196,13 @@ class VendorController extends Controller
         ]);
 
         return redirect()->back()->with('success', 'Changes declined.');
+    }
+
+    private function resolveVendorRouteValue(int|string $vendor): Vendor
+    {
+        return Vendor::query()
+            ->where(is_numeric($vendor) ? 'id' : 'slug', $vendor)
+            ->firstOrFail();
     }
 
     private function getIssues(Vendor $vendor): array

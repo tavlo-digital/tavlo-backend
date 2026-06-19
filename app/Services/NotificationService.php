@@ -8,7 +8,12 @@ use Illuminate\Support\Collection;
 
 class NotificationService
 {
-    public static function notifyTableCustomers(int $restaurantTableId, string $event, string $message): void
+    public static function notifyTableCustomers(
+        int $restaurantTableId,
+        string $event,
+        string $message,
+        array $metadata = [],
+    ): void
     {
         $sessions = TableScanSession::query()
             ->where('restaurant_table_id', $restaurantTableId)
@@ -20,6 +25,7 @@ class NotificationService
             $event,
             $message,
             $sessions->first()?->vendor_id,
+            $metadata,
         );
     }
 
@@ -28,6 +34,7 @@ class NotificationService
         string $event,
         string $message,
         ?int $vendorId = null,
+        array $metadata = [],
     ): void {
         $now = now();
 
@@ -36,6 +43,7 @@ class NotificationService
             'vendor_id' => $vendorId,
             'event' => $event,
             'message' => $message,
+            'metadata' => $metadata !== [] ? json_encode($metadata) : null,
             'read' => false,
             'created_at' => $now,
             'updated_at' => $now,

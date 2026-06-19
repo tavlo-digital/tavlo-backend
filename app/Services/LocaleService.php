@@ -71,6 +71,25 @@ class LocaleService
             : 'en';
     }
 
+    public function resolveCustomerLocaleFromHeader(Request $request, Vendor $vendor): string
+    {
+        $supported = $this->supportedLanguages($vendor);
+        $preferred = $this->normalize($request->getPreferredLanguage($supported));
+
+        return in_array($preferred, $supported, true)
+            ? $preferred
+            : 'en';
+    }
+
+    public function resolveHeaderLocale(Request $request): string
+    {
+        $preferred = $this->normalize($request->getPreferredLanguage(self::LANGUAGES));
+
+        return in_array($preferred, self::LANGUAGES, true)
+            ? $preferred
+            : 'en';
+    }
+
     public function fallbackChain(Vendor $vendor, string $locale): array
     {
         return collect([

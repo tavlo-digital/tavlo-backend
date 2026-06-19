@@ -9,6 +9,7 @@ use App\Models\ModifierOption;
 use App\Models\OrderItem;
 use App\Models\TaxCategory;
 use App\Services\LocaleService;
+use App\Services\MenuCustomizationService;
 use App\Services\MediaService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -20,6 +21,7 @@ class MenuItemController extends Controller
     public function __construct(
         private readonly MediaService $media,
         private readonly LocaleService $locales,
+        private readonly MenuCustomizationService $customizations,
     ) {}
 
     /**
@@ -79,7 +81,9 @@ class MenuItemController extends Controller
     {
         $vendor = $request->user();
 
-        $data = $this->validatePayload($request, true);
+        $data = $this->customizations->normalizeMenuPayloadCustomizations(
+            $this->validatePayload($request, true)
+        );
         $translations = $this->locales->normalizeTranslationPayload(
             $data['translations'] ?? [],
             ['name', 'description']
@@ -191,7 +195,9 @@ class MenuItemController extends Controller
         $vendor = $request->user();
         $item = $vendor->menuItems()->where('is_active', true)->findOrFail($itemId);
 
-        $data = $this->validatePayload($request, false);
+        $data = $this->customizations->normalizeMenuPayloadCustomizations(
+            $this->validatePayload($request, false)
+        );
 
         $mapped = [];
 
@@ -391,12 +397,19 @@ class MenuItemController extends Controller
             'hasDiscount' => ['sometimes', 'boolean'],
             'discountPercent' => ['sometimes', 'numeric', 'min:0', 'max:100'],
             'paidAddons' => ['sometimes', 'array'],
+            'paidAddons.*.id' => ['sometimes', 'integer', 'min:1'],
             'paidAddons.*.name' => ['required_with:paidAddons', 'string', 'max:255'],
             'paidAddons.*.price' => ['required_with:paidAddons', 'numeric', 'min:0'],
             'paidAddons.*.taxCategory' => ['sometimes', 'nullable', 'string', Rule::in(TaxCategory::pluck('slug')->unique())],
             'paidAddons.*.translations' => ['sometimes', 'array'],
             'freeAddons' => ['sometimes', 'array'],
+            'freeAddons.*.id' => ['sometimes', 'integer', 'min:1'],
+            'freeAddons.*.name' => ['sometimes', 'string', 'max:255'],
+            'freeAddons.*.translations' => ['sometimes', 'array'],
             'removableItems' => ['sometimes', 'array'],
+            'removableItems.*.id' => ['sometimes', 'integer', 'min:1'],
+            'removableItems.*.name' => ['sometimes', 'string', 'max:255'],
+            'removableItems.*.translations' => ['sometimes', 'array'],
             'modifierGroupIds' => ['sometimes', 'array'],
             'modifierGroupIds.*' => ['integer'],
             // translations: accept either a nested map { en: {name, description}, ... }
@@ -563,15 +576,9 @@ class MenuItemController extends Controller
             'hasDiscount' => (bool) $item->has_discount,
             'discountPercent' => (float) $item->discount_percent,
             'discountedPrice' => $item->discounted_price !== null ? (float) $item->discounted_price : null,
-            'paidAddons' => $item->paid_addons ?? [],
-            'freeAddons' => array_map(
-                fn ($entry) => is_string($entry) ? ['name' => $entry, 'translations' => []] : $entry,
-                $item->free_addons ?? []
-            ),
-            'removableItems' => array_map(
-                fn ($entry) => is_string($entry) ? ['name' => $entry, 'translations' => []] : $entry,
-                $item->removable_items ?? []
-            ),
+            'paidAddons' => $this->customizations->paidAddonDefinitions($item->paid_addons ?? [])->values()->all(),
+            'freeAddons' => $this->customizations->namedDefinitions($item->free_addons ?? [])->values()->all(),
+            'removableItems' => $this->customizations->namedDefinitions($item->removable_items ?? [])->values()->all(),
             'modifierGroupIds' => $item->modifierGroups->pluck('id')->values()->all(),
             'modifierGroups' => $item->modifierGroups
                 ->map(fn (ModifierGroup $group) => $this->formatModifierGroup(

@@ -20,7 +20,7 @@ class LoyaltyController extends Controller
     {
         $wallets = CustomerLoyaltyPoint::where('customer_id', $request->user()->id)
             ->with([
-                'vendor:id,vendor_public_id,restaurant_name',
+                'vendor:id,vendor_public_id,restaurant_name,country',
                 'vendor.vendorSetting:id,vendor_id,points_per_euro,minimum_redemption_points,point_value,logo_url',
             ])
             ->get()
@@ -53,7 +53,7 @@ class LoyaltyController extends Controller
         $wallet = CustomerLoyaltyPoint::where('customer_id', $request->user()->id)
             ->whereHas('vendor', fn ($q) => $q->where('vendor_public_id', $vendorPublicId))
             ->with([
-                'vendor:id,vendor_public_id,restaurant_name',
+                'vendor:id,vendor_public_id,restaurant_name,country',
                 'vendor.vendorSetting:id,vendor_id,points_per_euro,minimum_redemption_points,point_value,date_format,time_format',
             ])
             ->firstOrFail();

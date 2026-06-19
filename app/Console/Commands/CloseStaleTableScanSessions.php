@@ -48,6 +48,10 @@ class CloseStaleTableScanSessions extends Command
                 'session_expire',
                 'Your table session has expired due to inactivity.',
                 $sessions->first()?->vendor_id,
+                [
+                    'template' => 'session.expired',
+                    'table_id' => $tableId,
+                ],
             );
 
             $closed += $sessions->count();

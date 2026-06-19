@@ -249,7 +249,18 @@ class TableScanController extends Controller
         $session = $result['created'];
 
         $customerName = trim(($customer->first_name ?? '').' '.($customer->last_name ?? '')) ?: 'A guest';
-        NotificationService::notifyTableCustomers($table->id, 'participant_added', "{$customerName} has joined the table.");
+        NotificationService::notifyTableCustomers(
+            $table->id,
+            'participant_added',
+            "{$customerName} has joined the table.",
+            [
+                'template' => 'participant.added',
+                'customer_id' => $customer->id,
+                'customer_name' => $customerName,
+                'table_id' => $table->id,
+                'table_label' => $table->name ?? '#'.$table->number,
+            ],
+        );
 
         return response()->json($this->sessionResponsePayload($session, $table, $vendor, [
             'message' => 'Joined table session',
@@ -332,6 +343,10 @@ class TableScanController extends Controller
             'session_expire',
             'Your table session has been closed.',
             $allSessions->first()?->vendor_id,
+            [
+                'template' => 'session.closed',
+                'table_id' => $data['table_id'],
+            ],
         );
 
         $referenceSession = $customerSession ?? $allSessions->first();

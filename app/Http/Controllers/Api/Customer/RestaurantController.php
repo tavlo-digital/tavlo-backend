@@ -12,6 +12,7 @@ use App\Models\SpecialTag;
 use App\Models\Vendor;
 use App\Models\VendorSetting;
 use App\Services\LocaleService;
+use App\Services\MenuCustomizationService;
 use App\Services\TaxCalculationService;
 use App\Services\VendorDateTimeService;
 use Illuminate\Http\JsonResponse;
@@ -23,6 +24,7 @@ class RestaurantController extends Controller
 {
     public function __construct(
         private readonly LocaleService $locales,
+        private readonly MenuCustomizationService $customizations,
         private readonly VendorDateTimeService $dateTimes,
     ) {}
 
@@ -450,9 +452,11 @@ class RestaurantController extends Controller
                 'carbs' => $item->carbs ? (float) $item->carbs : null,
                 'protein' => $item->protein ? (float) $item->protein : null,
                 'dietary_preference' => $item->dietary_preference,
-                'paid_addons' => $this->formatPaidAddonsGross($item->paid_addons ?? [], $item->tax_category ?? 'food', $vendorCountry),
-                'free_addons' => $item->free_addons ?? [],
-                'removable_items' => $item->removable_items ?? [],
+                'paid_addons' => $this->customizations->formatPaidAddonDefinitions($item->paid_addons ?? [], $vendor, $locale, $item->tax_category ?? 'food', $vendorCountry),
+                'free_addons' => array_column($this->customizations->formatNamedDefinitions($item->free_addons ?? [], $vendor, $locale), 'name'),
+                'free_addon_options' => $this->customizations->formatNamedDefinitions($item->free_addons ?? [], $vendor, $locale),
+                'removable_items' => array_column($this->customizations->formatNamedDefinitions($item->removable_items ?? [], $vendor, $locale), 'name'),
+                'removable_item_options' => $this->customizations->formatNamedDefinitions($item->removable_items ?? [], $vendor, $locale),
                 'category' => $item->category ? [
                     'id' => $item->category->id,
                     'name' => $this->locales->translated(
@@ -551,9 +555,11 @@ class RestaurantController extends Controller
             'carbs' => $item->carbs ? (float) $item->carbs : null,
             'protein' => $item->protein ? (float) $item->protein : null,
             'dietary_preference' => $item->dietary_preference,
-            'paid_addons' => $this->formatPaidAddonsGross($item->paid_addons ?? [], $item->tax_category ?? 'food', $vendorCountry),
-            'free_addons' => $item->free_addons ?? [],
-            'removable_items' => $item->removable_items ?? [],
+            'paid_addons' => $this->customizations->formatPaidAddonDefinitions($item->paid_addons ?? [], $vendor, $locale, $item->tax_category ?? 'food', $vendorCountry),
+            'free_addons' => array_column($this->customizations->formatNamedDefinitions($item->free_addons ?? [], $vendor, $locale), 'name'),
+            'free_addon_options' => $this->customizations->formatNamedDefinitions($item->free_addons ?? [], $vendor, $locale),
+            'removable_items' => array_column($this->customizations->formatNamedDefinitions($item->removable_items ?? [], $vendor, $locale), 'name'),
+            'removable_item_options' => $this->customizations->formatNamedDefinitions($item->removable_items ?? [], $vendor, $locale),
             'ingredients' => $item->ingredients,
             'category' => $item->category ? [
                 'id' => $item->category->id,
