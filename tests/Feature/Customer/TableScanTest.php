@@ -94,6 +94,12 @@ class TableScanTest extends TestCase
             ->getJson('/api/customer/table/status'.($token !== null ? '?token='.$token : ''));
     }
 
+    private function getSessionStatus(?array $headers = null)
+    {
+        return $this->withHeaders($headers ?? $this->headers)
+            ->getJson('/api/customer/table/session/status');
+    }
+
     private function activeSession(RestaurantTable $table, ?Customer $customer = null): TableScanSession
     {
         return TableScanSession::create([
@@ -586,6 +592,67 @@ class TableScanTest extends TestCase
             ->where('customer_id', $secondCustomer->id)
             ->where('status', 'active')
             ->count());
+    }
+
+    // ----------------------------------------------------------------
+    // GET /api/customer/table/session/status
+    // ----------------------------------------------------------------
+
+    public function test_session_status_requires_authentication(): void
+    {
+        $this->getSessionStatus(['Accept' => 'application/json'])
+            ->assertUnauthorized();
+    }
+
+    public function test_session_status_returns_active_customer_session(): void
+    {
+        $this->vendor->vendorSetting()->update([
+            'date_format' => 'MM/DD/YYYY',
+            'time_format' => '12h',
+        ]);
+        $table = $this->makeTable(['number' => 3, 'name' => 'T3']);
+        $session = $this->activeSession($table);
+
+        $this->getSessionStatus()
+            ->assertOk()
+            ->assertJsonPath('active', true)
+            ->assertJsonPath('session.id', (string) $session->id)
+            ->assertJsonPath('session.status', 'active')
+            ->assertJsonPath(
+                'session.scannedAt',
+                $session->scanned_at->copy()->setTimezone($this->vendor->resolveTimezone())->format('m/d/Y g:i A')
+            )
+            ->assertJsonPath('table.id', (string) $table->id)
+            ->assertJsonPath('table.number', 3)
+            ->assertJsonPath('table.name', 'T3')
+            ->assertJsonPath('vendor.id', $this->vendor->vendor_public_id);
+    }
+
+    public function test_session_status_returns_inactive_when_customer_has_no_active_session(): void
+    {
+        $table = $this->makeTable();
+        $session = $this->activeSession($table);
+        $session->update(['status' => 'closed', 'closed_at' => now()]);
+
+        $this->getSessionStatus()
+            ->assertOk()
+            ->assertExactJson([
+                'active' => false,
+                'session' => null,
+                'table' => null,
+                'vendor' => null,
+            ]);
+    }
+
+    public function test_session_status_ignores_another_customers_active_session(): void
+    {
+        $table = $this->makeTable();
+        $this->activeSession($table, Customer::factory()->create());
+
+        $this->getSessionStatus()
+            ->assertOk()
+            ->assertJsonPath('active', false)
+            ->assertJsonPath('session', null);
     }
 
     // ----------------------------------------------------------------

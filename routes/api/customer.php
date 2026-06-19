@@ -82,6 +82,7 @@ Route::middleware(['auth:customer', 'track.session.activity'])->group(function (
     // Table session flow
     Route::post('table/scan', [TableScanController::class, 'scan'])->name('table.scan');
     Route::post('table/pin', [TableScanController::class, 'pin'])->name('table.pin');
+    Route::get('table/session/status', [TableScanController::class, 'sessionStatus'])->name('table.session.status');
     Route::post('table/close', [TableScanController::class, 'close'])->name('table.close');
     Route::get('table/order/start',      [CartController::class, 'orderStart'])->name('table.order.start');
     Route::post('table/order/draft',     [CartController::class, 'createOrderDraft'])->name('table.order.draft');

@@ -270,6 +270,44 @@ class TableScanController extends Controller
     }
 
     /**
+     * GET /api/customer/table/session/status
+     * Authenticated customer endpoint. Checks whether the customer still has an active table session.
+     */
+    public function sessionStatus(Request $request): JsonResponse
+    {
+        $session = TableScanSession::query()
+            ->with(['restaurantTable', 'vendor.vendorSetting'])
+            ->where('customer_id', $request->user()->id)
+            ->where('status', 'active')
+            ->latest('scanned_at')
+            ->latest('id')
+            ->first();
+
+        if (! $session) {
+            return response()->json([
+                'active' => false,
+                'session' => null,
+                'table' => null,
+                'vendor' => null,
+            ]);
+        }
+
+        $table = $session->restaurantTable;
+        $vendor = $session->vendor;
+
+        return response()->json([
+            'active' => true,
+            'session' => [
+                'id' => (string) $session->id,
+                'status' => $session->status,
+                'scannedAt' => $this->dateTimes->formatDateTime($session->scanned_at, $vendor),
+            ],
+            'table' => $table ? $this->tablePayload($table) : null,
+            'vendor' => $vendor ? $this->vendorPayload($vendor) : null,
+        ]);
+    }
+
+    /**
      * POST /api/customer/table/close
      * Authenticated customer endpoint. Closes the table scan session for all users.
      *
