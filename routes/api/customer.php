@@ -64,6 +64,7 @@ Route::prefix('restaurants')->name('restaurants.')->group(function () {
 
 // Public table QR status lookup
 Route::get('table/status', [TableScanController::class, 'status'])->name('table.status');
+Route::post('table/call', [TableScanController::class, 'call'])->name('table.call');
 
 // Authenticated customer routes
 Route::middleware(['auth:customer', 'track.session.activity'])->group(function () {
@@ -82,7 +83,6 @@ Route::middleware(['auth:customer', 'track.session.activity'])->group(function (
     Route::post('table/scan', [TableScanController::class, 'scan'])->name('table.scan');
     Route::post('table/pin', [TableScanController::class, 'pin'])->name('table.pin');
     Route::post('table/close', [TableScanController::class, 'close'])->name('table.close');
-    Route::post('table/call', [TableScanController::class, 'call'])->name('table.call');
     Route::get('table/order/start',      [CartController::class, 'orderStart'])->name('table.order.start');
     Route::post('table/order/draft',     [CartController::class, 'createOrderDraft'])->name('table.order.draft');
     Route::put('table/order/update/{order_id}', [CartController::class, 'updateOrder'])->name('table.order.update');

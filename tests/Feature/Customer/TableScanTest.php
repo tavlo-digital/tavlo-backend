@@ -826,29 +826,29 @@ class TableScanTest extends TestCase
     // POST /api/customer/table/call
     // ----------------------------------------------------------------
 
-    private function postCall(?array $headers = null)
+    private function postCall(array $payload = [], array $headers = [])
     {
-        return $this->withHeaders($headers ?? $this->headers)
-            ->postJson('/api/customer/table/call');
+        return $this->withHeaders($headers)
+            ->postJson('/api/customer/table/call', $payload);
     }
 
-    public function test_call_requires_authentication(): void
+    public function test_call_requires_table_id(): void
     {
         $this->postJson('/api/customer/table/call')
-            ->assertUnauthorized();
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('table_id');
     }
 
-    public function test_call_requires_active_session(): void
+    public function test_call_rejects_unknown_table_id(): void
     {
-        $this->postCall()
-            ->assertStatus(422)
-            ->assertJsonPath('message', 'You do not have an active table session.');
+        $this->postCall(['table_id' => 999999])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('table_id');
     }
 
-    public function test_call_notifies_all_waiters(): void
+    public function test_call_is_public_and_notifies_all_waiters_without_active_session(): void
     {
         $table = $this->makeTable();
-        $this->activeSession($table);
 
         $waiter1 = TeamMember::create([
             'vendor_id' => $this->vendor->id,
@@ -865,7 +865,7 @@ class TableScanTest extends TestCase
             'status' => 'active',
         ]);
 
-        $this->postCall()
+        $this->postCall(['table_id' => $table->id])
             ->assertOk()
             ->assertJsonPath('message', 'Waiters have been notified.');
 
@@ -882,7 +882,6 @@ class TableScanTest extends TestCase
     public function test_call_does_not_notify_kitchen_staff(): void
     {
         $table = $this->makeTable();
-        $this->activeSession($table);
 
         TeamMember::create([
             'vendor_id' => $this->vendor->id,
@@ -899,7 +898,7 @@ class TableScanTest extends TestCase
             'status' => 'active',
         ]);
 
-        $this->postCall()->assertOk();
+        $this->postCall(['table_id' => $table->id])->assertOk();
 
         $this->assertDatabaseMissing('notifications', [
             'kitchen_id' => $kitchen->id,
@@ -911,9 +910,8 @@ class TableScanTest extends TestCase
     public function test_call_returns_422_when_no_waiters_available(): void
     {
         $table = $this->makeTable();
-        $this->activeSession($table);
 
-        $this->postCall()
+        $this->postCall(['table_id' => $table->id])
             ->assertStatus(422)
             ->assertJsonPath('message', 'No waiters available at this restaurant.');
     }
@@ -921,7 +919,6 @@ class TableScanTest extends TestCase
     public function test_call_does_not_notify_suspended_waiters(): void
     {
         $table = $this->makeTable();
-        $this->activeSession($table);
 
         TeamMember::create([
             'vendor_id' => $this->vendor->id,
@@ -931,7 +928,7 @@ class TableScanTest extends TestCase
             'status' => 'suspended',
         ]);
 
-        $this->postCall()
+        $this->postCall(['table_id' => $table->id])
             ->assertStatus(422)
             ->assertJsonPath('message', 'No waiters available at this restaurant.');
     }

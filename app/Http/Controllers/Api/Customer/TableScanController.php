@@ -369,29 +369,19 @@ class TableScanController extends Controller
 
     /**
      * POST /api/customer/table/call
-     * Authenticated customer endpoint. Sends a notification to all waiters at the restaurant.
+     * Public endpoint. Sends a notification to all waiters at the table's restaurant.
      */
     public function call(Request $request): JsonResponse
     {
-        $customer = $request->user();
+        $data = Validator::make($request->all(), [
+            'table_id' => ['required', 'integer', 'exists:restaurant_tables,id'],
+        ])->validate();
 
-        $session = TableScanSession::with('restaurantTable')
-            ->where('customer_id', $customer->id)
-            ->where('status', 'active')
-            ->latest('scanned_at')
-            ->first();
-
-        if (! $session) {
-            return response()->json([
-                'message' => 'You do not have an active table session.',
-            ], 422);
-        }
-
-        $table = $session->restaurantTable;
+        $table = RestaurantTable::query()->findOrFail($data['table_id']);
         $tableLabel = $table->name ?? "#{$table->number}";
 
         $waiterIds = TeamMember::query()
-            ->where('vendor_id', $session->vendor_id)
+            ->where('vendor_id', $table->vendor_id)
             ->where('role', 'waiter')
             ->where('status', 'active')
             ->pluck('id');
