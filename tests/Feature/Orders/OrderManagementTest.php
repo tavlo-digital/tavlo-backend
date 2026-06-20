@@ -6,6 +6,7 @@ use App\Models\CartItem;
 use App\Models\Customer;
 use App\Models\MenuCategory;
 use App\Models\MenuItem;
+use App\Models\Notification;
 use App\Models\Order;
 use App\Models\RestaurantTable;
 use App\Models\TableScanSession;
@@ -161,6 +162,10 @@ class OrderManagementTest extends TestCase
             ->assertJsonPath('status', 'preparing');
 
         $this->assertNotNull($item->fresh()->preparing_start_at);
+        $this->assertTrue(Notification::where('event', 'order_item_status_changed')
+            ->whereNotNull('kitchen_id')
+            ->where('is_silent', true)
+            ->exists());
 
         $this->patchJson(
             "/api/vendor/orders/{$order->id}/items/{$item->id}",

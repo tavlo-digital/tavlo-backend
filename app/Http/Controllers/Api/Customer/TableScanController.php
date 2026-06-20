@@ -4,7 +4,6 @@ namespace App\Http\Controllers\Api\Customer;
 
 use App\Http\Controllers\Controller;
 use App\Models\CartItem;
-use App\Models\Notification;
 use App\Models\Order;
 use App\Models\RestaurantTable;
 use App\Models\TableScanSession;
@@ -390,6 +389,22 @@ class TableScanController extends Controller
         $referenceSession = $customerSession ?? $allSessions->first();
         $table = $referenceSession->restaurantTable;
         $vendorLoaded = $table?->vendor;
+        NotificationService::notifyOperations(
+            (int) $referenceSession->vendor_id,
+            'table_session_changed',
+            'A table session was closed.',
+            [NotificationService::VENDOR, NotificationService::WAITER, NotificationService::KITCHEN],
+            [
+                'resources' => ['orders', 'tables', 'dashboard', 'notifications'],
+                'template' => 'staff.table_session_changed',
+                'table_id' => $data['table_id'],
+                'table_label' => $table?->name ?? $table?->number ?? $data['table_id'],
+                'severity' => 'info',
+                'sound' => null,
+                'source_actor_type' => 'customer',
+                'source_actor_id' => $request->user()?->id,
+            ],
+        );
 
         return response()->json([
             'message' => 'Table session closed',
@@ -430,16 +445,22 @@ class TableScanController extends Controller
             ], 422);
         }
 
-        $rows = $waiterIds->map(fn (int $id) => [
-            'waiter_id' => $id,
-            'event' => 'table_call',
-            'message' => "Table {$tableLabel} is calling.",
-            'read' => false,
-            'created_at' => now(),
-            'updated_at' => now(),
-        ])->all();
-
-        Notification::insert($rows);
+        NotificationService::notifyOperations(
+            $table->vendor_id,
+            'table_call',
+            "Table {$tableLabel} is calling.",
+            [NotificationService::WAITER],
+            [
+                'resources' => ['tables', 'notifications'],
+                'template' => 'table.call',
+                'table_id' => $table->id,
+                'table_label' => $tableLabel,
+                'severity' => 'urgent',
+                'sound' => 'table_call',
+                'source_actor_type' => 'customer',
+                'source_actor_id' => null,
+            ],
+        );
 
         return response()->json([
             'message' => 'Waiters have been notified.',

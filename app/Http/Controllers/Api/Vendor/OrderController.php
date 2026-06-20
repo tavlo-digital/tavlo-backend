@@ -145,6 +145,7 @@ class OrderController extends Controller
             'template' => 'order.status_updated',
             'order_id' => $order->id,
         ]);
+        $this->notifyOperations($request, $order, 'order_status_changed', 'Order status was updated.', silent: true);
 
         return response()->json($this->formatOrder($order->fresh()->load('customer')));
     }
@@ -168,6 +169,14 @@ class OrderController extends Controller
             'template' => 'order.waiter_confirmed',
             'order_id' => $order->id,
         ]);
+        $this->notifyOperations(
+            $request,
+            $order,
+            'order_confirmed',
+            'A new order was confirmed.',
+            template: 'staff.order_confirmed',
+            sound: 'new_order',
+        );
 
         return response()->json($this->formatOrder($order->fresh()->load('customer')));
     }
@@ -191,6 +200,15 @@ class OrderController extends Controller
             'template' => 'payment.cash_confirmed',
             'order_id' => $order->id,
         ]);
+        $this->notifyOperations(
+            $request,
+            $order,
+            'payment_updated',
+            'A cash payment was confirmed.',
+            audiences: [NotificationService::VENDOR, NotificationService::WAITER],
+            template: 'staff.payment_updated',
+            sound: 'payment',
+        );
 
         return response()->json($this->formatOrder($order->fresh()->load('customer')));
     }
@@ -222,6 +240,15 @@ class OrderController extends Controller
             'template' => 'order.ready',
             'order_id' => $order->id,
         ]);
+        $this->notifyOperations(
+            $request,
+            $order,
+            'order_ready',
+            'An order is ready.',
+            template: 'staff.order_ready',
+            severity: 'urgent',
+            sound: 'ready',
+        );
 
         return response()->json($this->formatOrder($order->fresh()->load('customer')));
     }
@@ -295,6 +322,22 @@ class OrderController extends Controller
             'menu_item_id' => $item->menu_item_id,
             'item_name' => $itemName,
         ]);
+        $this->notifyOperations(
+            $request,
+            $order,
+            'order_item_status_changed',
+            "{$itemName} {$statusLabel}.",
+            template: $data['status'] === 'ready' ? 'staff.item_ready' : null,
+            severity: $data['status'] === 'ready' ? 'urgent' : 'info',
+            sound: $data['status'] === 'ready' ? 'ready' : null,
+            silent: $data['status'] !== 'ready',
+            extra: [
+                'cart_item_id' => $item->id,
+                'menu_item_id' => $item->menu_item_id,
+                'item_name' => $itemName,
+                'item_status' => $data['status'],
+            ],
+        );
 
         return response()->json($this->formatOrder(
             $order->fresh()->load(['customer', 'tableScanSession.restaurantTable'])
@@ -315,6 +358,7 @@ class OrderController extends Controller
             'template' => 'order.picked_up',
             'order_id' => $order->id,
         ]);
+        $this->notifyOperations($request, $order, 'order_picked_up', 'An order was picked up.', silent: true);
 
         return response()->json($this->formatOrder($order->fresh()->load('customer')));
     }
@@ -346,6 +390,7 @@ class OrderController extends Controller
             'template' => 'order.served',
             'order_id' => $order->id,
         ]);
+        $this->notifyOperations($request, $order, 'order_served', 'An order was served.', silent: true);
 
         return response()->json($this->formatOrder($order->fresh()->load('customer')));
     }
@@ -372,6 +417,14 @@ class OrderController extends Controller
             'template' => 'order.cancelled',
             'order_id' => $order->id,
         ]);
+        $this->notifyOperations(
+            $request,
+            $order,
+            'order_cancelled',
+            'An order was cancelled.',
+            template: 'staff.order_cancelled',
+            severity: 'urgent',
+        );
 
         return response()->json($this->formatOrder($order->fresh()->load('customer')));
     }
@@ -382,7 +435,8 @@ class OrderController extends Controller
 
     /**
      * POST /api/vendor/{vendorId}/sessions/{sessionId}/release
-     * Release batch to kitchen immediately (override the batch window).
+     * [Legacy] Release batch to kitchen immediately (override the batch window).
+     * Only operates on legacy table_sessions — not QR-scan sessions.
      */
     public function releaseToKitchen(Request $request, string $vendorId, string $sessionId): JsonResponse
     {
@@ -393,12 +447,13 @@ class OrderController extends Controller
 
         $session->load('orders.customer');
 
-        return response()->json($this->formatSession($session->fresh()));
+        return $this->legacyResponse($this->formatSession($session->fresh()));
     }
 
     /**
      * POST /api/vendor/{vendorId}/sessions/{sessionId}/fire-course
-     * Advance to the next course.
+     * [Legacy] Advance to the next course.
+     * Only operates on legacy table_sessions — not QR-scan sessions.
      */
     public function fireNextCourse(Request $request, string $vendorId, string $sessionId): JsonResponse
     {
@@ -408,19 +463,20 @@ class OrderController extends Controller
         $next = $session->nextCourse();
 
         if ($next === null) {
-            return response()->json(['message' => 'Already on the last course (desserts).'], 422);
+            return $this->legacyResponse(['message' => 'Already on the last course (desserts).'], 422);
         }
 
         $session->update(['current_course' => $next]);
 
         $session->load('orders.customer');
 
-        return response()->json($this->formatSession($session->fresh()));
+        return $this->legacyResponse($this->formatSession($session->fresh()));
     }
 
     /**
      * POST /api/vendor/{vendorId}/sessions/{sessionId}/close
-     * Close the table session (end of visit).
+     * [Legacy] Close the table session (end of visit).
+     * Only operates on legacy table_sessions — not QR-scan sessions.
      */
     public function closeSession(Request $request, string $vendorId, string $sessionId): JsonResponse
     {
@@ -434,7 +490,14 @@ class OrderController extends Controller
 
         $session->load('orders.customer');
 
-        return response()->json($this->formatSession($session->fresh()));
+        return $this->legacyResponse($this->formatSession($session->fresh()));
+    }
+
+    private function legacyResponse(array $data, int $status = 200): JsonResponse
+    {
+        return response()->json($data, $status)
+            ->header('Deprecation', 'true')
+            ->header('X-Deprecation-Notice', 'This endpoint operates on legacy table_sessions only. It has no effect on QR-scan sessions.');
     }
 
     // ----------------------------------------------------------------
@@ -824,8 +887,50 @@ class OrderController extends Controller
             : TableScanSession::find($order->table_scan_session_id);
 
         if ($session) {
-            NotificationService::notifyTableCustomers($session->restaurant_table_id, $event, $message, $metadata);
+            NotificationService::notifyTableCustomers($session->restaurant_table_id, $event, $message, $metadata, false);
         }
+    }
+
+    private function notifyOperations(
+        Request $request,
+        Order $order,
+        string $event,
+        string $message,
+        ?array $audiences = null,
+        ?string $template = null,
+        string $severity = 'info',
+        ?string $sound = null,
+        bool $silent = false,
+        array $extra = [],
+    ): void {
+        $order->loadMissing('tableScanSession.restaurantTable');
+        $table = $order->tableScanSession?->restaurantTable;
+        $actor = $request->user();
+
+        NotificationService::notifyOperations(
+            $order->vendor_id,
+            $event,
+            $message,
+            $audiences ?? [
+                NotificationService::VENDOR,
+                NotificationService::WAITER,
+                NotificationService::KITCHEN,
+            ],
+            [
+                'resources' => ['orders', 'tables', 'dashboard', 'notifications'],
+                'template' => $template,
+                'order_id' => $order->id,
+                'order_number' => $order->order_number ?? $order->id,
+                'table_id' => $table?->id,
+                'table_label' => $table?->name ?? $table?->number ?? $order->table_number ?? 'Takeaway',
+                'severity' => $severity,
+                'sound' => $sound,
+                'source_actor_type' => $actor instanceof TeamMember ? 'team_member' : 'vendor',
+                'source_actor_id' => $actor?->id,
+                ...$extra,
+            ],
+            $silent,
+        );
     }
 
     private function resolveVendor(string $vendorId): Vendor

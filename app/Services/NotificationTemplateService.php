@@ -162,6 +162,42 @@ class NotificationTemplateService
             'default' => 'Table {table_label} is calling.',
             'placeholders' => ['table_label'],
         ],
+        'staff.order_confirmed' => [
+            'event' => 'order_confirmed',
+            'label' => 'Staff: new confirmed order',
+            'default' => 'New order #{order_number} for Table {table_label}.',
+            'placeholders' => ['order_number', 'table_label'],
+        ],
+        'staff.order_ready' => [
+            'event' => 'order_ready',
+            'label' => 'Staff: order ready',
+            'default' => 'Order #{order_number} for Table {table_label} is ready.',
+            'placeholders' => ['order_number', 'table_label'],
+        ],
+        'staff.item_ready' => [
+            'event' => 'order_item_status_changed',
+            'label' => 'Staff: item ready',
+            'default' => '{item_name} is ready for Table {table_label}.',
+            'placeholders' => ['item_name', 'table_label'],
+        ],
+        'staff.order_cancelled' => [
+            'event' => 'order_cancelled',
+            'label' => 'Staff: order cancelled',
+            'default' => 'Order #{order_number} for Table {table_label} was cancelled.',
+            'placeholders' => ['order_number', 'table_label'],
+        ],
+        'staff.payment_updated' => [
+            'event' => 'payment_updated',
+            'label' => 'Staff: payment updated',
+            'default' => 'Payment updated for Order #{order_number}.',
+            'placeholders' => ['order_number'],
+        ],
+        'staff.table_session_changed' => [
+            'event' => 'table_session_changed',
+            'label' => 'Staff: table session changed',
+            'default' => 'Table {table_label} session was updated.',
+            'placeholders' => ['table_label'],
+        ],
     ];
 
     public function __construct(
@@ -211,6 +247,7 @@ class NotificationTemplateService
             'customer_name' => $metadata['customer_name'] ?? $this->customerName($metadata['customer_id'] ?? null),
             'item_name' => $this->itemName($metadata, $notification->vendor, $locale),
             'table_label' => $metadata['table_label'] ?? $this->tableLabel($metadata['table_id'] ?? null),
+            'order_number' => $metadata['order_number'] ?? $metadata['order_id'] ?? '',
         ];
     }
 

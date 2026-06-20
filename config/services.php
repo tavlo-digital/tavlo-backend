@@ -46,4 +46,11 @@ return [
         'url' => env('VENDOR_FRONTEND_URL', 'http://localhost:3000'),
     ],
 
+    'supabase' => [
+        'url' => env('SUPABASE_URL'),
+        'realtime_signing_key' => env('SUPABASE_REALTIME_SIGNING_KEY'),
+        'realtime_signing_key_id' => env('SUPABASE_REALTIME_SIGNING_KEY_ID'),
+        'realtime_token_ttl' => (int) env('SUPABASE_REALTIME_TOKEN_TTL', 900),
+    ],
+
 ];

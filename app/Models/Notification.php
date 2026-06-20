@@ -17,6 +17,7 @@ class Notification extends Model
         'message',
         'metadata',
         'read',
+        'is_silent',
     ];
 
     protected function casts(): array
@@ -24,6 +25,7 @@ class Notification extends Model
         return [
             'metadata' => 'array',
             'read' => 'boolean',
+            'is_silent' => 'boolean',
         ];
     }
 

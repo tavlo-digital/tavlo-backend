@@ -10,10 +10,11 @@ use App\Http\Controllers\Api\Vendor\MenuCategoryController;
 use App\Http\Controllers\Api\Vendor\MenuController;
 use App\Http\Controllers\Api\Vendor\MenuItemController;
 use App\Http\Controllers\Api\Vendor\ModifierGroupController;
+use App\Http\Controllers\Api\Vendor\NotificationController;
 use App\Http\Controllers\Api\Vendor\OrderController;
 use App\Http\Controllers\Api\Vendor\ReservationController;
 use App\Http\Controllers\Api\Vendor\ReviewController;
-use App\Http\Controllers\Api\Vendor\SeedController;
+use App\Http\Controllers\Api\Vendor\RealtimeTokenController;
 use App\Http\Controllers\Api\Vendor\SpecialTagController;
 use App\Http\Controllers\Api\Vendor\StripeConnectController;
 use App\Http\Controllers\Api\Vendor\SubscriptionWebhookController;
@@ -42,6 +43,10 @@ Route::middleware(['auth:vendor,team_member', 'vendor.staff.access'])->group(fun
     Route::get('me', [AuthController::class, 'me'])->name('me');
     Route::post('logout', [AuthController::class, 'logout'])->name('logout');
     Route::post('profile/password', [AuthController::class, 'changePassword'])->name('profile.password');
+    Route::get('realtime/token', RealtimeTokenController::class)->name('realtime.token');
+    Route::get('notifications', [NotificationController::class, 'index'])->name('notifications.index');
+    Route::patch('notifications/{id}/read', [NotificationController::class, 'markRead'])->name('notifications.read');
+    Route::post('notifications/read-all', [NotificationController::class, 'markAllRead'])->name('notifications.readAll');
 
     // Menu (legacy endpoints kept for compatibility)
     Route::get('{vendorId}/menu', [MenuController::class, 'show'])->name('menu.show');
@@ -172,6 +177,4 @@ Route::middleware(['auth:vendor,team_member', 'vendor.staff.access'])->group(fun
     Route::post('{vendorId}/billing/cancel', [BillingController::class, 'cancel'])->name('billing.cancel');
     Route::post('{vendorId}/billing/portal', [BillingController::class, 'portalSession'])->name('billing.portal');
 
-    // Seed demo data
-    Route::post('seed', [SeedController::class, 'seed'])->name('seed');
 });

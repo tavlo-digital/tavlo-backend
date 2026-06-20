@@ -53,6 +53,22 @@ class CloseStaleTableScanSessions extends Command
                     'table_id' => $tableId,
                 ],
             );
+            NotificationService::notifyOperations(
+                (int) $sessions->first()->vendor_id,
+                'table_session_changed',
+                'A table session expired due to inactivity.',
+                [NotificationService::VENDOR, NotificationService::WAITER, NotificationService::KITCHEN],
+                [
+                    'resources' => ['orders', 'tables', 'dashboard', 'notifications'],
+                    'template' => 'staff.table_session_changed',
+                    'table_id' => $tableId,
+                    'table_label' => $tableId,
+                    'severity' => 'info',
+                    'sound' => null,
+                    'source_actor_type' => 'system',
+                    'source_actor_id' => null,
+                ],
+            );
 
             $closed += $sessions->count();
         }
