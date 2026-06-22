@@ -1,13 +1,16 @@
 <?php
 
+use App\Http\Controllers\Admin\AllergenController;
+use App\Http\Controllers\Admin\CountryController;
 use App\Http\Controllers\Admin\CustomerController;
 use App\Http\Controllers\Admin\DiagnosticsController;
-use App\Http\Controllers\Admin\CountryController;
+use App\Http\Controllers\Admin\DietaryPreferenceController;
 use App\Http\Controllers\Admin\LanguageController;
 use App\Http\Controllers\Admin\MenuCategoryController;
-use App\Http\Controllers\Admin\TaxCategoryController;
 use App\Http\Controllers\Admin\RoleController;
+use App\Http\Controllers\Admin\SpecialTagController;
 use App\Http\Controllers\Admin\SubscriptionPlanController;
+use App\Http\Controllers\Admin\TaxCategoryController;
 use App\Http\Controllers\Admin\UserController;
 use App\Http\Controllers\Admin\VendorController;
 use App\Http\Controllers\PublicMediaController;
@@ -44,7 +47,25 @@ Route::middleware(['auth', 'verified', 'admin'])->prefix('admin')->name('admin.'
     Route::put('countries/{country}', [CountryController::class, 'update'])->name('countries.update');
     Route::delete('countries/{country}', [CountryController::class, 'destroy'])->name('countries.destroy');
 
+    Route::get('allergens', [AllergenController::class, 'index'])->name('allergens.index');
+    Route::post('allergens', [AllergenController::class, 'store'])->name('allergens.store');
+    Route::put('allergens/{allergen}', [AllergenController::class, 'update'])->name('allergens.update');
+    Route::delete('allergens/{allergen}', [AllergenController::class, 'destroy'])->name('allergens.destroy');
+
+    Route::get('special-tags', [SpecialTagController::class, 'index'])->name('special-tags.index');
+    Route::post('special-tags', [SpecialTagController::class, 'store'])->name('special-tags.store');
+    Route::put('special-tags/{specialTag}', [SpecialTagController::class, 'update'])->name('special-tags.update');
+    Route::delete('special-tags/{specialTag}', [SpecialTagController::class, 'destroy'])->name('special-tags.destroy');
+
+    Route::get('dietary-preferences', [DietaryPreferenceController::class, 'index'])->name('dietary-preferences.index');
+    Route::post('dietary-preferences', [DietaryPreferenceController::class, 'store'])->name('dietary-preferences.store');
+    Route::put('dietary-preferences/{dietaryPreference}', [DietaryPreferenceController::class, 'update'])->name('dietary-preferences.update');
+    Route::delete('dietary-preferences/{dietaryPreference}', [DietaryPreferenceController::class, 'destroy'])->name('dietary-preferences.destroy');
+
     Route::get('languages', [LanguageController::class, 'index'])->name('languages.index');
+    Route::post('languages', [LanguageController::class, 'store'])->name('languages.store');
+    Route::put('languages/{language}', [LanguageController::class, 'update'])->name('languages.update');
+    Route::delete('languages/{language}', [LanguageController::class, 'destroy'])->name('languages.destroy');
     Route::post('languages/notifications', [LanguageController::class, 'updateNotifications'])->name('languages.notifications.update');
     Route::get('customer/{customer}/{tab}', [CustomerController::class, 'show'])
         ->name('customer.show')

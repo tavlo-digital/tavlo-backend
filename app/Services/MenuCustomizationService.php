@@ -364,7 +364,7 @@ class MenuCustomizationService
         }
 
         if (! array_key_exists($id, $this->modifierGroups)) {
-            $this->modifierGroups[$id] = ModifierGroup::with('localizedTranslations')->find($id);
+            $this->modifierGroups[$id] = ModifierGroup::withTrashed()->with('localizedTranslations')->find($id);
         }
 
         return $this->modifierGroups[$id];
@@ -377,7 +377,7 @@ class MenuCustomizationService
         }
 
         if (! array_key_exists($id, $this->modifierOptions)) {
-            $this->modifierOptions[$id] = ModifierOption::with('localizedTranslations')->find($id);
+            $this->modifierOptions[$id] = ModifierOption::withTrashed()->with('localizedTranslations')->find($id);
         }
 
         return $this->modifierOptions[$id];

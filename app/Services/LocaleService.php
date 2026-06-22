@@ -2,32 +2,50 @@
 
 namespace App\Services;
 
+use App\Models\Language;
 use App\Models\Vendor;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
 
 class LocaleService
 {
-    public const LANGUAGES = [
-        'en', 'de', 'it', 'fr', 'ar', 'tr', 'zh', 'ja', 'sr', 'cs', 'es', 'nl',
-    ];
+    public function activeLanguageCodes(): array
+    {
+        return collect($this->languageOptions())
+            ->pluck('code')
+            ->all();
+    }
+
+    public function languageOptions(): array
+    {
+        return Language::query()
+            ->where('is_active', true)
+            ->orderBy('sort_order')
+            ->orderBy('name')
+            ->get()
+            ->sortBy(fn (Language $language) => $language->code === 'en' ? -1 : $language->sort_order)
+            ->values()
+            ->map(fn (Language $language) => [
+                'code' => $language->code,
+                'name' => $language->name,
+                'nativeName' => $language->native_name,
+                'flag' => $language->flag,
+                'direction' => $language->direction,
+            ])
+            ->all();
+    }
 
     public function normalize(mixed $language): ?string
     {
-        if (! is_string($language)) {
-            return null;
-        }
-
-        $language = strtolower(trim(str_replace('_', '-', $language)));
-        $language = explode('-', $language)[0] ?? '';
-
-        return in_array($language, self::LANGUAGES, true) ? $language : null;
+        return $this->normalizeAgainst($language, $this->activeLanguageCodes());
     }
 
     public function normalizeList(mixed $languages): array
     {
+        $active = $this->activeLanguageCodes();
+
         return collect(is_array($languages) ? $languages : [])
-            ->map(fn ($language) => $this->normalize($language))
+            ->map(fn ($language) => $this->normalizeAgainst($language, $active))
             ->filter()
             ->unique()
             ->values()
@@ -83,9 +101,10 @@ class LocaleService
 
     public function resolveHeaderLocale(Request $request): string
     {
-        $preferred = $this->normalize($request->getPreferredLanguage(self::LANGUAGES));
+        $languages = $this->activeLanguageCodes();
+        $preferred = $this->normalize($request->getPreferredLanguage($languages));
 
-        return in_array($preferred, self::LANGUAGES, true)
+        return in_array($preferred, $languages, true)
             ? $preferred
             : 'en';
     }
@@ -163,9 +182,10 @@ class LocaleService
             ])->all()
             : $value;
 
+        $active = $this->activeLanguageCodes();
         $normalized = [];
         foreach ($entries as $language => $entry) {
-            $language = $this->normalize($language);
+            $language = $this->normalizeAgainst($language, $active);
             if ($language === null || ! is_array($entry)) {
                 continue;
             }
@@ -203,5 +223,22 @@ class LocaleService
 
             $model->{$relation}()->updateOrCreate(['language' => $language], $values);
         }
+    }
+
+    private function normalizeAgainst(mixed $language, array $active): ?string
+    {
+        if (! is_string($language)) {
+            return null;
+        }
+
+        $language = strtolower(trim(str_replace('_', '-', $language)));
+
+        if (in_array($language, $active, true)) {
+            return $language;
+        }
+
+        $primary = explode('-', $language)[0] ?? '';
+
+        return in_array($primary, $active, true) ? $primary : null;
     }
 }

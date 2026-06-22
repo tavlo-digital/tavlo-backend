@@ -171,21 +171,53 @@ class ModifierGroupController extends Controller
             foreach ($data['options'] as $i => $opt) {
                 if (! empty($opt['id'])) {
                     $option = $group->options()->findOrFail($opt['id']);
-                    $option->update([
-                        'name' => $opt['name'],
-                        'price_adjustment' => $opt['priceAdjustment'] ?? $option->price_adjustment,
-                        'sort_order' => $i,
-                        'is_active' => $opt['isActive'] ?? true,
-                    ]);
-                    if (array_key_exists('translations', $opt)) {
-                        $this->locales->syncTranslations(
-                            $option,
-                            'localizedTranslations',
-                            $opt['translations'],
-                            ['name']
-                        );
+                    $newPrice = $opt['priceAdjustment'] ?? $option->price_adjustment;
+                    $priceChanged = round((float) $newPrice, 2) !== round((float) $option->price_adjustment, 2);
+
+                    if ($priceChanged) {
+                        $oldProductUid = $option->product_uid;
+                        $oldTranslations = $option->localizedTranslations()->get();
+                        $option->delete();
+
+                        $newOption = $group->options()->create([
+                            'product_uid' => $oldProductUid,
+                            'name' => $opt['name'],
+                            'price_adjustment' => $newPrice,
+                            'sort_order' => $i,
+                            'is_active' => $opt['isActive'] ?? true,
+                        ]);
+                        foreach ($oldTranslations as $t) {
+                            $newOption->localizedTranslations()->create([
+                                'language' => $t->language,
+                                'name' => $t->name,
+                            ]);
+                        }
+                        if (array_key_exists('translations', $opt)) {
+                            $this->locales->syncTranslations(
+                                $newOption,
+                                'localizedTranslations',
+                                $opt['translations'],
+                                ['name']
+                            );
+                        }
+                        $keepIds[] = $newOption->id;
+                    } else {
+                        $option->update([
+                            'name' => $opt['name'],
+                            'price_adjustment' => $newPrice,
+                            'sort_order' => $i,
+                            'is_active' => $opt['isActive'] ?? true,
+                        ]);
+                        if (array_key_exists('translations', $opt)) {
+                            $this->locales->syncTranslations(
+                                $option,
+                                'localizedTranslations',
+                                $opt['translations'],
+                                ['name']
+                            );
+                        }
+                        $keepIds[] = $option->id;
                     }
-                    $keepIds[] = $option->id;
                 } else {
                     $newOpt = $group->options()->create([
                         'name' => $opt['name'],
@@ -225,8 +257,9 @@ class ModifierGroupController extends Controller
         $vendor = $request->user();
         $group = ModifierGroup::where('vendor_id', $vendor->id)->findOrFail($groupId);
 
-        // Soft delete: just mark inactive
         $group->update(['is_active' => false]);
+        $group->options()->each(fn (ModifierOption $o) => $o->delete());
+        $group->delete();
 
         return response()->json(['message' => 'Modifier group removed.']);
     }

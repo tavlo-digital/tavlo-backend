@@ -3,14 +3,15 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\HasMany;
 
-class SpecialTag extends Model
+class Language extends Model
 {
     protected $fillable = [
-        'slug',
-        'label',
-        'icon',
+        'code',
+        'name',
+        'native_name',
+        'flag',
+        'direction',
         'sort_order',
         'is_active',
     ];
@@ -19,11 +20,7 @@ class SpecialTag extends Model
     {
         return [
             'is_active' => 'boolean',
+            'sort_order' => 'integer',
         ];
-    }
-
-    public function localizedTranslations(): HasMany
-    {
-        return $this->hasMany(SpecialTagTranslation::class);
     }
 }

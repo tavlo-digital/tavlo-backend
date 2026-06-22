@@ -634,12 +634,13 @@ class VendorSettingsController extends Controller
             'enableMenuReviews' => $settings->enable_menu_reviews ?? true,
             'allowAnonymousReviews' => (bool) $settings->allow_anonymous_reviews,
             // language
-            'dashboardLanguage' => $settings->dashboard_language ?? 'en',
-            'supportedLanguages' => collect($settings->supported_languages ?? [])
+            'dashboardLanguage' => $this->locales->normalize($settings->dashboard_language) ?? 'en',
+            'supportedLanguages' => collect($this->locales->normalizeList($settings->supported_languages ?? []))
                 ->prepend('en')
                 ->unique()
                 ->values()
                 ->all(),
+            'availableLanguages' => $this->locales->languageOptions(),
             // loyalty
             'loyaltyEnabled' => (bool) $settings->loyalty_enabled,
             'pointsPerEuro' => (int) ($settings->points_per_euro ?? 10),

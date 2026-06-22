@@ -28,6 +28,11 @@ class MasterMenuCategory extends Model
         return $this->hasMany(MenuCategory::class);
     }
 
+    public function localizedTranslations(): HasMany
+    {
+        return $this->hasMany(MasterMenuCategoryTranslation::class);
+    }
+
     public function getIconUrlAttribute(): ?string
     {
         $icon = $this->attributes['icon'] ?? null;

@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Settings;
 
+use App\Models\Language;
 use App\Models\Vendor;
 use App\Models\VendorRequestChange;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -56,6 +57,9 @@ class VendorSettingsTest extends TestCase
                 'dataRetentionDays',
                 'menuTheme',
                 'currency',
+                'availableLanguages' => [
+                    '*' => ['code', 'name', 'nativeName', 'flag', 'direction'],
+                ],
             ]);
 
         $payload = $response->json();
@@ -73,6 +77,29 @@ class VendorSettingsTest extends TestCase
     {
         $this->getJson("/api/vendor/{$this->vendor->vendor_public_id}/settings")
             ->assertUnauthorized();
+    }
+
+    public function test_available_languages_come_from_active_database_records(): void
+    {
+        Language::where('code', 'de')->update(['is_active' => false]);
+        Language::create([
+            'code' => 'pt',
+            'name' => 'Portuguese',
+            'native_name' => 'Português',
+            'flag' => '🇵🇹',
+            'direction' => 'ltr',
+            'sort_order' => 20,
+            'is_active' => true,
+        ]);
+
+        $response = $this->getJson(
+            "/api/vendor/{$this->vendor->vendor_public_id}/settings",
+            $this->authHeaders()
+        );
+
+        $response->assertOk()
+            ->assertJsonFragment(['code' => 'pt', 'name' => 'Portuguese'])
+            ->assertJsonMissing(['code' => 'de']);
     }
 
     // ----------------------------------------------------------------

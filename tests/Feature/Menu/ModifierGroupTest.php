@@ -261,11 +261,19 @@ class ModifierGroupTest extends TestCase
             'is_active'     => true,
         ]);
 
+        $opt = ModifierOption::create([
+            'modifier_group_id' => $group->id,
+            'name' => 'Option A',
+            'price_adjustment' => 1.0,
+            'is_active' => true,
+        ]);
+
         $this->deleteJson("/api/vendor/menu/modifier-groups/{$group->id}", [], $this->authHeaders())
             ->assertOk()
             ->assertJsonFragment(['message' => 'Modifier group removed.']);
 
-        $this->assertDatabaseHas('modifier_groups', ['id' => $group->id, 'is_active' => false]);
+        $this->assertSoftDeleted('modifier_groups', ['id' => $group->id, 'is_active' => false]);
+        $this->assertSoftDeleted('modifier_options', ['id' => $opt->id]);
     }
 
     public function test_destroy_removes_group_from_index(): void
@@ -298,5 +306,139 @@ class ModifierGroupTest extends TestCase
         $this->postJson('/api/vendor/menu/modifier-groups', [])->assertUnauthorized();
         $this->patchJson('/api/vendor/menu/modifier-groups/1', [])->assertUnauthorized();
         $this->deleteJson('/api/vendor/menu/modifier-groups/1')->assertUnauthorized();
+    }
+
+    // ----------------------------------------------------------------
+    // Versioning: product_uid & option price versioning
+    // ----------------------------------------------------------------
+
+    public function test_product_uid_auto_generated_on_create(): void
+    {
+        $response = $this->postJson('/api/vendor/menu/modifier-groups', [
+            'name' => 'Size',
+            'type' => 'single',
+            'options' => [
+                ['name' => 'Small', 'priceAdjustment' => 0],
+                ['name' => 'Large', 'priceAdjustment' => 2.0],
+            ],
+        ], $this->authHeaders());
+
+        $response->assertCreated();
+        $groupId = $response->json('data.id');
+
+        $group = ModifierGroup::find($groupId);
+        $this->assertNotNull($group->product_uid);
+
+        $options = $group->options;
+        foreach ($options as $option) {
+            $this->assertNotNull($option->product_uid);
+        }
+    }
+
+    public function test_update_option_price_creates_new_version(): void
+    {
+        $group = ModifierGroup::create([
+            'vendor_id' => $this->vendor->id,
+            'name' => 'Extras',
+            'type' => 'multiple',
+            'min_selection' => 0,
+            'max_selection' => 3,
+            'is_required' => false,
+            'is_active' => true,
+        ]);
+
+        $option = ModifierOption::create([
+            'modifier_group_id' => $group->id,
+            'name' => 'Extra Cheese',
+            'price_adjustment' => 1.50,
+            'sort_order' => 0,
+            'is_active' => true,
+        ]);
+
+        $oldId = $option->id;
+        $oldProductUid = $option->product_uid;
+
+        $response = $this->patchJson("/api/vendor/menu/modifier-groups/{$group->id}", [
+            'options' => [
+                ['id' => $oldId, 'name' => 'Extra Cheese', 'priceAdjustment' => 2.50],
+            ],
+        ], $this->authHeaders());
+
+        $response->assertOk();
+
+        $this->assertSoftDeleted('modifier_options', ['id' => $oldId]);
+
+        $newOption = ModifierOption::where('modifier_group_id', $group->id)
+            ->where('product_uid', $oldProductUid)
+            ->whereNull('deleted_at')
+            ->first();
+
+        $this->assertNotNull($newOption);
+        $this->assertNotEquals($oldId, $newOption->id);
+        $this->assertEquals($oldProductUid, $newOption->product_uid);
+        $this->assertEquals('2.50', $newOption->price_adjustment);
+    }
+
+    public function test_update_option_same_price_does_not_version(): void
+    {
+        $group = ModifierGroup::create([
+            'vendor_id' => $this->vendor->id,
+            'name' => 'Toppings',
+            'type' => 'multiple',
+            'min_selection' => 0,
+            'max_selection' => 3,
+            'is_required' => false,
+            'is_active' => true,
+        ]);
+
+        $option = ModifierOption::create([
+            'modifier_group_id' => $group->id,
+            'name' => 'Peppers',
+            'price_adjustment' => 1.00,
+            'sort_order' => 0,
+            'is_active' => true,
+        ]);
+
+        $this->patchJson("/api/vendor/menu/modifier-groups/{$group->id}", [
+            'options' => [
+                ['id' => $option->id, 'name' => 'Peppers Updated', 'priceAdjustment' => 1.00],
+            ],
+        ], $this->authHeaders())
+            ->assertOk();
+
+        $this->assertDatabaseHas('modifier_options', [
+            'id' => $option->id,
+            'name' => 'Peppers Updated',
+            'deleted_at' => null,
+        ]);
+    }
+
+    public function test_destroy_soft_deletes_group_and_options(): void
+    {
+        $group = ModifierGroup::create([
+            'vendor_id' => $this->vendor->id,
+            'name' => 'To Delete',
+            'type' => 'single',
+            'is_active' => true,
+        ]);
+
+        $opt1 = ModifierOption::create([
+            'modifier_group_id' => $group->id,
+            'name' => 'A', 'price_adjustment' => 0, 'is_active' => true,
+        ]);
+        $opt2 = ModifierOption::create([
+            'modifier_group_id' => $group->id,
+            'name' => 'B', 'price_adjustment' => 1, 'is_active' => true,
+        ]);
+
+        $this->deleteJson("/api/vendor/menu/modifier-groups/{$group->id}", [], $this->authHeaders())
+            ->assertOk();
+
+        $this->assertSoftDeleted('modifier_groups', ['id' => $group->id]);
+        $this->assertSoftDeleted('modifier_options', ['id' => $opt1->id]);
+        $this->assertSoftDeleted('modifier_options', ['id' => $opt2->id]);
+
+        $this->assertDatabaseHas('modifier_groups', ['id' => $group->id]);
+        $this->assertDatabaseHas('modifier_options', ['id' => $opt1->id]);
     }
 }

@@ -11,6 +11,8 @@ import {
     ScrollText,
     X,
     Shield,
+    ShieldAlert,
+    Leaf,
     Tags,
     Stethoscope,
     Receipt,
@@ -32,6 +34,9 @@ const navItems: NavItem[] = [
     { title: 'Finance & Billing Overview', href: '/admin/finance', icon: FileText, disabled: true },
     { title: 'Subscriptions Management', href: '/admin/subscriptions/plans', icon: CreditCard },
     { title: 'Menu Categories', href: '/admin/menu-categories', icon: Tags },
+    { title: 'Allergens', href: '/admin/allergens', icon: ShieldAlert },
+    { title: 'Dietary Preferences', href: '/admin/dietary-preferences', icon: Leaf },
+    { title: 'Special Tags', href: '/admin/special-tags', icon: Tags },
     { title: 'Tax Management', href: '/admin/tax-categories', icon: Receipt },
     { title: 'Countries', href: '/admin/countries', icon: Globe },
     { title: 'Languages', href: '/admin/languages', icon: Globe },
@@ -52,7 +57,7 @@ function isActive(href: string, currentPath: string) {
     return currentPath.startsWith(href);
 }
 
-export function AdminSidebar({ collapsed, onToggle }: { collapsed?: boolean; onToggle?: () => void }) {
+export function AdminSidebar({ onToggle }: { collapsed?: boolean; onToggle?: () => void }) {
     const { auth, url } = usePage<{ auth: Auth; url: string }>().props;
     const currentPath = typeof url === 'string' ? url : window.location.pathname;
     const isAdmin = auth?.user?.role?.name === 'admin';

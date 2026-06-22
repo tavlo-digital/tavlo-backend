@@ -8,8 +8,8 @@ use App\Models\ModifierGroup;
 use App\Models\ModifierOption;
 use App\Models\TaxCategory;
 use App\Services\LocaleService;
-use App\Services\MenuCustomizationService;
 use App\Services\MediaService;
+use App\Services\MenuCustomizationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -385,7 +385,12 @@ class MenuItemController extends Controller
             'protein' => ['sometimes', 'numeric', 'min:0'],
             'taxCategory' => ['sometimes', 'nullable', 'string', 'max:64'],
             'taxCategoryId' => ['sometimes', 'nullable', 'integer', 'exists:tax_categories,id'],
-            'dietaryPreference' => ['nullable', 'string', 'max:64'],
+            'dietaryPreference' => [
+                'nullable',
+                'string',
+                'max:64',
+                Rule::exists('dietary_preferences', 'slug')->where('is_active', true),
+            ],
             'allergies' => ['sometimes', 'array'],
             'allergies.*' => ['string', 'max:64'],
             'specialTags' => ['sometimes', 'array'],

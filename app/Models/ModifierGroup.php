@@ -7,12 +7,14 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Str;
 
 class ModifierGroup extends Model
 {
     use SoftDeletes;
 
     protected $fillable = [
+        'product_uid',
         'vendor_id',
         'name',
         'type',
@@ -30,6 +32,15 @@ class ModifierGroup extends Model
             'is_required' => 'boolean',
             'is_active' => 'boolean',
         ];
+    }
+
+    protected static function booted(): void
+    {
+        static::creating(function (ModifierGroup $group) {
+            if (empty($group->product_uid)) {
+                $group->product_uid = (string) Str::uuid();
+            }
+        });
     }
 
     public function vendor(): BelongsTo

@@ -1,6 +1,10 @@
 <?php
 
+use App\Http\Controllers\Api\Admin\AllergenController;
+use App\Http\Controllers\Api\Admin\SpecialTagController;
 use Illuminate\Support\Facades\Route;
 
-// Admin API routes
-// Add admin API controllers and routes here as needed.
+Route::middleware('admin')->group(function () {
+    Route::apiResource('allergens', AllergenController::class);
+    Route::apiResource('special-tags', SpecialTagController::class);
+});

@@ -378,8 +378,8 @@ class RestaurantController extends Controller
                 'category.masterCategory',
                 'category.localizedTranslations',
                 'itemTranslations',
-                'allergens:id,name',
-                'tags:id,slug,label',
+                'allergens' => fn ($q) => $q->select('allergens.id', 'name', 'icon')->with('localizedTranslations'),
+                'tags' => fn ($q) => $q->select('special_tags.id', 'slug', 'label', 'icon')->with('localizedTranslations'),
                 'modifierGroups' => fn ($q) => $q->where('is_active', true)
                     ->orderByPivot('sort_order')
                     ->with([
@@ -470,8 +470,8 @@ class RestaurantController extends Controller
                     'slug' => $item->category->display_slug,
                     'icon' => $item->category->display_icon,
                 ] : null,
-                'allergens' => $this->menuItemAllergenNames($item),
-                'tags' => $this->menuItemTagLabels($item),
+                'allergens' => $this->menuItemAllergenNames($item, $vendor, $locale),
+                'tags' => $this->menuItemTagLabels($item, $vendor, $locale),
                 'modifier_groups' => $item->modifierGroups->map(fn ($g) => $this->formatModifierGroup(
                     $g,
                     $vendor,
@@ -503,8 +503,8 @@ class RestaurantController extends Controller
                 'category.masterCategory',
                 'category.localizedTranslations',
                 'itemTranslations',
-                'allergens:id,name,icon',
-                'tags:id,slug,label,icon',
+                'allergens' => fn ($q) => $q->select('allergens.id', 'name', 'icon')->with('localizedTranslations'),
+                'tags' => fn ($q) => $q->select('special_tags.id', 'slug', 'label', 'icon')->with('localizedTranslations'),
                 'modifierGroups' => fn ($q) => $q->where('is_active', true)
                     ->orderByPivot('sort_order')
                     ->with([
@@ -574,8 +574,8 @@ class RestaurantController extends Controller
                 'slug' => $item->category->display_slug,
                 'icon' => $item->category->display_icon,
             ] : null,
-            'allergens' => $this->formatMenuItemAllergens($item),
-            'tags' => $this->formatMenuItemTags($item),
+            'allergens' => $this->formatMenuItemAllergens($item, $vendor, $locale),
+            'tags' => $this->formatMenuItemTags($item, $vendor, $locale),
             'modifier_groups' => $item->modifierGroups->map(fn ($g) => $this->formatModifierGroup(
                 $g,
                 $vendor,
@@ -644,32 +644,53 @@ class RestaurantController extends Controller
         })->values()->all();
     }
 
-    private function menuItemAllergenNames(MenuItem $item): Collection
+    private function menuItemAllergenNames(MenuItem $item, Vendor $vendor, string $locale): Collection
     {
         return $item->allergens
-            ->pluck('name')
+            ->map(fn ($a) => $this->locales->translated(
+                $a,
+                'localizedTranslations',
+                'name',
+                $vendor,
+                $locale,
+                $a->name
+            ))
             ->merge($this->stringValues($item->allergies))
             ->filter()
             ->unique(fn ($value) => Str::lower($value))
             ->values();
     }
 
-    private function menuItemTagLabels(MenuItem $item): Collection
+    private function menuItemTagLabels(MenuItem $item, Vendor $vendor, string $locale): Collection
     {
         return $item->tags
-            ->pluck('label')
+            ->map(fn ($t) => $this->locales->translated(
+                $t,
+                'localizedTranslations',
+                'label',
+                $vendor,
+                $locale,
+                $t->label
+            ))
             ->merge($this->stringValues($item->special_tags))
             ->filter()
             ->unique(fn ($value) => Str::lower($value))
             ->values();
     }
 
-    private function formatMenuItemAllergens(MenuItem $item): Collection
+    private function formatMenuItemAllergens(MenuItem $item, Vendor $vendor, string $locale): Collection
     {
         $formatted = $item->allergens
             ->map(fn ($allergen) => [
                 'id' => $allergen->id,
-                'name' => $allergen->name,
+                'name' => $this->locales->translated(
+                    $allergen,
+                    'localizedTranslations',
+                    'name',
+                    $vendor,
+                    $locale,
+                    $allergen->name
+                ),
                 'icon' => $allergen->icon,
             ])
             ->keyBy(fn ($allergen) => Str::lower($allergen['name']));
@@ -682,11 +703,19 @@ class RestaurantController extends Controller
         if ($missingNames->isNotEmpty()) {
             Allergen::where('is_active', true)
                 ->whereIn('name', $missingNames->all())
+                ->with('localizedTranslations')
                 ->get(['id', 'name', 'icon'])
-                ->each(function (Allergen $allergen) use ($formatted) {
+                ->each(function (Allergen $allergen) use ($formatted, $vendor, $locale) {
                     $formatted->put(Str::lower($allergen->name), [
                         'id' => $allergen->id,
-                        'name' => $allergen->name,
+                        'name' => $this->locales->translated(
+                            $allergen,
+                            'localizedTranslations',
+                            'name',
+                            $vendor,
+                            $locale,
+                            $allergen->name
+                        ),
                         'icon' => $allergen->icon,
                     ]);
                 });
@@ -703,13 +732,20 @@ class RestaurantController extends Controller
         return $formatted->values();
     }
 
-    private function formatMenuItemTags(MenuItem $item): Collection
+    private function formatMenuItemTags(MenuItem $item, Vendor $vendor, string $locale): Collection
     {
         $formatted = $item->tags
             ->map(fn ($tag) => [
                 'id' => $tag->id,
                 'slug' => $tag->slug,
-                'label' => $tag->label,
+                'label' => $this->locales->translated(
+                    $tag,
+                    'localizedTranslations',
+                    'label',
+                    $vendor,
+                    $locale,
+                    $tag->label
+                ),
                 'icon' => $tag->icon,
             ])
             ->keyBy(fn ($tag) => Str::lower($tag['slug'] ?? $tag['label']));
@@ -725,12 +761,21 @@ class RestaurantController extends Controller
                     $query->whereIn('slug', $missingValues->all())
                         ->orWhereIn('label', $missingValues->all());
                 })
+                ->with('localizedTranslations')
                 ->get(['id', 'slug', 'label', 'icon'])
-                ->each(function (SpecialTag $tag) use ($formatted) {
+                ->each(function (SpecialTag $tag) use ($formatted, $vendor, $locale) {
+                    $translatedLabel = $this->locales->translated(
+                        $tag,
+                        'localizedTranslations',
+                        'label',
+                        $vendor,
+                        $locale,
+                        $tag->label
+                    );
                     $value = [
                         'id' => $tag->id,
                         'slug' => $tag->slug,
-                        'label' => $tag->label,
+                        'label' => $translatedLabel,
                         'icon' => $tag->icon,
                     ];
                     $formatted->put(Str::lower($tag->slug), $value);

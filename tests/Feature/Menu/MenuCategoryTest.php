@@ -127,6 +127,29 @@ class MenuCategoryTest extends TestCase
             ->assertJsonPath('data.0.itemCount', 0);
     }
 
+    public function test_index_includes_master_and_vendor_category_translations(): void
+    {
+        $master = MasterMenuCategory::create([
+            'name' => 'Starters',
+            'slug' => 'starters',
+            'is_active' => true,
+        ]);
+        $master->localizedTranslations()->create(['language' => 'de', 'name' => 'Vorspeisen']);
+
+        $category = MenuCategory::create([
+            'vendor_id' => $this->vendor->id,
+            'master_menu_category_id' => $master->id,
+            'default_tax_category' => 'food',
+            'is_active' => true,
+        ]);
+        $category->localizedTranslations()->create(['language' => 'fr', 'name' => 'Entrées']);
+
+        $this->getJson('/api/vendor/menu/categories', $this->authHeaders())
+            ->assertOk()
+            ->assertJsonPath('data.0.translations.de.name', 'Vorspeisen')
+            ->assertJsonPath('data.0.translations.fr.name', 'Entrées');
+    }
+
     public function test_index_does_not_return_another_vendors_categories(): void
     {
         $other = Vendor::factory()->create(['country' => 'Austria']);

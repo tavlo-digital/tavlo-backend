@@ -5,6 +5,7 @@ use App\Http\Controllers\Api\Vendor\AnalyticsController;
 use App\Http\Controllers\Api\Vendor\AuthController;
 use App\Http\Controllers\Api\Vendor\BillingController;
 use App\Http\Controllers\Api\Vendor\DashboardController;
+use App\Http\Controllers\Api\Vendor\DietaryPreferenceController;
 use App\Http\Controllers\Api\Vendor\InventoryController;
 use App\Http\Controllers\Api\Vendor\MenuCategoryController;
 use App\Http\Controllers\Api\Vendor\MenuController;
@@ -12,9 +13,9 @@ use App\Http\Controllers\Api\Vendor\MenuItemController;
 use App\Http\Controllers\Api\Vendor\ModifierGroupController;
 use App\Http\Controllers\Api\Vendor\NotificationController;
 use App\Http\Controllers\Api\Vendor\OrderController;
+use App\Http\Controllers\Api\Vendor\RealtimeTokenController;
 use App\Http\Controllers\Api\Vendor\ReservationController;
 use App\Http\Controllers\Api\Vendor\ReviewController;
-use App\Http\Controllers\Api\Vendor\RealtimeTokenController;
 use App\Http\Controllers\Api\Vendor\SpecialTagController;
 use App\Http\Controllers\Api\Vendor\StripeConnectController;
 use App\Http\Controllers\Api\Vendor\SubscriptionWebhookController;
@@ -76,7 +77,8 @@ Route::middleware(['auth:vendor,team_member', 'vendor.staff.access'])->group(fun
     Route::patch('menu/modifier-groups/{groupId}', [ModifierGroupController::class, 'update'])->name('menu.modifierGroups.update');
     Route::delete('menu/modifier-groups/{groupId}', [ModifierGroupController::class, 'destroy'])->name('menu.modifierGroups.destroy');
 
-    // Allergens & Special Tags (read-only system lookups)
+    // Dietary Preferences, Allergens & Special Tags (read-only system lookups)
+    Route::get('dietary-preferences', [DietaryPreferenceController::class, 'index'])->name('dietaryPreferences.index');
     Route::get('allergens', [AllergenController::class, 'index'])->name('allergens.index');
     Route::get('special-tags', [SpecialTagController::class, 'index'])->name('specialTags.index');
 

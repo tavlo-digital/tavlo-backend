@@ -3,12 +3,12 @@
 namespace App\Http\Controllers\Api\Vendor;
 
 use App\Http\Controllers\Controller;
-use App\Models\SpecialTag;
+use App\Models\DietaryPreference;
 use App\Services\LocaleService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
-class SpecialTagController extends Controller
+class DietaryPreferenceController extends Controller
 {
     public function __construct(private readonly LocaleService $locales) {}
 
@@ -17,31 +17,31 @@ class SpecialTagController extends Controller
         $vendor = $request->user();
         $locale = $this->locales->dashboardLanguage($vendor);
 
-        $tags = SpecialTag::where('is_active', true)
+        $preferences = DietaryPreference::where('is_active', true)
             ->with('localizedTranslations')
             ->orderBy('sort_order')
-            ->orderBy('label')
+            ->orderBy('name')
             ->get()
-            ->map(fn (SpecialTag $t) => [
-                'id' => $t->id,
-                'slug' => $t->slug,
-                'label' => $this->locales->translated(
-                    $t,
+            ->map(fn (DietaryPreference $preference) => [
+                'id' => $preference->id,
+                'slug' => $preference->slug,
+                'name' => $this->locales->translated(
+                    $preference,
                     'localizedTranslations',
-                    'label',
+                    'name',
                     $vendor,
                     $locale,
-                    $t->label
+                    $preference->name
                 ),
-                'icon' => $t->icon,
+                'icon' => $preference->icon,
                 'translations' => $this->locales->translationMap(
-                    $t,
+                    $preference,
                     'localizedTranslations',
-                    ['label'],
-                    ['label' => $t->label]
+                    ['name'],
+                    ['name' => $preference->name]
                 ),
             ]);
 
-        return response()->json(['data' => $tags]);
+        return response()->json(['data' => $preferences]);
     }
 }

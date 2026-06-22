@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\MasterMenuCategory;
+use App\Services\LocaleService;
 use App\Services\MediaService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -14,13 +15,15 @@ use Inertia\Response;
 
 class MenuCategoryController extends Controller
 {
-    public function __construct(private readonly MediaService $media)
-    {
-    }
+    public function __construct(
+        private readonly MediaService $media,
+        private readonly LocaleService $locales,
+    ) {}
 
     public function index(): Response
     {
         $categories = MasterMenuCategory::query()
+            ->with('localizedTranslations')
             ->withCount('vendorCategories')
             ->orderBy('sort_order')
             ->orderBy('name')
@@ -33,10 +36,17 @@ class MenuCategoryController extends Controller
                 'sortOrder' => $category->sort_order,
                 'isActive' => $category->is_active,
                 'vendorCount' => $category->vendor_categories_count,
+                'translations' => $this->locales->translationMap(
+                    $category,
+                    'localizedTranslations',
+                    ['name'],
+                    ['name' => $category->name]
+                ),
             ]);
 
         return Inertia::render('admin/menu-categories/index', [
             'categories' => $categories,
+            'languages' => $this->locales->languageOptions(),
         ]);
     }
 
@@ -49,13 +59,16 @@ class MenuCategoryController extends Controller
             'icon' => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp', 'max:2048'],
             'sort_order' => ['nullable', 'integer', 'min:0'],
             'is_active' => ['boolean'],
+            'translations' => ['nullable', 'array'],
+            'translations.*' => ['array'],
+            'translations.*.name' => ['nullable', 'string', 'max:255'],
         ]);
 
         if (MasterMenuCategory::where('slug', $slug)->exists()) {
             return back()->withErrors(['name' => 'A category with this name already exists.'])->withInput();
         }
 
-        MasterMenuCategory::create([
+        $category = MasterMenuCategory::create([
             'name' => $validated['name'],
             'slug' => $slug,
             'icon' => $request->hasFile('icon')
@@ -64,6 +77,15 @@ class MenuCategoryController extends Controller
             'sort_order' => $validated['sort_order'] ?? 0,
             'is_active' => $validated['is_active'] ?? true,
         ]);
+
+        $translations = $validated['translations'] ?? [];
+        $translations['en'] = ['name' => $validated['name']];
+        $this->locales->syncTranslations(
+            $category,
+            'localizedTranslations',
+            $translations,
+            ['name']
+        );
 
         return to_route('admin.menu-categories.index')->with('status', 'Category created.');
     }
@@ -78,6 +100,9 @@ class MenuCategoryController extends Controller
             'remove_icon' => ['boolean'],
             'sort_order' => ['nullable', 'integer', 'min:0'],
             'is_active' => ['boolean'],
+            'translations' => ['nullable', 'array'],
+            'translations.*' => ['array'],
+            'translations.*.name' => ['nullable', 'string', 'max:255'],
         ]);
 
         if (MasterMenuCategory::where('slug', $slug)->whereKeyNot($category->id)->exists()) {
@@ -100,6 +125,15 @@ class MenuCategoryController extends Controller
         }
 
         $category->update($updates);
+
+        $translations = $validated['translations'] ?? [];
+        $translations['en'] = ['name' => $validated['name']];
+        $this->locales->syncTranslations(
+            $category,
+            'localizedTranslations',
+            $translations,
+            ['name']
+        );
 
         return to_route('admin.menu-categories.index')->with('status', 'Category updated.');
     }

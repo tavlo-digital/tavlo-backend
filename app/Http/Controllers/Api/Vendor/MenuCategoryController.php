@@ -20,7 +20,7 @@ class MenuCategoryController extends Controller
         $vendor = $request->user();
 
         $categories = $vendor->menuCategories()
-            ->with(['masterCategory', 'taxCategory', 'localizedTranslations'])
+            ->with(['masterCategory.localizedTranslations', 'taxCategory', 'localizedTranslations'])
             ->withCount(['items' => fn ($q) => $q->where('is_active', true)])
             ->orderBy('sort_order')
             ->get()
@@ -36,6 +36,7 @@ class MenuCategoryController extends Controller
     public function categoryOptions(): JsonResponse
     {
         $categories = MasterMenuCategory::where('is_active', true)
+            ->with('localizedTranslations')
             ->orderBy('sort_order')
             ->orderBy('name')
             ->get()
@@ -45,6 +46,12 @@ class MenuCategoryController extends Controller
                 'slug' => $category->slug,
                 'icon' => $category->icon_url,
                 'sortOrder' => $category->sort_order,
+                'translations' => $this->locales->translationMap(
+                    $category,
+                    'localizedTranslations',
+                    ['name'],
+                    ['name' => $category->name]
+                ),
             ]);
 
         return response()->json(['data' => $categories]);
@@ -105,7 +112,7 @@ class MenuCategoryController extends Controller
             $data['translations'] ?? [],
             ['name']
         );
-        $category->load(['masterCategory', 'taxCategory', 'localizedTranslations']);
+        $category->load(['masterCategory.localizedTranslations', 'taxCategory', 'localizedTranslations']);
         $category->loadCount(['items' => fn ($q) => $q->where('is_active', true)]);
 
         return response()->json([
@@ -168,7 +175,7 @@ class MenuCategoryController extends Controller
                 ['name']
             );
         }
-        $category->load(['masterCategory', 'taxCategory', 'localizedTranslations']);
+        $category->load(['masterCategory.localizedTranslations', 'taxCategory', 'localizedTranslations']);
         $category->loadCount(['items' => fn ($q) => $q->where('is_active', true)]);
 
         return response()->json([
@@ -201,18 +208,25 @@ class MenuCategoryController extends Controller
     private function formatCategory(MenuCategory $cat, $vendor, string $locale): array
     {
         $tc = $cat->taxCategory;
+        $masterTranslations = $cat->masterCategory
+            ? $this->locales->translationMap(
+                $cat->masterCategory,
+                'localizedTranslations',
+                ['name'],
+                ['name' => $cat->display_name]
+            )
+            : ['en' => ['name' => $cat->display_name]];
+        $vendorTranslations = $this->locales->translationMap(
+            $cat,
+            'localizedTranslations',
+            ['name']
+        );
+        $translations = array_replace_recursive($masterTranslations, $vendorTranslations);
 
         return [
             'id' => $cat->id,
             'masterCategoryId' => $cat->master_menu_category_id,
-            'name' => $this->locales->translated(
-                $cat,
-                'localizedTranslations',
-                'name',
-                $vendor,
-                $locale,
-                $cat->display_name
-            ),
+            'name' => $translations[$locale]['name'] ?? $translations['en']['name'] ?? $cat->display_name,
             'slug' => $cat->display_slug,
             'icon' => $cat->display_icon,
             'defaultTaxCategory' => $cat->default_tax_category ?? ($tc?->slug ?? 'food'),
@@ -225,12 +239,7 @@ class MenuCategoryController extends Controller
             'sortOrder' => $cat->sort_order,
             'isActive' => $cat->is_active,
             'itemCount' => $cat->items_count ?? 0,
-            'translations' => $this->locales->translationMap(
-                $cat,
-                'localizedTranslations',
-                ['name'],
-                ['name' => $cat->display_name]
-            ),
+            'translations' => $translations,
         ];
     }
 

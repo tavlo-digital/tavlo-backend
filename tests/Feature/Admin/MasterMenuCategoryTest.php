@@ -49,6 +49,8 @@ class MasterMenuCategoryTest extends TestCase
         $this->assertSame('admin/menu-categories/index', $component->getValue($response));
         $this->assertSame('Pizza', $props->getValue($response)['categories'][0]['name']);
         $this->assertSame(url('media/cat-icons/pizza.png'), $props->getValue($response)['categories'][0]['icon']);
+        $this->assertSame('Pizza', $props->getValue($response)['categories'][0]['translations']['en']['name']);
+        $this->assertSame('en', $props->getValue($response)['languages'][0]['code']);
     }
 
     public function test_admin_can_create_master_menu_category(): void
@@ -63,6 +65,10 @@ class MasterMenuCategoryTest extends TestCase
                 'icon' => $file,
                 'sort_order' => 2,
                 'is_active' => true,
+                'translations' => [
+                    'en' => ['name' => 'Pasta'],
+                    'de' => ['name' => 'Nudeln'],
+                ],
             ])
             ->assertRedirect('/admin/menu-categories');
 
@@ -72,6 +78,11 @@ class MasterMenuCategoryTest extends TestCase
         ]);
 
         $category = MasterMenuCategory::where('slug', 'pasta')->firstOrFail();
+        $this->assertDatabaseHas('master_menu_category_translations', [
+            'master_menu_category_id' => $category->id,
+            'language' => 'de',
+            'name' => 'Nudeln',
+        ]);
         $this->assertStringStartsWith('cat-icons/', $category->icon);
         Storage::disk('public')->assertExists($category->icon);
     }
@@ -95,6 +106,10 @@ class MasterMenuCategoryTest extends TestCase
                 'icon' => UploadedFile::fake()->image('desserts.webp', 64, 64),
                 'sort_order' => 3,
                 'is_active' => false,
+                'translations' => [
+                    'en' => ['name' => 'Desserts'],
+                    'fr' => ['name' => 'Desserts français'],
+                ],
             ])
             ->assertRedirect('/admin/menu-categories');
 
@@ -106,6 +121,11 @@ class MasterMenuCategoryTest extends TestCase
         ]);
 
         $category->refresh();
+        $this->assertDatabaseHas('master_menu_category_translations', [
+            'master_menu_category_id' => $category->id,
+            'language' => 'fr',
+            'name' => 'Desserts français',
+        ]);
         $this->assertStringStartsWith('cat-icons/', $category->icon);
         $this->assertNotSame('cat-icons/old.png', $category->icon);
         Storage::disk('public')->assertMissing('cat-icons/old.png');

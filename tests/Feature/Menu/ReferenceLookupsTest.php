@@ -23,6 +23,7 @@ class ReferenceLookupsTest extends TestCase
     private function authHeaders(): array
     {
         $token = $this->vendor->createToken('test')->plainTextToken;
+
         return ['Authorization' => "Bearer {$token}", 'Accept' => 'application/json'];
     }
 
@@ -34,7 +35,7 @@ class ReferenceLookupsTest extends TestCase
     {
         Allergen::create(['name' => 'Gluten',  'icon' => '🌾', 'sort_order' => 1, 'is_active' => true]);
         Allergen::create(['name' => 'Dairy',   'icon' => '🥛', 'sort_order' => 2, 'is_active' => true]);
-        Allergen::create(['name' => 'Inactive','icon' => null,  'sort_order' => 3, 'is_active' => false]);
+        Allergen::create(['name' => 'Inactive', 'icon' => null,  'sort_order' => 3, 'is_active' => false]);
 
         $response = $this->getJson('/api/vendor/allergens', $this->authHeaders());
 
@@ -48,13 +49,16 @@ class ReferenceLookupsTest extends TestCase
 
     public function test_allergens_response_has_expected_fields(): void
     {
-        Allergen::create(['name' => 'Eggs', 'icon' => '🥚', 'sort_order' => 1, 'is_active' => true]);
+        $allergen = Allergen::create(['name' => 'Eggs', 'icon' => '🥚', 'sort_order' => 1, 'is_active' => true]);
+        $allergen->localizedTranslations()->create(['language' => 'de', 'name' => 'Eier']);
 
         $this->getJson('/api/vendor/allergens', $this->authHeaders())
             ->assertOk()
+            ->assertJsonPath('data.0.key', 'Eggs')
+            ->assertJsonPath('data.0.translations.de.name', 'Eier')
             ->assertJsonStructure([
                 'data' => [
-                    '*' => ['id', 'name', 'icon'],
+                    '*' => ['id', 'key', 'name', 'icon', 'translations'],
                 ],
             ]);
     }
@@ -72,7 +76,7 @@ class ReferenceLookupsTest extends TestCase
     {
         SpecialTag::create(['slug' => 'popular',     'label' => 'Popular',     'sort_order' => 1, 'is_active' => true]);
         SpecialTag::create(['slug' => 'new',         'label' => 'New',         'sort_order' => 2, 'is_active' => true]);
-        SpecialTag::create(['slug' => 'discontinued','label' => 'Discontinued','sort_order' => 3, 'is_active' => false]);
+        SpecialTag::create(['slug' => 'discontinued', 'label' => 'Discontinued', 'sort_order' => 3, 'is_active' => false]);
 
         $response = $this->getJson('/api/vendor/special-tags', $this->authHeaders());
 
@@ -84,13 +88,15 @@ class ReferenceLookupsTest extends TestCase
 
     public function test_special_tags_response_has_expected_fields(): void
     {
-        SpecialTag::create(['slug' => 'spicy', 'label' => 'Spicy', 'icon' => '🌶', 'sort_order' => 1, 'is_active' => true]);
+        $tag = SpecialTag::create(['slug' => 'spicy', 'label' => 'Spicy', 'icon' => '🌶', 'sort_order' => 1, 'is_active' => true]);
+        $tag->localizedTranslations()->create(['language' => 'de', 'label' => 'Scharf']);
 
         $this->getJson('/api/vendor/special-tags', $this->authHeaders())
             ->assertOk()
+            ->assertJsonPath('data.0.translations.de.label', 'Scharf')
             ->assertJsonStructure([
                 'data' => [
-                    '*' => ['id', 'slug', 'label', 'icon'],
+                    '*' => ['id', 'slug', 'label', 'icon', 'translations'],
                 ],
             ]);
     }
