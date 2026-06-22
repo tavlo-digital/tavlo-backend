@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\Vendor;
 
 use App\Http\Controllers\Controller;
+use App\Models\MenuItem;
 use App\Models\Vendor;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -43,22 +44,35 @@ class AnalyticsController extends Controller
         $avgRating = round($reviewsInPeriod->avg('rating') ?? 0, 1);
         $reviewCount = $reviewsInPeriod->count();
 
-        // ---- Top items ---
-        $topItems = $vendor->menuItems()
+        // ---- Top items (aggregated across versions) ---
+        $topItems = MenuItem::withTrashed()
+            ->where('vendor_id', $vendor->id)
             ->where('ordered_count', '>', 0)
-            ->orderByDesc('ordered_count')
+            ->select('product_uid')
+            ->selectRaw('SUM(ordered_count) as total_ordered')
+            ->groupBy('product_uid')
+            ->orderByDesc('total_ordered')
             ->limit(5)
-            ->get(['id', 'name', 'price', 'ordered_count'])
-            ->map(fn ($i) => [
-                'id' => (string) $i->id,
-                'name' => $i->name,
-                'revenue' => round($i->price * $i->ordered_count, 2),
-                'orders' => (int) $i->ordered_count,
-            ]);
+            ->get()
+            ->map(function ($row) use ($vendor) {
+                $current = MenuItem::where('vendor_id', $vendor->id)
+                    ->where('product_uid', $row->product_uid)
+                    ->first()
+                    ?? MenuItem::withTrashed()->where('vendor_id', $vendor->id)
+                        ->where('product_uid', $row->product_uid)
+                        ->latest()
+                        ->first();
+                return [
+                    'id' => (string) ($current?->id ?? 0),
+                    'name' => $current?->name ?? 'Unknown',
+                    'revenue' => round(($current?->price ?? 0) * $row->total_ordered, 2),
+                    'orders' => (int) $row->total_ordered,
+                ];
+            });
 
-        // ---- Category breakdown ---
+        // ---- Category breakdown (includes trashed versions) ---
         $categoryBreakdown = $vendor->menuCategories()
-            ->with(['masterCategory', 'menuItems' => fn ($q) => $q->where('ordered_count', '>', 0)])
+            ->with(['masterCategory', 'menuItems' => fn ($q) => $q->withTrashed()->where('ordered_count', '>', 0)])
             ->get()
             ->map(fn ($cat) => [
                 'name' => $cat->display_name,

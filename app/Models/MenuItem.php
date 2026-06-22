@@ -6,10 +6,15 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Str;
 
 class MenuItem extends Model
 {
+    use SoftDeletes;
+
     protected $fillable = [
+        'product_uid',
         'vendor_id',
         'menu_category_id',
         'name',
@@ -62,6 +67,15 @@ class MenuItem extends Model
             'translations' => 'array',
             'ingredients' => 'array',
         ];
+    }
+
+    protected static function booted(): void
+    {
+        static::creating(function (MenuItem $item) {
+            if (empty($item->product_uid)) {
+                $item->product_uid = (string) Str::uuid();
+            }
+        });
     }
 
     public function vendor(): BelongsTo

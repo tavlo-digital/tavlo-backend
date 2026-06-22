@@ -9,21 +9,12 @@ use App\Models\TableScanSession;
 use App\Models\TableSession;
 use App\Models\TeamMember;
 use App\Models\Vendor;
-use App\Services\LocaleService;
-use App\Services\MenuCustomizationService;
-use App\Services\NotificationService;
-use App\Services\TaxCalculationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 
 class OrderController extends Controller
 {
-    public function __construct(
-        private readonly LocaleService $locales,
-        private readonly MenuCustomizationService $customizations,
-    ) {}
-
     /**
      * GET /api/vendor/{vendorId}/orders
      * Returns orders grouped by table session (dine-in) and flat list (takeaway).
@@ -48,7 +39,6 @@ class OrderController extends Controller
         $ordersByScanSession = Order::with([
             'customer:id,first_name,last_name,email,phone,customer_public_id',
             'tableScanSession.restaurantTable:id,number,name',
-            'vendor.vendorSetting',
         ])
             ->where('vendor_id', $vendor->id)
             ->whereIn('table_scan_session_id', $activeScanSessions->pluck('id'))
@@ -91,6 +81,12 @@ class OrderController extends Controller
     public function show(Request $request, string $vendorId, string $orderId): JsonResponse
     {
         $vendor = $this->resolveVendor($vendorId);
+
+        // ISSUE-025: Authorise BEFORE loading the order.
+        // Loading first leaks order existence via timing differences (IDOR).
+        // Scoping the query to $vendor->orders() means a wrong-vendor request
+        // gets a 404 (order not found for this vendor) rather than a 403,
+        // which avoids revealing that the order ID exists at all.
         $this->authorizeVendor($request, $vendor);
 
         $order = $vendor->orders()
@@ -111,10 +107,11 @@ class OrderController extends Controller
      */
     public function update(Request $request, string $orderId): JsonResponse
     {
-        $order = $this->resolveOrder($orderId, $request);
+        $order = $this->resolveOrder($orderId);
+        $this->authorizeVendor($request, $order->vendor);
 
         $data = $request->validate([
-            'status' => ['sometimes', 'string', 'in:draft,confirmed,waiter_confirmed,in_progress,served,picked_up,cancelled'],
+            'status' => ['sometimes', 'string', 'in:pending,confirmed,preparing,ready,delivered,picked_up,cancelled'],
             'paymentPending' => ['sometimes', 'boolean'],
             'paymentReceived' => ['sometimes', 'boolean'],
             'paymentNote' => ['nullable', 'string', 'max:500'],
@@ -139,12 +136,6 @@ class OrderController extends Controller
 
         $order->update($mapped);
 
-        $this->notifySessionCustomers($order, 'order_updated', 'Your order status has been updated.', [
-            'template' => 'order.status_updated',
-            'order_id' => $order->id,
-        ]);
-        $this->notifyOperations($request, $order, 'order_status_changed', 'Order status was updated.', silent: true);
-
         return response()->json($this->formatOrder($order->fresh()->load('customer')));
     }
 
@@ -154,26 +145,14 @@ class OrderController extends Controller
      */
     public function confirm(Request $request, string $orderId): JsonResponse
     {
-        $order = $this->resolveOrder($orderId, $request);
+        $order = $this->resolveOrder($orderId);
+        $this->authorizeVendor($request, $order->vendor);
 
         $order->update([
-            'status' => 'waiter_confirmed',
+            'status' => 'confirmed',
             'waiter_confirmed' => true,
             'waiter_confirmed_at' => now(),
         ]);
-
-        $this->notifySessionCustomers($order, 'order_updated', 'Your order has been confirmed by the waiter.', [
-            'template' => 'order.waiter_confirmed',
-            'order_id' => $order->id,
-        ]);
-        $this->notifyOperations(
-            $request,
-            $order,
-            'order_confirmed',
-            'A new order was confirmed.',
-            template: 'staff.order_confirmed',
-            sound: 'new_order',
-        );
 
         return response()->json($this->formatOrder($order->fresh()->load('customer')));
     }
@@ -184,27 +163,14 @@ class OrderController extends Controller
      */
     public function confirmCashPayment(Request $request, string $orderId): JsonResponse
     {
-        $order = $this->resolveOrder($orderId, $request);
+        $order = $this->resolveOrder($orderId);
+        $this->authorizeVendor($request, $order->vendor);
 
         $order->update([
             'payment_received' => true,
             'payment_confirmed_at' => now(),
             'payment_pending' => false,
         ]);
-
-        $this->notifySessionCustomers($order, 'payment_updated', 'Your cash payment has been confirmed.', [
-            'template' => 'payment.cash_confirmed',
-            'order_id' => $order->id,
-        ]);
-        $this->notifyOperations(
-            $request,
-            $order,
-            'payment_updated',
-            'A cash payment was confirmed.',
-            audiences: [NotificationService::VENDOR, NotificationService::WAITER],
-            template: 'staff.payment_updated',
-            sound: 'payment',
-        );
 
         return response()->json($this->formatOrder($order->fresh()->load('customer')));
     }
@@ -217,7 +183,8 @@ class OrderController extends Controller
      */
     public function markReady(Request $request, string $orderId): JsonResponse
     {
-        $order = $this->resolveOrder($orderId, $request);
+        $order = $this->resolveOrder($orderId);
+        $this->authorizeVendor($request, $order->vendor);
 
         $now = now();
 
@@ -229,24 +196,7 @@ class OrderController extends Controller
         CartItem::whereJsonContains('shared_order_ids', $order->id)
             ->update(['ready_at' => $now]);
 
-        $order->update([
-            'status' => 'in_progress',
-            'in_progress_at' => $order->in_progress_at ?? $now,
-        ]);
-
-        $this->notifySessionCustomers($order, 'order_updated', 'Your order is ready!', [
-            'template' => 'order.ready',
-            'order_id' => $order->id,
-        ]);
-        $this->notifyOperations(
-            $request,
-            $order,
-            'order_ready',
-            'An order is ready.',
-            template: 'staff.order_ready',
-            severity: 'urgent',
-            sound: 'ready',
-        );
+        $order->update(['status' => 'ready']);
 
         return response()->json($this->formatOrder($order->fresh()->load('customer')));
     }
@@ -256,7 +206,8 @@ class OrderController extends Controller
      */
     public function updateItemStatus(Request $request, string $orderId, string $cartItemId): JsonResponse
     {
-        $order = $this->resolveOrder($orderId, $request);
+        $order = $this->resolveOrder($orderId);
+        $this->authorizeVendor($request, $order->vendor);
 
         $data = $request->validate([
             'status' => ['required', 'string', 'in:new,preparing,ready,served'],
@@ -299,43 +250,6 @@ class OrderController extends Controller
         $item->update($updates);
         $this->syncOrderStatusFromCartItems($order);
 
-        $template = match ($data['status']) {
-            'preparing' => 'cart.item_preparing',
-            'ready' => 'cart.item_ready',
-            'served' => 'cart.item_served',
-            default => 'cart.item_status_updated',
-        };
-        $statusLabel = match ($data['status']) {
-            'preparing' => 'is now being prepared',
-            'ready' => 'is ready',
-            'served' => 'has been served',
-            default => 'has been updated',
-        };
-        $itemName = $item->menuItem?->name ?? 'An item';
-        $this->notifySessionCustomers($order, 'cart_item_updated', "{$itemName} {$statusLabel}.", [
-            'template' => $template,
-            'order_id' => $order->id,
-            'cart_item_id' => $item->id,
-            'menu_item_id' => $item->menu_item_id,
-            'item_name' => $itemName,
-        ]);
-        $this->notifyOperations(
-            $request,
-            $order,
-            'order_item_status_changed',
-            "{$itemName} {$statusLabel}.",
-            template: $data['status'] === 'ready' ? 'staff.item_ready' : null,
-            severity: $data['status'] === 'ready' ? 'urgent' : 'info',
-            sound: $data['status'] === 'ready' ? 'ready' : null,
-            silent: $data['status'] !== 'ready',
-            extra: [
-                'cart_item_id' => $item->id,
-                'menu_item_id' => $item->menu_item_id,
-                'item_name' => $itemName,
-                'item_status' => $data['status'],
-            ],
-        );
-
         return response()->json($this->formatOrder(
             $order->fresh()->load(['customer', 'tableScanSession.restaurantTable'])
         ));
@@ -346,18 +260,10 @@ class OrderController extends Controller
      */
     public function markPickedUp(Request $request, string $orderId): JsonResponse
     {
-        $order = $this->resolveOrder($orderId, $request);
+        $order = $this->resolveOrder($orderId);
+        $this->authorizeVendor($request, $order->vendor);
 
-        $order->update([
-            'status' => 'picked_up',
-            'picked_up_at' => now(),
-        ]);
-
-        $this->notifySessionCustomers($order, 'order_updated', 'Your order has been picked up.', [
-            'template' => 'order.picked_up',
-            'order_id' => $order->id,
-        ]);
-        $this->notifyOperations($request, $order, 'order_picked_up', 'An order was picked up.', silent: true);
+        $order->update(['status' => 'picked_up']);
 
         return response()->json($this->formatOrder($order->fresh()->load('customer')));
     }
@@ -367,7 +273,8 @@ class OrderController extends Controller
      */
     public function markServed(Request $request, string $orderId): JsonResponse
     {
-        $order = $this->resolveOrder($orderId, $request);
+        $order = $this->resolveOrder($orderId);
+        $this->authorizeVendor($request, $order->vendor);
 
         $now = now();
 
@@ -384,12 +291,6 @@ class OrderController extends Controller
             'served_at' => $now,
         ]);
 
-        $this->notifySessionCustomers($order, 'order_updated', 'Your order has been served. Enjoy!', [
-            'template' => 'order.served',
-            'order_id' => $order->id,
-        ]);
-        $this->notifyOperations($request, $order, 'order_served', 'An order was served.', silent: true);
-
         return response()->json($this->formatOrder($order->fresh()->load('customer')));
     }
 
@@ -398,7 +299,8 @@ class OrderController extends Controller
      */
     public function cancel(Request $request, string $orderId): JsonResponse
     {
-        $order = $this->resolveOrder($orderId, $request);
+        $order = $this->resolveOrder($orderId);
+        $this->authorizeVendor($request, $order->vendor);
 
         $data = $request->validate([
             'reason' => ['nullable', 'string', 'max:500'],
@@ -410,19 +312,6 @@ class OrderController extends Controller
             'cancelled_reason' => $data['reason'] ?? null,
         ]);
 
-        $this->notifySessionCustomers($order, 'order_updated', 'Your order has been cancelled.', [
-            'template' => 'order.cancelled',
-            'order_id' => $order->id,
-        ]);
-        $this->notifyOperations(
-            $request,
-            $order,
-            'order_cancelled',
-            'An order was cancelled.',
-            template: 'staff.order_cancelled',
-            severity: 'urgent',
-        );
-
         return response()->json($this->formatOrder($order->fresh()->load('customer')));
     }
 
@@ -432,8 +321,7 @@ class OrderController extends Controller
 
     /**
      * POST /api/vendor/{vendorId}/sessions/{sessionId}/release
-     * [Legacy] Release batch to kitchen immediately (override the batch window).
-     * Only operates on legacy table_sessions — not QR-scan sessions.
+     * Release batch to kitchen immediately (override the batch window).
      */
     public function releaseToKitchen(Request $request, string $vendorId, string $sessionId): JsonResponse
     {
@@ -444,13 +332,12 @@ class OrderController extends Controller
 
         $session->load('orders.customer');
 
-        return $this->legacyResponse($this->formatSession($session->fresh()));
+        return response()->json($this->formatSession($session->fresh()));
     }
 
     /**
      * POST /api/vendor/{vendorId}/sessions/{sessionId}/fire-course
-     * [Legacy] Advance to the next course.
-     * Only operates on legacy table_sessions — not QR-scan sessions.
+     * Advance to the next course.
      */
     public function fireNextCourse(Request $request, string $vendorId, string $sessionId): JsonResponse
     {
@@ -460,20 +347,19 @@ class OrderController extends Controller
         $next = $session->nextCourse();
 
         if ($next === null) {
-            return $this->legacyResponse(['message' => 'Already on the last course (desserts).'], 422);
+            return response()->json(['message' => 'Already on the last course (desserts).'], 422);
         }
 
         $session->update(['current_course' => $next]);
 
         $session->load('orders.customer');
 
-        return $this->legacyResponse($this->formatSession($session->fresh()));
+        return response()->json($this->formatSession($session->fresh()));
     }
 
     /**
      * POST /api/vendor/{vendorId}/sessions/{sessionId}/close
-     * [Legacy] Close the table session (end of visit).
-     * Only operates on legacy table_sessions — not QR-scan sessions.
+     * Close the table session (end of visit).
      */
     public function closeSession(Request $request, string $vendorId, string $sessionId): JsonResponse
     {
@@ -487,14 +373,7 @@ class OrderController extends Controller
 
         $session->load('orders.customer');
 
-        return $this->legacyResponse($this->formatSession($session->fresh()));
-    }
-
-    private function legacyResponse(array $data, int $status = 200): JsonResponse
-    {
-        return response()->json($data, $status)
-            ->header('Deprecation', 'true')
-            ->header('X-Deprecation-Notice', 'This endpoint operates on legacy table_sessions only. It has no effect on QR-scan sessions.');
+        return response()->json($this->formatSession($session->fresh()));
     }
 
     // ----------------------------------------------------------------
@@ -534,12 +413,12 @@ class OrderController extends Controller
 
         $kitchenSummary = [
             'total' => $orders->count(),
+            'pending' => $orders->where('status', 'pending')->count(),
             'draft' => $orders->where('status', 'draft')->count(),
             'confirmed' => $orders->where('status', 'confirmed')->count(),
-            'waiter_confirmed' => $orders->where('status', 'waiter_confirmed')->count(),
-            'in_progress' => $orders->where('status', 'in_progress')->count(),
+            'preparing' => $orders->where('status', 'preparing')->count(),
+            'ready' => $orders->where('status', 'ready')->count(),
             'served' => $orders->where('status', 'served')->count(),
-            'picked_up' => $orders->where('status', 'picked_up')->count(),
             'cancelled' => $orders->where('status', 'cancelled')->count(),
         ];
 
@@ -570,12 +449,11 @@ class OrderController extends Controller
 
         $kitchenSummary = [
             'total' => $orders->count(),
-            'draft' => $orders->where('status', 'draft')->count(),
+            'pending' => $orders->where('status', 'pending')->count(),
             'confirmed' => $orders->where('status', 'confirmed')->count(),
-            'waiter_confirmed' => $orders->where('status', 'waiter_confirmed')->count(),
-            'in_progress' => $orders->where('status', 'in_progress')->count(),
+            'preparing' => $orders->where('status', 'preparing')->count(),
+            'ready' => $orders->where('status', 'ready')->count(),
             'served' => $orders->where('status', 'served')->count(),
-            'picked_up' => $orders->where('status', 'picked_up')->count(),
             'cancelled' => $orders->where('status', 'cancelled')->count(),
         ];
 
@@ -602,11 +480,10 @@ class OrderController extends Controller
 
     private function formatOrder(Order $order): array
     {
-        $vendor = $order->relationLoaded('vendor') ? $order->vendor : ($order->vendor ?? null);
-        $vendorCountry = $vendor?->country ?? 'AT';
-        $locale = $vendor ? $this->locales->dashboardLanguage($vendor) : 'en';
-        $serviceFeeRate = (float) ($vendor?->vendorSetting?->service_fee_rate ?? 0);
+        $serviceFee = (float) ($order->service_fee ?? 0);
+        $vatAmount = (float) ($order->vat_amount ?? 0);
         $total = (float) $order->amount;
+        $subtotal = max(0, $total - $serviceFee - $vatAmount);
 
         $linkedItems = $this->loadLinkedCartItems($order);
         $itemsCount = (int) $linkedItems->sum('quantity');
@@ -614,57 +491,45 @@ class OrderController extends Controller
             ? $linkedItems->max(fn (CartItem $ci) => $ci->ready_at)
             : null;
 
-        $taxGroups = TaxCalculationService::computeTaxGroups($linkedItems, $vendorCountry);
-        $totals = TaxCalculationService::computeTotals($taxGroups, $serviceFeeRate);
-
+        // Display status bucket used by the UI tabs
         $rawStatus = $order->status;
         $displayStatus = match ($rawStatus) {
-            'draft', 'confirmed' => 'received',
+            'pending', 'confirmed', 'preparing' => 'received',
+            'delivered' => 'served',
             'picked_up' => 'picked-up',
             default => $rawStatus,
         };
 
         $pickupStatus = match ($rawStatus) {
             'picked_up' => 'picked-up',
+            'ready' => 'ready',
             default => 'pending',
         };
 
         $timeline = [];
-        if ($order->draft_at) {
-            $timeline[] = ['status' => 'draft', 'timestamp' => $order->draft_at->toISOString()];
-        }
-        if ($order->confirmed_at) {
-            $timeline[] = ['status' => 'confirmed', 'timestamp' => $order->confirmed_at->toISOString()];
+        if ($order->created_at) {
+            $timeline[] = ['status' => 'received', 'timestamp' => $order->created_at->toISOString()];
         }
         if ($order->waiter_confirmed_at) {
-            $timeline[] = ['status' => 'waiter_confirmed', 'timestamp' => $order->waiter_confirmed_at->toISOString()];
+            $timeline[] = ['status' => 'confirmed', 'timestamp' => $order->waiter_confirmed_at->toISOString()];
         }
-        if ($order->in_progress_at) {
-            $timeline[] = ['status' => 'in_progress', 'timestamp' => $order->in_progress_at->toISOString()];
+        if ($readyAt) {
+            $timeline[] = ['status' => 'ready', 'timestamp' => $readyAt->toISOString()];
         }
         if ($order->served_at) {
             $timeline[] = ['status' => 'served', 'timestamp' => $order->served_at->toISOString()];
-        }
-        if ($order->picked_up_at) {
-            $timeline[] = ['status' => 'picked_up', 'timestamp' => $order->picked_up_at->toISOString()];
         }
         if ($order->cancelled_at) {
             $timeline[] = ['status' => 'cancelled', 'timestamp' => $order->cancelled_at->toISOString()];
         }
 
-        $items = $linkedItems->map(function (CartItem $ci) use ($vendorCountry, $vendor, $locale) {
-            $itemTaxCategory = $ci->menuItem?->tax_category ?? 'food';
-            $unitPrice = $this->cartItemUnitPrice($ci, $vendorCountry);
+        $items = $linkedItems->map(function (CartItem $ci) {
+            $unitPrice = $this->cartItemUnitPrice($ci);
             $lineTotal = round($unitPrice * $ci->quantity, 2);
-            $vatRate = TaxCalculationService::itemVatRate($ci->menuItem, $vendorCountry);
             $orderIds = array_values(array_map('intval', is_array($ci->shared_order_ids) ? $ci->shared_order_ids : []));
             $sharedBetween = 1 + count($orderIds);
-            $itemStatus = $ci->status();
-            $paidAddons = $this->formatPaidAddons($ci, $itemTaxCategory, $vendorCountry, $vendor, $locale);
-            $freeAddons = $this->formatNamedSelections($ci, 'free_addons', $vendor, $locale);
-            $removedItems = $this->formatNamedSelections($ci, 'removed_items', $vendor, $locale);
-            $selectedModifiers = $this->formatSelectedModifiers($ci, $itemTaxCategory, $vendorCountry, $vendor, $locale);
-            $modifiers = $this->cartItemModifiers($ci, $vendorCountry, $vendor, $locale);
+            $itemStatus = $this->cartItemStatus($ci);
+            $modifiers = $this->cartItemModifiers($ci);
 
             return [
                 'cartItemId' => $ci->id,
@@ -683,24 +548,18 @@ class OrderController extends Controller
                 'price' => $unitPrice,
                 'lineTotal' => $lineTotal,
                 'line_total' => $lineTotal,
-                'vatRate' => $vatRate,
-                'vat_rate' => $vatRate,
-                'taxCategory' => $itemTaxCategory,
-                'tax_category' => $itemTaxCategory,
-                'paidAddons' => $paidAddons,
-                'paid_addons' => $paidAddons,
-                'freeAddons' => $freeAddons,
-                'free_addons' => $freeAddons,
-                'removedItems' => $removedItems,
-                'removed_items' => $removedItems,
-                'selectedModifiers' => $selectedModifiers,
-                'selected_modifiers' => $selectedModifiers,
+                'paidAddons' => $ci->paid_addons ?? [],
+                'paid_addons' => $ci->paid_addons ?? [],
+                'freeAddons' => $ci->free_addons ?? [],
+                'free_addons' => $ci->free_addons ?? [],
+                'removedItems' => $ci->removed_items ?? [],
+                'removed_items' => $ci->removed_items ?? [],
+                'selectedModifiers' => $ci->selected_modifiers ?? [],
+                'selected_modifiers' => $ci->selected_modifiers ?? [],
                 'modifiers' => $modifiers,
                 'status' => $itemStatus,
                 'sharedBetween' => $sharedBetween,
                 'sharedWithOrderIds' => $orderIds,
-                'receivedAt' => $ci->received_at?->toISOString(),
-                'received_at' => $ci->received_at?->toISOString(),
                 'preparingStartAt' => $ci->preparing_start_at?->toISOString(),
                 'preparing_start_at' => $ci->preparing_start_at?->toISOString(),
                 'readyAt' => $ci->ready_at?->toISOString(),
@@ -743,9 +602,9 @@ class OrderController extends Controller
             'items' => $items,
             'amount' => $total,
             'total' => $total,
-            'taxGroups' => $taxGroups,
-            'tax_groups' => $taxGroups,
-            'totals' => $totals,
+            'subtotal' => $subtotal,
+            'serviceFee' => $serviceFee,
+            'vatAmount' => $vatAmount,
             'currency' => $order->currency,
             'paymentMethod' => $order->payment_method,
             'paymentPending' => (bool) $order->payment_pending,
@@ -768,7 +627,7 @@ class OrderController extends Controller
      */
     private function loadLinkedCartItems(Order $order)
     {
-        return CartItem::with('menuItem:id,name,price,has_discount,discounted_price,image_url,menu_category_id,vat_rate,tax_category,paid_addons,free_addons,removable_items', 'menuItem.category.masterCategory')
+        return CartItem::with('menuItem:id,name,price,has_discount,discounted_price,image_url,menu_category_id', 'menuItem.category.masterCategory')
             ->where(function ($q) use ($order) {
                 if ($order->status === 'draft' && $order->table_scan_session_id) {
                     $q->where(function ($owned) use ($order) {
@@ -784,90 +643,51 @@ class OrderController extends Controller
             ->get();
     }
 
-    private function cartItemUnitPrice(CartItem $item, string $vendorCountry = 'AT'): float
+    private function cartItemUnitPrice(CartItem $item): float
     {
-        return TaxCalculationService::cartItemUnitPriceGross($item, $vendorCountry);
-    }
+        $menuItem = $item->menuItem;
+        $basePrice = 0.0;
 
-    private function formatPaidAddons(CartItem $item, string $itemTaxCategory, string $vendorCountry, ?Vendor $vendor, string $locale): array
-    {
-        $menuItem = $item->relationLoaded('menuItem') ? $item->menuItem : null;
-
-        if ($menuItem && $vendor) {
-            return $this->customizations->formatPaidAddons($menuItem, $item->paid_addons ?? [], $vendor, $locale, $itemTaxCategory, $vendorCountry);
+        if ($menuItem) {
+            $basePrice = $menuItem->has_discount && $menuItem->discounted_price !== null
+                ? (float) $menuItem->discounted_price
+                : (float) $menuItem->price;
         }
 
-        return collect($item->paid_addons ?? [])->map(function ($addon) use ($itemTaxCategory, $vendorCountry) {
-            $addon = is_array($addon) ? $addon : [];
-            $vatRate = TaxCalculationService::addonVatRate($addon, $itemTaxCategory, $vendorCountry);
+        $addonsTotal = collect($item->paid_addons ?? [])->sum(fn ($addon) => (float) ($addon['price'] ?? 0));
+        $modifiersTotal = collect($item->selected_modifiers ?? [])
+            ->flatMap(fn ($group) => is_array($group) ? ($group['options'] ?? []) : [])
+            ->sum(fn ($option) => (float) ($option['price_adjustment'] ?? 0));
 
-            return [
-                'id' => $addon['id'] ?? null,
-                'name' => $addon['name'] ?? '',
-                'price' => TaxCalculationService::gross((float) ($addon['price'] ?? 0), $vatRate),
-                'vat_rate' => $vatRate,
-            ];
-        })->values()->all();
+        return round($basePrice + $addonsTotal + $modifiersTotal, 2);
     }
 
-    private function formatNamedSelections(CartItem $item, string $field, ?Vendor $vendor, string $locale): array
+    private function cartItemModifiers(CartItem $item): array
     {
-        $menuItem = $item->relationLoaded('menuItem') ? $item->menuItem : null;
-        $selected = $field === 'free_addons'
-            ? ($item->free_addons ?? [])
-            : ($item->removed_items ?? []);
-
-        if ($menuItem && $vendor) {
-            $configured = $field === 'free_addons'
-                ? ($menuItem->free_addons ?? [])
-                : ($menuItem->removable_items ?? []);
-
-            return $this->customizations->formatNamedSelections($configured, $selected, $vendor, $locale);
-        }
-
-        return collect($selected)->map(fn ($value) => is_array($value) ? (string) ($value['name'] ?? '') : (string) $value)
-            ->filter()
-            ->values()
-            ->all();
-    }
-
-    private function formatSelectedModifiers(CartItem $item, string $itemTaxCategory, string $vendorCountry, ?Vendor $vendor, string $locale): array
-    {
-        if ($vendor) {
-            return $this->customizations->formatSelectedModifiers($item->selected_modifiers ?? [], $vendor, $locale, $itemTaxCategory, $vendorCountry);
-        }
-
-        return $item->selected_modifiers ?? [];
-    }
-
-    private function cartItemModifiers(CartItem $item, string $vendorCountry = 'AT', ?Vendor $vendor = null, string $locale = 'en'): array
-    {
-        $itemTaxCategory = $item->menuItem?->tax_category ?? 'food';
-
-        $paidAddons = collect($this->formatPaidAddons($item, $itemTaxCategory, $vendorCountry, $vendor, $locale))
-            ->map(fn (array $addon) => [
+        $paidAddons = collect($item->paid_addons ?? [])
+            ->map(fn ($addon) => [
                 'name' => (string) ($addon['name'] ?? ''),
                 'price' => (float) ($addon['price'] ?? 0),
             ]);
 
-        $freeAddons = collect($this->formatNamedSelections($item, 'free_addons', $vendor, $locale))
+        $freeAddons = collect($item->free_addons ?? [])
             ->map(fn ($name) => [
                 'name' => (string) $name,
                 'price' => 0.0,
             ]);
 
-        $removedItems = collect($this->formatNamedSelections($item, 'removed_items', $vendor, $locale))
+        $removedItems = collect($item->removed_items ?? [])
             ->map(fn ($name) => [
                 'name' => 'No '.(string) $name,
                 'price' => 0.0,
             ]);
 
-        $selectedModifiers = collect($this->formatSelectedModifiers($item, $itemTaxCategory, $vendorCountry, $vendor, $locale))
-            ->flatMap(fn ($group) => collect($group['options'] ?? [])
-                ->map(fn ($option) => [
-                    'name' => (string) ($option['name'] ?? ''),
-                    'price' => (float) ($option['price_adjustment'] ?? 0),
-                ]));
+        $selectedModifiers = collect($item->selected_modifiers ?? [])
+            ->flatMap(fn ($group) => is_array($group) ? ($group['options'] ?? []) : [])
+            ->map(fn ($option) => [
+                'name' => (string) ($option['name'] ?? ''),
+                'price' => (float) ($option['price_adjustment'] ?? 0),
+            ]);
 
         return $paidAddons
             ->merge($freeAddons)
@@ -878,84 +698,19 @@ class OrderController extends Controller
             ->all();
     }
 
-    private function notifySessionCustomers(Order $order, string $event, string $message, array $metadata = []): void
-    {
-        if (! $order->table_scan_session_id) {
-            return;
-        }
-
-        $session = $order->relationLoaded('tableScanSession')
-            ? $order->tableScanSession
-            : TableScanSession::find($order->table_scan_session_id);
-
-        if ($session) {
-            NotificationService::notifyTableCustomers($session->restaurant_table_id, $event, $message, $metadata, false);
-        }
-    }
-
-    private function notifyOperations(
-        Request $request,
-        Order $order,
-        string $event,
-        string $message,
-        ?array $audiences = null,
-        ?string $template = null,
-        string $severity = 'info',
-        ?string $sound = null,
-        bool $silent = false,
-        array $extra = [],
-    ): void {
-        $order->loadMissing('tableScanSession.restaurantTable');
-        $table = $order->tableScanSession?->restaurantTable;
-        $actor = $request->user();
-
-        NotificationService::notifyOperations(
-            $order->vendor_id,
-            $event,
-            $message,
-            $audiences ?? [
-                NotificationService::VENDOR,
-                NotificationService::WAITER,
-                NotificationService::KITCHEN,
-            ],
-            [
-                'resources' => ['orders', 'tables', 'dashboard', 'notifications'],
-                'template' => $template,
-                'order_id' => $order->id,
-                'order_number' => $order->order_number ?? $order->id,
-                'table_id' => $table?->id,
-                'table_label' => $table?->name ?? $table?->number ?? $order->table_number ?? 'Takeaway',
-                'severity' => $severity,
-                'sound' => $sound,
-                'source_actor_type' => $actor instanceof TeamMember ? 'team_member' : 'vendor',
-                'source_actor_id' => $actor?->id,
-                ...$extra,
-            ],
-            $silent,
-        );
-    }
-
     private function resolveVendor(string $vendorId): Vendor
     {
-        return Vendor::with('vendorSetting')
-            ->where('vendor_public_id', $vendorId)
+        return Vendor::where('vendor_public_id', $vendorId)
             ->orWhere('id', $vendorId)
             ->firstOrFail();
     }
 
-    private function resolveOrder(string $orderId, ?Request $request = null): Order
+    private function resolveOrder(string $orderId): Order
     {
-        $query = Order::with(['vendor.vendorSetting', 'tableScanSession.restaurantTable']);
-
-        if ($request) {
-            $user = $request->user();
-            $vendorId = $user instanceof TeamMember ? $user->vendor_id : $user->id;
-            $query->where('vendor_id', $vendorId);
-        }
-
-        return $query->where(function ($q) use ($orderId) {
-            $q->where('order_public_id', $orderId)->orWhere('id', $orderId);
-        })->firstOrFail();
+        return Order::where('order_public_id', $orderId)
+            ->orWhere('id', $orderId)
+            ->with(['vendor', 'tableScanSession.restaurantTable'])
+            ->firstOrFail();
     }
 
     private function resolveSession(Vendor $vendor, string $sessionId): TableSession
@@ -995,6 +750,24 @@ class OrderController extends Controller
         }
     }
 
+    private function cartItemStatus(CartItem $item): string
+    {
+        // ISSUE-015: Standardised to lowercase enum matching the KDS send API and customer API.
+        // 'in_progress' was renamed to 'preparing' across all surfaces.
+        if ($item->served_at) {
+            return 'served';
+        }
+
+        if ($item->ready_at) {
+            return 'ready';
+        }
+
+        if ($item->preparing_start_at) {
+            return 'preparing';
+        }
+
+        return 'new';
+    }
 
     private function syncOrderStatusFromCartItems(Order $order): void
     {
@@ -1004,29 +777,30 @@ class OrderController extends Controller
             return;
         }
 
-        $now = now();
-
         if ($items->every(fn (CartItem $item) => $item->served_at !== null)) {
             $order->update([
                 'status' => 'served',
-                'served_at' => $order->served_at ?? $now,
+                'served_at' => $order->served_at ?? now(),
             ]);
 
             return;
         }
 
-        if ($items->contains(fn (CartItem $item) => $item->preparing_start_at !== null || $item->ready_at !== null)) {
-            $order->update([
-                'status' => 'in_progress',
-                'in_progress_at' => $order->in_progress_at ?? $now,
-            ]);
+        if ($items->every(fn (CartItem $item) => $item->ready_at !== null || $item->served_at !== null)) {
+            $order->update(['status' => 'ready']);
 
             return;
         }
 
-        if (in_array($order->status, ['in_progress', 'served'], true)) {
+        if ($items->contains(fn (CartItem $item) => $item->preparing_start_at !== null)) {
+            $order->update(['status' => 'preparing']);
+
+            return;
+        }
+
+        if (in_array($order->status, ['ready', 'preparing', 'served'], true)) {
             $order->update([
-                'status' => $order->waiter_confirmed ? 'waiter_confirmed' : 'confirmed',
+                'status' => $order->waiter_confirmed ? 'confirmed' : 'pending',
                 'served_at' => null,
             ]);
         }

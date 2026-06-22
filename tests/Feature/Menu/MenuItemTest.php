@@ -389,7 +389,7 @@ class MenuItemTest extends TestCase
     // DELETE /api/vendor/menu/items/{id}
     // ----------------------------------------------------------------
 
-    public function test_destroy_hard_deletes_item_with_no_orders(): void
+    public function test_destroy_soft_deletes_item_with_no_orders(): void
     {
         $item = $this->vendor->menuItems()->create([
             'menu_category_id' => $this->category->id,
@@ -403,7 +403,7 @@ class MenuItemTest extends TestCase
             ->assertOk()
             ->assertJsonFragment(['message' => 'Menu item deleted']);
 
-        $this->assertDatabaseMissing('menu_items', ['id' => $item->id]);
+        $this->assertSoftDeleted('menu_items', ['id' => $item->id, 'is_active' => false]);
     }
 
     public function test_destroy_soft_deletes_item_referenced_in_orders(): void
@@ -416,7 +416,6 @@ class MenuItemTest extends TestCase
             'is_active'        => true,
         ]);
 
-        // Simulate order reference
         OrderItem::create([
             'menu_item_id' => $item->id,
             'name'         => 'Ordered Item',
@@ -426,9 +425,9 @@ class MenuItemTest extends TestCase
 
         $this->deleteJson("/api/vendor/menu/items/{$item->id}", [], $this->authHeaders())
             ->assertOk()
-            ->assertJsonFragment(['message' => 'Menu item hidden (soft deleted — referenced in orders)']);
+            ->assertJsonFragment(['message' => 'Menu item deleted']);
 
-        $this->assertDatabaseHas('menu_items', ['id' => $item->id, 'is_active' => false]);
+        $this->assertSoftDeleted('menu_items', ['id' => $item->id, 'is_active' => false]);
     }
 
     // ----------------------------------------------------------------
@@ -501,19 +500,19 @@ class MenuItemTest extends TestCase
             'modifier_group_id' => $sideGroup->id,
         ]);
 
-        $this->patchJson("/api/vendor/menu/items/{$itemId}", [
+        $response = $this->patchJson("/api/vendor/menu/items/{$itemId}", [
             'modifierGroupIds' => [$sauceGroup->id],
-        ], $this->authHeaders())
-            ->assertOk()
+        ], $this->authHeaders());
+
+        $response->assertOk()
             ->assertJsonPath('data.modifierGroupIds.0', $sauceGroup->id)
             ->assertJsonMissingPath('data.modifierGroupIds.1');
 
-        $this->assertDatabaseMissing('menu_item_modifier_groups', [
-            'menu_item_id' => $itemId,
-            'modifier_group_id' => $sideGroup->id,
-        ]);
+        $newItemId = $response->json('data.id');
+
+        $this->assertSoftDeleted('menu_items', ['id' => $itemId]);
         $this->assertDatabaseHas('menu_item_modifier_groups', [
-            'menu_item_id' => $itemId,
+            'menu_item_id' => $newItemId,
             'modifier_group_id' => $sauceGroup->id,
         ]);
     }
@@ -555,5 +554,326 @@ class MenuItemTest extends TestCase
         $this->patchJson("/api/vendor/menu/items/{$item->id}", [])->assertUnauthorized();
         $this->deleteJson("/api/vendor/menu/items/{$item->id}")->assertUnauthorized();
         $this->patchJson("/api/vendor/menu/items/{$item->id}/toggle")->assertUnauthorized();
+    }
+
+    // ----------------------------------------------------------------
+    // Versioning: product_uid & clone-on-price-change
+    // ----------------------------------------------------------------
+
+    public function test_product_uid_auto_generated_on_create(): void
+    {
+        $response = $this->postJson('/api/vendor/menu/items', $this->baseItemPayload(), $this->authHeaders());
+        $response->assertCreated();
+
+        $itemId = $response->json('data.id');
+        $productUid = $response->json('data.productUid');
+
+        $this->assertNotNull($productUid);
+        $this->assertDatabaseHas('menu_items', ['id' => $itemId, 'product_uid' => $productUid]);
+    }
+
+    public function test_update_price_creates_new_version(): void
+    {
+        $response = $this->postJson('/api/vendor/menu/items', $this->baseItemPayload([
+            'price' => 8.90,
+        ]), $this->authHeaders());
+        $response->assertCreated();
+
+        $oldId = $response->json('data.id');
+        $productUid = $response->json('data.productUid');
+
+        $updateResponse = $this->patchJson("/api/vendor/menu/items/{$oldId}", [
+            'price' => 12.50,
+        ], $this->authHeaders());
+
+        $updateResponse->assertOk();
+        $newId = $updateResponse->json('data.id');
+
+        $this->assertNotEquals($oldId, $newId);
+        $this->assertEquals($productUid, $updateResponse->json('data.productUid'));
+        $this->assertEquals(12.50, $updateResponse->json('data.price'));
+
+        $this->assertSoftDeleted('menu_items', ['id' => $oldId]);
+        $this->assertDatabaseHas('menu_items', ['id' => $newId, 'product_uid' => $productUid]);
+    }
+
+    public function test_update_non_versioned_field_updates_in_place(): void
+    {
+        $response = $this->postJson('/api/vendor/menu/items', $this->baseItemPayload(), $this->authHeaders());
+        $response->assertCreated();
+
+        $itemId = $response->json('data.id');
+
+        $this->patchJson("/api/vendor/menu/items/{$itemId}", [
+            'name' => 'Updated Name',
+            'description' => 'Updated description',
+            'available' => false,
+            'calories' => 250,
+        ], $this->authHeaders())
+            ->assertOk()
+            ->assertJsonPath('data.id', $itemId)
+            ->assertJsonPath('data.name', 'Updated Name')
+            ->assertJsonPath('data.available', false);
+
+        $this->assertDatabaseHas('menu_items', [
+            'id' => $itemId,
+            'name' => 'Updated Name',
+            'deleted_at' => null,
+        ]);
+    }
+
+    public function test_update_same_price_does_not_version(): void
+    {
+        $response = $this->postJson('/api/vendor/menu/items', $this->baseItemPayload([
+            'price' => 8.90,
+        ]), $this->authHeaders());
+        $response->assertCreated();
+
+        $itemId = $response->json('data.id');
+
+        $this->patchJson("/api/vendor/menu/items/{$itemId}", [
+            'price' => 8.90,
+        ], $this->authHeaders())
+            ->assertOk()
+            ->assertJsonPath('data.id', $itemId);
+
+        $this->assertDatabaseHas('menu_items', ['id' => $itemId, 'deleted_at' => null]);
+    }
+
+    public function test_update_discount_creates_new_version(): void
+    {
+        $response = $this->postJson('/api/vendor/menu/items', $this->baseItemPayload([
+            'price' => 10.00,
+        ]), $this->authHeaders());
+        $response->assertCreated();
+
+        $oldId = $response->json('data.id');
+        $productUid = $response->json('data.productUid');
+
+        $updateResponse = $this->patchJson("/api/vendor/menu/items/{$oldId}", [
+            'hasDiscount' => true,
+            'discountPercent' => 20,
+        ], $this->authHeaders());
+
+        $updateResponse->assertOk();
+        $newId = $updateResponse->json('data.id');
+
+        $this->assertNotEquals($oldId, $newId);
+        $this->assertEquals($productUid, $updateResponse->json('data.productUid'));
+        $this->assertTrue($updateResponse->json('data.hasDiscount'));
+        $this->assertEquals(20, $updateResponse->json('data.discountPercent'));
+
+        $this->assertSoftDeleted('menu_items', ['id' => $oldId]);
+    }
+
+    public function test_update_paid_addons_creates_new_version(): void
+    {
+        $response = $this->postJson('/api/vendor/menu/items', $this->baseItemPayload([
+            'paidAddons' => [
+                ['id' => 1, 'name' => 'Extra Cheese', 'price' => 1.50],
+            ],
+        ]), $this->authHeaders());
+        $response->assertCreated();
+
+        $oldId = $response->json('data.id');
+        $productUid = $response->json('data.productUid');
+
+        $updateResponse = $this->patchJson("/api/vendor/menu/items/{$oldId}", [
+            'paidAddons' => [
+                ['id' => 1, 'name' => 'Extra Cheese', 'price' => 2.00],
+            ],
+        ], $this->authHeaders());
+
+        $updateResponse->assertOk();
+        $newId = $updateResponse->json('data.id');
+
+        $this->assertNotEquals($oldId, $newId);
+        $this->assertEquals($productUid, $updateResponse->json('data.productUid'));
+        $this->assertSoftDeleted('menu_items', ['id' => $oldId]);
+    }
+
+    public function test_update_free_addons_deletion_creates_new_version(): void
+    {
+        $response = $this->postJson('/api/vendor/menu/items', $this->baseItemPayload([
+            'freeAddons' => [
+                ['id' => 1, 'name' => 'Ketchup'],
+                ['id' => 2, 'name' => 'Mustard'],
+            ],
+        ]), $this->authHeaders());
+        $response->assertCreated();
+
+        $oldId = $response->json('data.id');
+
+        $updateResponse = $this->patchJson("/api/vendor/menu/items/{$oldId}", [
+            'freeAddons' => [
+                ['id' => 1, 'name' => 'Ketchup'],
+            ],
+        ], $this->authHeaders());
+
+        $updateResponse->assertOk();
+        $this->assertNotEquals($oldId, $updateResponse->json('data.id'));
+        $this->assertSoftDeleted('menu_items', ['id' => $oldId]);
+    }
+
+    public function test_update_modifier_groups_creates_new_version(): void
+    {
+        $group1 = ModifierGroup::create([
+            'vendor_id' => $this->vendor->id, 'name' => 'Size',
+            'type' => 'single', 'is_active' => true,
+        ]);
+        $group2 = ModifierGroup::create([
+            'vendor_id' => $this->vendor->id, 'name' => 'Extras',
+            'type' => 'multiple', 'is_active' => true,
+        ]);
+
+        $response = $this->postJson('/api/vendor/menu/items', $this->baseItemPayload([
+            'modifierGroupIds' => [$group1->id],
+        ]), $this->authHeaders());
+        $response->assertCreated();
+
+        $oldId = $response->json('data.id');
+        $productUid = $response->json('data.productUid');
+
+        $updateResponse = $this->patchJson("/api/vendor/menu/items/{$oldId}", [
+            'modifierGroupIds' => [$group1->id, $group2->id],
+        ], $this->authHeaders());
+
+        $updateResponse->assertOk();
+        $newId = $updateResponse->json('data.id');
+
+        $this->assertNotEquals($oldId, $newId);
+        $this->assertEquals($productUid, $updateResponse->json('data.productUid'));
+        $this->assertSoftDeleted('menu_items', ['id' => $oldId]);
+        $this->assertDatabaseHas('menu_item_modifier_groups', [
+            'menu_item_id' => $newId,
+            'modifier_group_id' => $group2->id,
+        ]);
+    }
+
+    public function test_versioning_clones_translations(): void
+    {
+        $response = $this->postJson('/api/vendor/menu/items', $this->baseItemPayload([
+            'translations' => [
+                'en' => ['name' => 'Bruschetta', 'description' => 'Toasted bread'],
+                'de' => ['name' => 'Bruschetta DE', 'description' => 'Geröstetes Brot'],
+            ],
+        ]), $this->authHeaders());
+        $response->assertCreated();
+
+        $oldId = $response->json('data.id');
+
+        $updateResponse = $this->patchJson("/api/vendor/menu/items/{$oldId}", [
+            'price' => 15.00,
+        ], $this->authHeaders());
+
+        $updateResponse->assertOk();
+        $newId = $updateResponse->json('data.id');
+
+        $this->assertDatabaseHas('menu_item_translations', [
+            'menu_item_id' => $newId,
+            'language' => 'de',
+            'name' => 'Bruschetta DE',
+        ]);
+    }
+
+    public function test_versioning_clones_allergens_and_tags(): void
+    {
+        $response = $this->postJson('/api/vendor/menu/items', $this->baseItemPayload([
+            'allergies' => [$this->allergenGluten->name],
+            'specialTags' => [$this->tagPopular->slug],
+        ]), $this->authHeaders());
+        $response->assertCreated();
+        $oldId = $response->json('data.id');
+
+        $item = MenuItem::find($oldId);
+        $item->allergens()->attach($this->allergenGluten->id);
+        $item->tags()->attach($this->tagPopular->id);
+
+        $updateResponse = $this->patchJson("/api/vendor/menu/items/{$oldId}", [
+            'price' => 15.00,
+        ], $this->authHeaders());
+
+        $updateResponse->assertOk();
+        $newId = $updateResponse->json('data.id');
+
+        $this->assertDatabaseHas('menu_item_allergens', [
+            'menu_item_id' => $newId,
+            'allergen_id' => $this->allergenGluten->id,
+        ]);
+        $this->assertDatabaseHas('menu_item_tags', [
+            'menu_item_id' => $newId,
+            'special_tag_id' => $this->tagPopular->id,
+        ]);
+    }
+
+    public function test_soft_deleted_item_excluded_from_vendor_menu(): void
+    {
+        $item = $this->vendor->menuItems()->create([
+            'menu_category_id' => $this->category->id,
+            'name' => 'Hidden Item',
+            'price' => 5.0,
+            'available' => true,
+            'is_active' => true,
+        ]);
+
+        $item->delete();
+
+        $this->getJson('/api/vendor/menu/items', $this->authHeaders())
+            ->assertOk()
+            ->assertJsonMissing(['name' => 'Hidden Item']);
+    }
+
+    public function test_destroy_always_soft_deletes(): void
+    {
+        $item = $this->vendor->menuItems()->create([
+            'menu_category_id' => $this->category->id,
+            'name' => 'To Delete',
+            'price' => 5.0,
+            'available' => true,
+            'is_active' => true,
+        ]);
+
+        $this->deleteJson("/api/vendor/menu/items/{$item->id}", [], $this->authHeaders())
+            ->assertOk();
+
+        $this->assertSoftDeleted('menu_items', ['id' => $item->id]);
+        $this->assertDatabaseHas('menu_items', ['id' => $item->id]);
+    }
+
+    public function test_cart_item_loads_soft_deleted_menu_item(): void
+    {
+        $item = $this->vendor->menuItems()->create([
+            'menu_category_id' => $this->category->id,
+            'name' => 'Deleted Item',
+            'price' => 9.0,
+            'available' => true,
+            'is_active' => true,
+        ]);
+
+        $table = $this->vendor->restaurantTables()->create([
+            'number' => 1, 'name' => 'T1',
+            'qr_token' => 'tok', 'is_active' => true,
+        ]);
+        $session = \App\Models\TableScanSession::create([
+            'vendor_id' => $this->vendor->id,
+            'restaurant_table_id' => $table->id,
+            'pin' => '1234',
+            'status' => 'active',
+        ]);
+
+        $cartItem = \App\Models\CartItem::create([
+            'table_scan_session_id' => $session->id,
+            'menu_item_id' => $item->id,
+            'quantity' => 1,
+        ]);
+
+        $item->delete();
+
+        $cartItem->refresh();
+        $loaded = $cartItem->menuItem;
+
+        $this->assertNotNull($loaded);
+        $this->assertEquals('Deleted Item', $loaded->name);
+        $this->assertTrue($loaded->trashed());
     }
 }

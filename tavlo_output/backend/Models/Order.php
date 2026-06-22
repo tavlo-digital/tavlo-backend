@@ -6,27 +6,20 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class Order extends Model
 {
     use HasFactory;
 
-    public const STATUS_DRAFT              = 'draft';
-    public const STATUS_CONFIRMED          = 'confirmed';
-    public const STATUS_WAITER_CONFIRMED   = 'waiter_confirmed';
-    public const STATUS_IN_PROGRESS        = 'in_progress';
-    public const STATUS_SERVED             = 'served';
-    public const STATUS_PICKED_UP          = 'picked_up';
-    public const STATUS_CANCELLED          = 'cancelled';
-
-    public const COMPLETED_STATUSES = [self::STATUS_SERVED, self::STATUS_PICKED_UP];
-    public const TERMINAL_STATUSES  = [self::STATUS_SERVED, self::STATUS_PICKED_UP, self::STATUS_CANCELLED];
-    public const ACTIVE_STATUSES    = [self::STATUS_CONFIRMED, self::STATUS_WAITER_CONFIRMED, self::STATUS_IN_PROGRESS];
+    /**
+     * Canonical completed-order statuses, used across controllers, analytics, and review eligibility.
+     * Always add new terminal statuses here — never hardcode arrays elsewhere.
+     */
+    public const COMPLETED_STATUSES = ['served', 'delivered', 'picked_up', 'completed'];
+    public const TERMINAL_STATUSES  = ['served', 'delivered', 'picked_up', 'completed', 'cancelled'];
 
     protected $fillable = [
         'order_public_id',
-        'invoice_number',
         'customer_id',
         'vendor_id',
         'status',
@@ -46,11 +39,7 @@ class Order extends Model
         'service_fee',
         'vat_amount',
         'course',
-        'draft_at',
-        'confirmed_at',
-        'in_progress_at',
         'served_at',
-        'picked_up_at',
         'cancelled_at',
         'cancelled_reason',
         // session fields
@@ -69,26 +58,11 @@ class Order extends Model
             'payment_pending'      => 'boolean',
             'payment_received'     => 'boolean',
             'payment_confirmed_at' => 'datetime',
-            'draft_at'             => 'datetime',
-            'confirmed_at'         => 'datetime',
-            'in_progress_at'       => 'datetime',
             'served_at'            => 'datetime',
-            'picked_up_at'         => 'datetime',
             'cancelled_at'         => 'datetime',
             'waiter_confirmed'     => 'boolean',
             'waiter_confirmed_at'  => 'datetime',
         ];
-    }
-
-    public function status(): string
-    {
-        if ($this->cancelled_at) return self::STATUS_CANCELLED;
-        if ($this->picked_up_at) return self::STATUS_PICKED_UP;
-        if ($this->served_at) return self::STATUS_SERVED;
-        if ($this->in_progress_at) return self::STATUS_IN_PROGRESS;
-        if ($this->waiter_confirmed_at) return self::STATUS_WAITER_CONFIRMED;
-        if ($this->confirmed_at) return self::STATUS_CONFIRMED;
-        return self::STATUS_DRAFT;
     }
 
     public function customer(): BelongsTo
@@ -109,15 +83,5 @@ class Order extends Model
     public function payments(): HasMany
     {
         return $this->hasMany(OrderPayment::class);
-    }
-
-    public function cartItems(): HasMany
-    {
-        return $this->hasMany(CartItem::class);
-    }
-
-    public function review(): HasOne
-    {
-        return $this->hasOne(Review::class);
     }
 }

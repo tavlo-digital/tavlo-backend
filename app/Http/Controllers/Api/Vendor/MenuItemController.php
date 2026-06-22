@@ -6,13 +6,13 @@ use App\Http\Controllers\Controller;
 use App\Models\MenuItem;
 use App\Models\ModifierGroup;
 use App\Models\ModifierOption;
-use App\Models\OrderItem;
 use App\Models\TaxCategory;
 use App\Services\LocaleService;
 use App\Services\MenuCustomizationService;
 use App\Services\MediaService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
@@ -234,7 +234,6 @@ class MenuItemController extends Controller
         }
 
         if (array_key_exists('translations', $data)) {
-            // Merge with existing translations so partial updates don't drop other languages
             $existing = $item->translations ?? [];
             $incoming = $this->normalizeTranslations($data['translations']);
             $mapped['translations'] = array_merge($existing, $incoming);
@@ -247,7 +246,6 @@ class MenuItemController extends Controller
             }
         }
 
-        // Tax: prefer explicit slug, then explicit ID, else inherit
         if (array_key_exists('taxCategory', $data) || array_key_exists('taxCategoryId', $data)) {
             $category = $item->category ?? $vendor->menuCategories()->find($mapped['menu_category_id'] ?? $item->menu_category_id);
             [$vatRate, $taxSlug] = $this->resolveTax($data, $category, $vendor);
@@ -262,29 +260,35 @@ class MenuItemController extends Controller
             ? round($price * (1 - $discountPercent / 100), 2)
             : null;
 
-        $item->update($mapped);
-        if (array_key_exists('translations', $data)) {
-            $this->locales->syncTranslations(
-                $item,
-                'itemTranslations',
-                $data['translations'],
-                ['name', 'description']
-            );
-        }
-        if (array_key_exists('name', $data) || array_key_exists('description', $data)) {
-            $this->locales->syncTranslations(
-                $item,
-                'itemTranslations',
-                ['en' => array_filter([
-                    'name' => $data['name'] ?? null,
-                    'description' => $data['description'] ?? null,
-                ], fn ($value) => $value !== null)],
-                ['name', 'description']
-            );
-        }
+        $needsVersioning = $this->hasVersionedFieldChanged($item, $mapped, $data);
 
-        if (array_key_exists('modifierGroupIds', $data)) {
-            $this->syncModifierGroups($item, $vendor, $data['modifierGroupIds'] ?? []);
+        if ($needsVersioning) {
+            $item = $this->createNewVersion($item, $mapped, $data, $vendor);
+        } else {
+            $item->update($mapped);
+            if (array_key_exists('translations', $data)) {
+                $this->locales->syncTranslations(
+                    $item,
+                    'itemTranslations',
+                    $data['translations'],
+                    ['name', 'description']
+                );
+            }
+            if (array_key_exists('name', $data) || array_key_exists('description', $data)) {
+                $this->locales->syncTranslations(
+                    $item,
+                    'itemTranslations',
+                    ['en' => array_filter([
+                        'name' => $data['name'] ?? null,
+                        'description' => $data['description'] ?? null,
+                    ], fn ($value) => $value !== null)],
+                    ['name', 'description']
+                );
+            }
+
+            if (array_key_exists('modifierGroupIds', $data)) {
+                $this->syncModifierGroups($item, $vendor, $data['modifierGroupIds'] ?? []);
+            }
         }
 
         $item->load([
@@ -306,21 +310,13 @@ class MenuItemController extends Controller
 
     /**
      * DELETE /api/vendor/menu/items/{itemId}
-     * Soft delete if item has been ordered, otherwise hard delete.
      */
     public function destroy(Request $request, int $itemId): JsonResponse
     {
         $vendor = $request->user();
         $item = $vendor->menuItems()->findOrFail($itemId);
 
-        $hasOrders = OrderItem::where('menu_item_id', $item->id)->exists();
-
-        if ($hasOrders) {
-            $item->update(['is_active' => false, 'available' => false]);
-
-            return response()->json(['message' => 'Menu item hidden (soft deleted — referenced in orders)']);
-        }
-
+        $item->update(['is_active' => false, 'available' => false]);
         $item->delete();
 
         return response()->json(['message' => 'Menu item deleted']);
@@ -533,6 +529,7 @@ class MenuItemController extends Controller
 
         return [
             'id' => $item->id,
+            'productUid' => $item->product_uid,
             'categoryId' => $item->menu_category_id,
             'categoryName' => $item->category
                 ? $this->locales->translated(
@@ -684,6 +681,149 @@ class MenuItemController extends Controller
                 ->values()
                 ->all(),
         ];
+    }
+
+    private function hasVersionedFieldChanged(MenuItem $item, array $mapped, array $data): bool
+    {
+        $numericFields = ['price', 'discount_percent', 'vat_rate'];
+        foreach ($numericFields as $field) {
+            if (array_key_exists($field, $mapped) && round((float) $mapped[$field], 2) !== round((float) $item->{$field}, 2)) {
+                return true;
+            }
+        }
+
+        $stringFields = ['tax_category'];
+        foreach ($stringFields as $field) {
+            if (array_key_exists($field, $mapped) && (string) ($mapped[$field] ?? '') !== (string) ($item->{$field} ?? '')) {
+                return true;
+            }
+        }
+
+        if (array_key_exists('has_discount', $mapped) && (bool) $mapped['has_discount'] !== (bool) $item->has_discount) {
+            return true;
+        }
+
+        if (array_key_exists('paid_addons', $mapped)) {
+            $oldAddons = collect($item->paid_addons ?? [])->sortBy('id')->values()->toJson();
+            $newAddons = collect($mapped['paid_addons'] ?? [])->sortBy('id')->values()->toJson();
+            if ($oldAddons !== $newAddons) {
+                return true;
+            }
+        }
+
+        if (array_key_exists('free_addons', $mapped)) {
+            $oldFree = collect($item->free_addons ?? [])->sortBy('id')->values()->toJson();
+            $newFree = collect($mapped['free_addons'] ?? [])->sortBy('id')->values()->toJson();
+            if ($oldFree !== $newFree) {
+                return true;
+            }
+        }
+
+        if (array_key_exists('modifierGroupIds', $data)) {
+            $currentIds = $item->modifierGroups()->pluck('modifier_groups.id')->sort()->values()->toArray();
+            $newIds = collect($data['modifierGroupIds'] ?? [])->map(fn ($id) => (int) $id)->sort()->values()->toArray();
+            if ($currentIds !== $newIds) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function createNewVersion(MenuItem $oldItem, array $mapped, array $data, $vendor): MenuItem
+    {
+        return DB::transaction(function () use ($oldItem, $mapped, $data, $vendor) {
+            $attributes = $oldItem->attributesToArray();
+            unset($attributes['id'], $attributes['created_at'], $attributes['updated_at'], $attributes['deleted_at']);
+
+            foreach ($mapped as $key => $value) {
+                $attributes[$key] = $value;
+            }
+
+            $attributes['product_uid'] = $oldItem->product_uid;
+
+            $oldItem->delete();
+
+            $newItem = MenuItem::create($attributes);
+
+            foreach ($oldItem->itemTranslations as $translation) {
+                $newItem->itemTranslations()->create([
+                    'language' => $translation->language,
+                    'name' => $translation->name,
+                    'description' => $translation->description,
+                ]);
+            }
+
+            if (array_key_exists('translations', $data)) {
+                $this->locales->syncTranslations(
+                    $newItem,
+                    'itemTranslations',
+                    $data['translations'],
+                    ['name', 'description']
+                );
+            }
+            if (array_key_exists('name', $data) || array_key_exists('description', $data)) {
+                $this->locales->syncTranslations(
+                    $newItem,
+                    'itemTranslations',
+                    ['en' => array_filter([
+                        'name' => $data['name'] ?? null,
+                        'description' => $data['description'] ?? null,
+                    ], fn ($value) => $value !== null)],
+                    ['name', 'description']
+                );
+            }
+
+            if (array_key_exists('modifierGroupIds', $data)) {
+                $this->syncModifierGroups($newItem, $vendor, $data['modifierGroupIds'] ?? []);
+            } else {
+                $pivotData = DB::table('menu_item_modifier_groups')
+                    ->where('menu_item_id', $oldItem->id)
+                    ->get();
+                foreach ($pivotData as $pivot) {
+                    DB::table('menu_item_modifier_groups')->insert([
+                        'menu_item_id' => $newItem->id,
+                        'modifier_group_id' => $pivot->modifier_group_id,
+                        'sort_order' => $pivot->sort_order,
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ]);
+                }
+            }
+
+            $allergenIds = DB::table('menu_item_allergens')
+                ->where('menu_item_id', $oldItem->id)
+                ->pluck('allergen_id')
+                ->toArray();
+            if (! empty($allergenIds)) {
+                $newItem->allergens()->attach($allergenIds);
+            }
+
+            $tagIds = DB::table('menu_item_tags')
+                ->where('menu_item_id', $oldItem->id)
+                ->pluck('special_tag_id')
+                ->toArray();
+            if (! empty($tagIds)) {
+                $newItem->tags()->attach($tagIds);
+            }
+
+            $ingredients = DB::table('menu_item_ingredients')
+                ->where('menu_item_id', $oldItem->id)
+                ->get();
+            foreach ($ingredients as $ingredient) {
+                DB::table('menu_item_ingredients')->insert([
+                    'menu_item_id' => $newItem->id,
+                    'inventory_item_id' => $ingredient->inventory_item_id,
+                    'quantity' => $ingredient->quantity,
+                    'unit' => $ingredient->unit,
+                    'is_critical' => $ingredient->is_critical,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+            }
+
+            return $newItem;
+        });
     }
 
     private function baseName($vendor, mixed $name, array $translations): string

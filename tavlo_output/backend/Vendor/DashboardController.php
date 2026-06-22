@@ -3,13 +3,11 @@
 namespace App\Http\Controllers\Api\Vendor;
 
 use App\Http\Controllers\Controller;
-use App\Models\MenuItem;
 use App\Models\Order;
 use App\Models\Vendor;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\DB;
 
 class DashboardController extends Controller
 {
@@ -28,14 +26,13 @@ class DashboardController extends Controller
         $todayOrders     = $vendor->orders()->whereDate('created_at', $today)->get();
         $yesterdayOrders = $vendor->orders()->whereDate('created_at', $yesterday)->get();
 
-        $paidToday     = $todayOrders->where('payment_received', true);
-        $paidYesterday = $yesterdayOrders->where('payment_received', true);
-
-        $revenueToday     = $paidToday->sum('amount');
-        $revenueYesterday = $paidYesterday->sum('amount');
-
-        $tipsToday     = round((float) $paidToday->sum('tip_amount'), 2);
-        $tipsYesterday = round((float) $paidYesterday->sum('tip_amount'), 2);
+        // Include tip_amount in revenue totals (ISSUE-024: tips were excluded from analytics)
+        $revenueToday     = $todayOrders->where('payment_received', true)
+            ->sum(fn ($o) => (float)$o->amount + (float)($o->tip_amount ?? 0));
+        $revenueYesterday = $yesterdayOrders->where('payment_received', true)
+            ->sum(fn ($o) => (float)$o->amount + (float)($o->tip_amount ?? 0));
+        $tipRevenueToday     = $todayOrders->where('payment_received', true)->sum('tip_amount');
+        $tipRevenueYesterday = $yesterdayOrders->where('payment_received', true)->sum('tip_amount');
 
         $ordersToday     = $todayOrders->count();
         $ordersYesterday = $yesterdayOrders->count();
@@ -50,14 +47,14 @@ class DashboardController extends Controller
 
         // ---- Active orders ---
         $activeOrders = $vendor->orders()
-            ->whereIn('status', Order::ACTIVE_STATUSES)
+            ->whereIn('status', ['pending', 'confirmed', 'preparing', 'ready'])
             ->count();
 
         // ---- Tables waiting to pay ---
         $tablesWaitingToPay = $vendor->orders()
             ->where('payment_pending', true)
             ->where('payment_received', false)
-            ->whereIn('status', array_merge(['in_progress'], Order::COMPLETED_STATUSES))
+            ->whereIn('status', ['ready', 'served', 'delivered', 'picked_up'])
             ->count();
 
         // ---- Alerts: unpaid orders older than 10 minutes ---
@@ -106,31 +103,18 @@ class DashboardController extends Controller
             ];
         }
 
-        // ---- Top items by ordered_count, aggregated across versions ---
-        $topItems = MenuItem::withTrashed()
-            ->where('vendor_id', $vendor->id)
+        // ---- Top items by ordered_count from menu_items ---
+        $topItems = $vendor->menuItems()
             ->where('ordered_count', '>', 0)
-            ->select('product_uid')
-            ->selectRaw('SUM(ordered_count) as total_ordered')
-            ->groupBy('product_uid')
-            ->orderByDesc('total_ordered')
+            ->orderByDesc('ordered_count')
             ->limit(5)
-            ->get()
-            ->map(function ($row) use ($vendor) {
-                $current = MenuItem::where('vendor_id', $vendor->id)
-                    ->where('product_uid', $row->product_uid)
-                    ->first()
-                    ?? MenuItem::withTrashed()->where('vendor_id', $vendor->id)
-                        ->where('product_uid', $row->product_uid)
-                        ->latest()
-                        ->first();
-                return [
-                    'id'           => (string) ($current?->id ?? 0),
-                    'name'         => $current?->name ?? 'Unknown',
-                    'price'        => (float) ($current?->price ?? 0),
-                    'orderedCount' => (int) $row->total_ordered,
-                ];
-            });
+            ->get(['id', 'name', 'price', 'ordered_count'])
+            ->map(fn ($item) => [
+                'id'           => (string) $item->id,
+                'name'         => $item->name,
+                'price'        => (float) $item->price,
+                'orderedCount' => (int) $item->ordered_count,
+            ]);
 
         // ---- Recent orders ---
         $recentOrders = $vendor->orders()
@@ -158,7 +142,7 @@ class DashboardController extends Controller
         $revenueAtRisk = $vendor->orders()
             ->where('payment_pending', true)
             ->where('payment_received', false)
-            ->whereIn('status', array_merge(['in_progress'], Order::COMPLETED_STATUSES))
+            ->whereIn('status', ['ready', 'delivered', 'picked_up', 'served'])
             ->sum('amount');
 
         // ---- Open tables count ---
@@ -175,8 +159,8 @@ class DashboardController extends Controller
                 'ordersYesterday'      => $ordersYesterday,
                 'revenueToday'         => round($revenueToday, 2),
                 'revenueYesterday'     => round($revenueYesterday, 2),
-                'tipsToday'            => $tipsToday,
-                'tipsYesterday'        => $tipsYesterday,
+                'tipRevenueToday'      => round($tipRevenueToday, 2),
+                'tipRevenueYesterday'  => round($tipRevenueYesterday, 2),
                 'avgOrderValue'        => $avgToday,
                 'avgOrderValueYesterday' => $avgYesterday,
                 'customerRating'       => round($ratingToday ?? $ratingData->avg ?? 0, 1),

@@ -824,6 +824,7 @@ class RestaurantController extends Controller
             ->with([
                 'customer:id,first_name,last_name,profile_picture',
                 'order:id,table_scan_session_id',
+                'items.menuItem:id,name,image_url',
             ]);
 
         if ($request->filled('rating')) {
@@ -870,6 +871,14 @@ class RestaurantController extends Controller
                 ->values()
                 ->all();
 
+            $itemReviews = $review->items->map(fn ($ri) => [
+                'menu_item_id' => $ri->menu_item_id,
+                'menu_item_name' => $ri->menuItem?->name,
+                'menu_item_image' => $ri->menuItem?->image_url,
+                'rating' => $ri->rating,
+                'text' => $ri->text,
+            ])->values()->all();
+
             return [
                 'review_public_id' => $review->review_public_id,
                 'rating' => $review->rating,
@@ -881,6 +890,7 @@ class RestaurantController extends Controller
                     'profile_picture' => $customer?->profile_picture,
                 ],
                 'menu_items' => $menuItems,
+                'item_reviews' => $itemReviews,
                 'vendor_reply' => $review->vendor_reply,
                 'vendor_replied_at' => $this->dateTimes->formatDateTime($review->vendor_replied_at, $vendor),
             ];

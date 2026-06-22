@@ -493,7 +493,7 @@ class OrderHistoryController extends Controller
             'shared_between' => $sharedBetween,
             'shared_with' => $sharedWith,
             'my_share' => $myShare,
-            'status' => $this->cartItemStatus($item),
+            'status' => $item->status(),
             'received_at' => $this->dateTimes->formatDateTime($item->received_at, $vendor),
             'preparing_start_at' => $this->dateTimes->formatDateTime($item->preparing_start_at, $vendor),
             'ready_at' => $this->dateTimes->formatDateTime($item->ready_at, $vendor),
@@ -673,7 +673,7 @@ class OrderHistoryController extends Controller
             'line_total' => $lineTotal,
             'vat_rate' => $vatRate,
             'tax_category' => $itemTaxCategory,
-            'status' => $this->cartItemStatus($item),
+            'status' => $item->status(),
             'notes' => $item->notes,
             'paid_addons' => $this->formatPaidAddons($item, $itemTaxCategory, $vendorCountry, $vendor, $locale),
             'free_addons' => $this->formatNamedSelections($item, 'free_addons', $vendor, $locale),
@@ -850,24 +850,4 @@ class OrderHistoryController extends Controller
         return $totals;
     }
 
-    private function cartItemStatus(CartItem $item): ?string
-    {
-        if ($item->served_at) {
-            return 'Served';
-        }
-
-        if ($item->ready_at) {
-            return 'Ready';
-        }
-
-        if ($item->preparing_start_at) {
-            return 'Preparing';
-        }
-
-        if ($item->received_at) {
-            return 'Received';
-        }
-
-        return null;
-    }
 }

@@ -88,7 +88,7 @@ class QrManagementTest extends TestCase
             'vendor_id'            => $this->vendor->id,
             'customer_id'          => $customer->id,
             'table_scan_session_id' => $session->id,
-            'status'               => 'pending',
+            'status'               => 'confirmed',
             'table_number'         => '3',
             'order_type'           => 'dine-in',
             'amount'               => 25.00,
@@ -250,7 +250,7 @@ class QrManagementTest extends TestCase
             'order_public_id' => 'ORD-003',
             'vendor_id'       => $this->vendor->id,
             'customer_id'     => $customer->id,
-            'status'          => 'preparing',
+            'status'          => 'in_progress',
             'table_number'    => '2',
             'order_type'      => 'dine-in',
             'amount'          => 20.00,
@@ -311,6 +311,84 @@ class QrManagementTest extends TestCase
         $this->assertNotEquals($oldToken, $newToken);
         $this->assertDatabaseMissing('restaurant_tables', ['qr_token' => $oldToken]);
         $this->assertDatabaseHas('restaurant_tables', ['qr_token' => $newToken]);
+    }
+
+    public function test_cannot_regenerate_qr_with_active_session(): void
+    {
+        $table = $this->makeTable(1);
+        $customer = Customer::factory()->create();
+        $oldToken = $table->qr_token;
+
+        TableScanSession::create([
+            'vendor_id' => $this->vendor->id,
+            'restaurant_table_id' => $table->id,
+            'customer_id' => $customer->id,
+            'pin' => '1234',
+            'status' => 'active',
+            'scanned_at' => now(),
+        ]);
+
+        $this->postJson(
+            "/api/vendor/{$this->vendor->id}/tables/{$table->id}/refresh-qr",
+            [],
+            $this->authHeaders()
+        )->assertStatus(409)
+            ->assertJsonPath('active_sessions', 1);
+
+        $this->assertDatabaseHas('restaurant_tables', ['id' => $table->id, 'qr_token' => $oldToken]);
+    }
+
+    public function test_can_regenerate_qr_after_session_is_closed(): void
+    {
+        $table = $this->makeTable(1);
+        $customer = Customer::factory()->create();
+        $oldToken = $table->qr_token;
+
+        TableScanSession::create([
+            'vendor_id' => $this->vendor->id,
+            'restaurant_table_id' => $table->id,
+            'customer_id' => $customer->id,
+            'pin' => '1234',
+            'status' => 'closed',
+            'scanned_at' => now(),
+            'closed_at' => now(),
+        ]);
+
+        $this->postJson(
+            "/api/vendor/{$this->vendor->id}/tables/{$table->id}/refresh-qr",
+            [],
+            $this->authHeaders()
+        )->assertOk();
+
+        $this->assertDatabaseMissing('restaurant_tables', ['qr_token' => $oldToken]);
+    }
+
+    public function test_regenerate_all_skips_tables_with_active_sessions(): void
+    {
+        $t1 = $this->makeTable(1);
+        $t2 = $this->makeTable(2);
+        $customer = Customer::factory()->create();
+
+        $oldToken1 = $t1->qr_token;
+        $oldToken2 = $t2->qr_token;
+
+        TableScanSession::create([
+            'vendor_id' => $this->vendor->id,
+            'restaurant_table_id' => $t1->id,
+            'customer_id' => $customer->id,
+            'pin' => '1234',
+            'status' => 'active',
+            'scanned_at' => now(),
+        ]);
+
+        $this->postJson(
+            "/api/vendor/{$this->vendor->id}/tables/regenerate-all",
+            [],
+            $this->authHeaders()
+        )->assertOk();
+
+        $this->assertDatabaseHas('restaurant_tables', ['id' => $t1->id, 'qr_token' => $oldToken1]);
+        $this->assertDatabaseMissing('restaurant_tables', ['qr_token' => $oldToken2]);
     }
 
     // ----------------------------------------------------------------

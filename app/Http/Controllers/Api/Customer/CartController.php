@@ -84,7 +84,7 @@ class CartController extends Controller
             ->whereIn('id', $sessionIds)
             ->get();
 
-        $orderedStatuses = ['confirmed', 'preparing', 'ready', 'delivered', 'completed'];
+        $orderedStatuses = array_merge(Order::ACTIVE_STATUSES, Order::COMPLETED_STATUSES);
 
         $orderedOrderIds = Order::whereIn('table_scan_session_id', $sessionIds)
             ->whereIn('status', $orderedStatuses)
@@ -558,6 +558,7 @@ class CartController extends Controller
                 'vendor_id' => $mySession->vendor_id,
                 'table_scan_session_id' => $mySession->id,
                 'status' => 'draft',
+                'draft_at' => now(),
                 'amount' => $myTotal,
                 'currency' => $currency,
                 'payment_pending' => true,
@@ -635,14 +636,20 @@ class CartController extends Controller
                 ], 422);
             }
 
-            $existing = is_array($cartItem->shared_order_ids) ? $cartItem->shared_order_ids : [];
-            $existing = array_values(array_unique(array_map('intval', array_merge($existing, [$order->id]))));
-            $cartItem->update(['shared_order_ids' => $existing]);
+            DB::transaction(function () use ($cartItem, $order) {
+                $locked = CartItem::where('id', $cartItem->id)->lockForUpdate()->first();
+                $existing = is_array($locked->shared_order_ids) ? $locked->shared_order_ids : [];
+                $updated = array_values(array_unique(array_map('intval', array_merge($existing, [$order->id]))));
+                $locked->update(['shared_order_ids' => $updated]);
+            });
+
+            $cartItem->refresh();
+            $freshIds = array_map('intval', is_array($cartItem->shared_order_ids) ? $cartItem->shared_order_ids : []);
 
             if ($cartItem->order_id) {
                 $affectedOrderIds->push($cartItem->order_id);
             }
-            $affectedOrderIds = $affectedOrderIds->merge(array_map('intval', $existing));
+            $affectedOrderIds = $affectedOrderIds->merge($freshIds);
         }
 
         if (! empty($data['unshared_item'])) {
@@ -666,17 +673,20 @@ class CartController extends Controller
                 }
             }
 
-            $existing = is_array($cartItem->shared_order_ids) ? $cartItem->shared_order_ids : [];
-            $affectedOrderIds = $affectedOrderIds->merge(array_map('intval', $existing));
-            if ($cartItem->order_id) {
-                $affectedOrderIds->push($cartItem->order_id);
-            }
+            DB::transaction(function () use ($cartItem, $order, &$affectedOrderIds) {
+                $locked = CartItem::where('id', $cartItem->id)->lockForUpdate()->first();
+                $existing = is_array($locked->shared_order_ids) ? $locked->shared_order_ids : [];
+                $affectedOrderIds = $affectedOrderIds->merge(array_map('intval', $existing));
+                if ($locked->order_id) {
+                    $affectedOrderIds->push($locked->order_id);
+                }
 
-            $filtered = array_values(array_filter(
-                array_map('intval', $existing),
-                fn (int $id) => $id !== $order->id
-            ));
-            $cartItem->update(['shared_order_ids' => $filtered]);
+                $filtered = array_values(array_filter(
+                    array_map('intval', $existing),
+                    fn (int $id) => $id !== $order->id
+                ));
+                $locked->update(['shared_order_ids' => $filtered]);
+            });
         }
 
         if (! $mySession->relationLoaded('vendor')) {
@@ -750,9 +760,31 @@ class CartController extends Controller
         $serviceFee = round($itemsTotal * ($serviceFeeRate / 100), 2);
         $total = round($itemsTotal + $serviceFee, 2);
 
-        DB::transaction(function () use ($order, $mySession, $total, $serviceFee) {
-            CartItem::where('table_scan_session_id', $mySession->id)
-                ->whereNull('order_id')
+        $openItems = CartItem::where('table_scan_session_id', $mySession->id)
+            ->whereNull('order_id')
+            ->with('menuItem:id,name,is_active,available')
+            ->get();
+
+        $unavailableItems = $openItems->filter(
+            fn (CartItem $item) => ! $item->menuItem
+                || $item->menuItem->trashed()
+                || ! $item->menuItem->is_active
+                || ! $item->menuItem->available
+        );
+
+        if ($unavailableItems->isNotEmpty()) {
+            return response()->json([
+                'message'           => 'Some items in your cart are no longer available. Please remove them before confirming.',
+                'unavailable_items' => $unavailableItems->map(fn (CartItem $item) => [
+                    'cart_item_id' => $item->id,
+                    'menu_item_id' => $item->menu_item_id,
+                    'name'         => $item->menuItem?->name ?? 'Unknown item',
+                ])->values(),
+            ], 422);
+        }
+
+        DB::transaction(function () use ($order, $mySession, $total, $serviceFee, $openItems) {
+            CartItem::whereIn('id', $openItems->pluck('id'))
                 ->update([
                     'order_id' => $order->id,
                     'received_at' => now(),
@@ -760,6 +792,7 @@ class CartController extends Controller
 
             $order->update([
                 'status' => 'confirmed',
+                'confirmed_at' => now(),
                 'amount' => $total,
                 'service_fee' => $serviceFee,
             ]);
@@ -1041,7 +1074,7 @@ class CartController extends Controller
             'shared_between' => $sharedBetween,
             'shared_with' => $sharedWith,
             'my_share' => $myShare,
-            'status' => $this->cartItemStatus($ci),
+            'status' => $ci->status(),
             'received_at' => $this->dateTimes->formatDateTime($ci->received_at, $vendor),
             'preparing_start_at' => $this->dateTimes->formatDateTime($ci->preparing_start_at, $vendor),
             'ready_at' => $this->dateTimes->formatDateTime($ci->ready_at, $vendor),
@@ -1049,26 +1082,6 @@ class CartController extends Controller
         ];
     }
 
-    private function cartItemStatus(CartItem $item): ?string
-    {
-        if ($item->served_at) {
-            return 'Served';
-        }
-
-        if ($item->ready_at) {
-            return 'Ready';
-        }
-
-        if ($item->preparing_start_at) {
-            return 'Preparing';
-        }
-
-        if ($item->received_at) {
-            return 'Received';
-        }
-
-        return null;
-    }
 
     /**
      * Build the per-order dict (without its `items` array — that is computed by the caller).

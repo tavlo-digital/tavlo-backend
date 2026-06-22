@@ -271,7 +271,7 @@ class NotificationTemplateService
             return (string) ($metadata['item_name'] ?? 'an item');
         }
 
-        $item = MenuItem::with(['itemTranslations', 'vendor.vendorSetting'])->find($itemId);
+        $item = MenuItem::withTrashed()->with(['itemTranslations', 'vendor.vendorSetting'])->find($itemId);
         if (! $item) {
             return (string) ($metadata['item_name'] ?? 'an item');
         }

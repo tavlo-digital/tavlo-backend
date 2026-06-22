@@ -993,10 +993,10 @@ class TableCartTest extends TestCase
 
         $items = collect($response->json('people.0.orders.0.items'))->keyBy('cart_item_id');
 
-        $this->assertNull($items[$new->id]['status']);
-        $this->assertSame('Preparing', $items[$preparing->id]['status']);
-        $this->assertSame('Ready', $items[$ready->id]['status']);
-        $this->assertSame('Served', $items[$served->id]['status']);
+        $this->assertSame('new', $items[$new->id]['status']);
+        $this->assertSame('preparing', $items[$preparing->id]['status']);
+        $this->assertSame('ready', $items[$ready->id]['status']);
+        $this->assertSame('served', $items[$served->id]['status']);
         $this->assertSame($served->fresh()->served_at->copy()->setTimezone($this->vendor->resolveTimezone())->format('m/d/Y g:i A'), $items[$served->id]['served_at']);
     }
 
@@ -1231,7 +1231,7 @@ class TableCartTest extends TestCase
 
         $response->assertOk()
             ->assertJsonPath('items.0.cart_item_id', $ownedShared->id)
-            ->assertJsonPath('items.0.status', 'Preparing');
+            ->assertJsonPath('items.0.status', 'preparing');
 
         $sharedItems = collect($response->json('shared_items'))->keyBy('cart_item_id');
 
@@ -1245,5 +1245,275 @@ class TableCartTest extends TestCase
         $this->assertSame($order->id, $sharedItems[$sharedInto->id]['shared_with'][0]['order_id']);
         $this->assertSame($this->customer->id, $sharedItems[$sharedInto->id]['shared_with'][0]['customer_id']);
         $this->assertSame('Alice Smith', $sharedItems[$sharedInto->id]['shared_with'][0]['customer_name']);
+    }
+
+    // ----------------------------------------------------------------
+    // Split-Payment Arithmetic (ISSUE-019)
+    // ----------------------------------------------------------------
+
+    public function test_unshared_item_pays_full_line_total(): void
+    {
+        $order = $this->createConfirmedOrder();
+        CartItem::create([
+            'table_scan_session_id' => $this->session->id,
+            'menu_item_id' => $this->menuItem->id,
+            'order_id' => $order->id,
+            'quantity' => 1,
+        ]);
+
+        $response = $this->withHeaders($this->headers)
+            ->getJson("/api/customer/orders/{$order->order_public_id}/tracking");
+
+        $response->assertOk();
+        $item = $response->json('items.0');
+        $this->assertSame(3.85, $item['line_total']);
+        $this->assertSame(3.85, $item['unit_price']);
+        $this->assertEmpty($response->json('shared_items'));
+    }
+
+    public function test_item_shared_between_three_pays_one_third(): void
+    {
+        [$order, $order2, $order3] = $this->createThreeWaySharing();
+
+        $item = CartItem::create([
+            'table_scan_session_id' => $this->session->id,
+            'menu_item_id' => $this->menuItem->id,
+            'order_id' => $order->id,
+            'quantity' => 1,
+            'shared_order_ids' => [$order2->id, $order3->id],
+        ]);
+
+        $response = $this->withHeaders($this->headers)
+            ->getJson("/api/customer/orders/{$order->order_public_id}/tracking");
+
+        $response->assertOk();
+        $shared = collect($response->json('shared_items'))->firstWhere('cart_item_id', $item->id);
+        $this->assertSame(3, $shared['shared_between']);
+        $this->assertSame(1.28, $shared['my_share']);
+    }
+
+    public function test_quantity_two_shared_between_two_pays_half_line_total(): void
+    {
+        $other = Customer::factory()->create();
+        $otherSession = $this->createSession($other);
+        $order = $this->createConfirmedOrder();
+        $otherOrder = $this->createConfirmedOrder($other, $otherSession);
+
+        CartItem::create([
+            'table_scan_session_id' => $this->session->id,
+            'menu_item_id' => $this->menuItem->id,
+            'order_id' => $order->id,
+            'quantity' => 2,
+            'shared_order_ids' => [$otherOrder->id],
+        ]);
+
+        $response = $this->withHeaders($this->headers)
+            ->getJson("/api/customer/orders/{$order->order_public_id}/tracking");
+
+        $response->assertOk();
+        $shared = $response->json('shared_items.0');
+        $this->assertSame(7.7, $shared['line_total']);
+        $this->assertSame(2, $shared['shared_between']);
+        $this->assertSame(3.85, $shared['my_share']);
+    }
+
+    public function test_paid_addon_included_in_split_share(): void
+    {
+        $other = Customer::factory()->create();
+        $otherSession = $this->createSession($other);
+        $order = $this->createConfirmedOrder();
+        $otherOrder = $this->createConfirmedOrder($other, $otherSession);
+
+        CartItem::create([
+            'table_scan_session_id' => $this->session->id,
+            'menu_item_id' => $this->menuItem->id,
+            'order_id' => $order->id,
+            'quantity' => 1,
+            'paid_addons' => [['name' => 'Cheese sauce', 'price' => 1.50]],
+            'shared_order_ids' => [$otherOrder->id],
+        ]);
+
+        $response = $this->withHeaders($this->headers)
+            ->getJson("/api/customer/orders/{$order->order_public_id}/tracking");
+
+        $response->assertOk();
+        $shared = $response->json('shared_items.0');
+        $this->assertSame(5.5, $shared['line_total']);
+        $this->assertSame(2.75, $shared['my_share']);
+    }
+
+    public function test_modifier_price_adjustment_included_in_split_share(): void
+    {
+        $other = Customer::factory()->create();
+        $otherSession = $this->createSession($other);
+        $order = $this->createConfirmedOrder();
+        $otherOrder = $this->createConfirmedOrder($other, $otherSession);
+
+        CartItem::create([
+            'table_scan_session_id' => $this->session->id,
+            'menu_item_id' => $this->menuItem->id,
+            'order_id' => $order->id,
+            'quantity' => 1,
+            'selected_modifiers' => [[
+                'group_id' => 1,
+                'group_name' => 'Size',
+                'tax_category' => 'food',
+                'options' => [['id' => 1, 'name' => 'Large', 'price_adjustment' => 1.50]],
+            ]],
+            'shared_order_ids' => [$otherOrder->id],
+        ]);
+
+        $response = $this->withHeaders($this->headers)
+            ->getJson("/api/customer/orders/{$order->order_public_id}/tracking");
+
+        $response->assertOk();
+        $shared = $response->json('shared_items.0');
+        $this->assertSame(5.5, $shared['line_total']);
+        $this->assertSame(2.75, $shared['my_share']);
+    }
+
+    public function test_three_way_split_rounds_correctly(): void
+    {
+        [$order, $order2, $order3] = $this->createThreeWaySharing();
+
+        $tenEuroItem = MenuItem::create([
+            'vendor_id' => $this->vendor->id,
+            'menu_category_id' => $this->menuItem->menu_category_id,
+            'name' => 'Steak',
+            'price' => 10.00,
+            'tax_category' => 'food',
+        ]);
+
+        CartItem::create([
+            'table_scan_session_id' => $this->session->id,
+            'menu_item_id' => $tenEuroItem->id,
+            'order_id' => $order->id,
+            'quantity' => 1,
+            'shared_order_ids' => [$order2->id, $order3->id],
+        ]);
+
+        $response = $this->withHeaders($this->headers)
+            ->getJson("/api/customer/orders/{$order->order_public_id}/tracking");
+
+        $response->assertOk();
+        $shared = $response->json('shared_items.0');
+        $lineTotal = $shared['line_total'];
+        $myShare = $shared['my_share'];
+        $this->assertSame(3, $shared['shared_between']);
+        $this->assertSame(round($lineTotal / 3, 2), $myShare);
+    }
+
+    public function test_zero_price_item_shared_returns_zero_share(): void
+    {
+        $other = Customer::factory()->create();
+        $otherSession = $this->createSession($other);
+        $order = $this->createConfirmedOrder();
+        $otherOrder = $this->createConfirmedOrder($other, $otherSession);
+
+        $freeItem = MenuItem::create([
+            'vendor_id' => $this->vendor->id,
+            'menu_category_id' => $this->menuItem->menu_category_id,
+            'name' => 'Free Bread',
+            'price' => 0,
+            'tax_category' => 'food',
+        ]);
+
+        CartItem::create([
+            'table_scan_session_id' => $this->session->id,
+            'menu_item_id' => $freeItem->id,
+            'order_id' => $order->id,
+            'quantity' => 1,
+            'shared_order_ids' => [$otherOrder->id],
+        ]);
+
+        $response = $this->withHeaders($this->headers)
+            ->getJson("/api/customer/orders/{$order->order_public_id}/tracking");
+
+        $response->assertOk();
+        $shared = $response->json('shared_items.0');
+        $this->assertEquals(0, $shared['line_total']);
+        $this->assertEquals(0, $shared['my_share']);
+    }
+
+    public function test_discounted_item_uses_discounted_price_in_split(): void
+    {
+        $other = Customer::factory()->create();
+        $otherSession = $this->createSession($other);
+        $order = $this->createConfirmedOrder();
+        $otherOrder = $this->createConfirmedOrder($other, $otherSession);
+
+        $discountedItem = MenuItem::create([
+            'vendor_id' => $this->vendor->id,
+            'menu_category_id' => $this->menuItem->menu_category_id,
+            'name' => 'Sale Burger',
+            'price' => 20.00,
+            'has_discount' => true,
+            'discounted_price' => 15.00,
+            'tax_category' => 'food',
+        ]);
+
+        CartItem::create([
+            'table_scan_session_id' => $this->session->id,
+            'menu_item_id' => $discountedItem->id,
+            'order_id' => $order->id,
+            'quantity' => 1,
+            'shared_order_ids' => [$otherOrder->id],
+        ]);
+
+        $response = $this->withHeaders($this->headers)
+            ->getJson("/api/customer/orders/{$order->order_public_id}/tracking");
+
+        $response->assertOk();
+        $shared = $response->json('shared_items.0');
+        $this->assertSame(16.5, $shared['line_total']);
+        $this->assertSame(8.25, $shared['my_share']);
+    }
+
+    // ----------------------------------------------------------------
+    // Helpers for split-payment tests
+    // ----------------------------------------------------------------
+
+    private function createSession(Customer $customer): TableScanSession
+    {
+        return TableScanSession::create([
+            'vendor_id' => $this->vendor->id,
+            'restaurant_table_id' => $this->table->id,
+            'customer_id' => $customer->id,
+            'pin' => '',
+            'status' => 'active',
+            'scanned_at' => now(),
+        ]);
+    }
+
+    private function createConfirmedOrder(?Customer $customer = null, ?TableScanSession $session = null): Order
+    {
+        $customer ??= $this->customer;
+        $session ??= $this->session;
+
+        return Order::create([
+            'order_public_id' => 'ord-split-' . uniqid(),
+            'customer_id' => $customer->id,
+            'vendor_id' => $this->vendor->id,
+            'table_scan_session_id' => $session->id,
+            'status' => 'confirmed',
+            'amount' => 0,
+            'currency' => 'EUR',
+            'order_type' => 'dine-in',
+            'payment_pending' => true,
+            'payment_received' => false,
+        ]);
+    }
+
+    private function createThreeWaySharing(): array
+    {
+        $customer2 = Customer::factory()->create();
+        $customer3 = Customer::factory()->create();
+        $session2 = $this->createSession($customer2);
+        $session3 = $this->createSession($customer3);
+        $order = $this->createConfirmedOrder();
+        $order2 = $this->createConfirmedOrder($customer2, $session2);
+        $order3 = $this->createConfirmedOrder($customer3, $session3);
+
+        return [$order, $order2, $order3];
     }
 }

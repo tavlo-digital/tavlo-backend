@@ -123,7 +123,7 @@ class OrderManagementTest extends TestCase
         $first = $this->scanSession();
         $second = $this->scanSession(Customer::factory()->create());
         $this->order($first, ['status' => 'confirmed', 'amount' => 10]);
-        $this->order($second, ['status' => 'ready', 'amount' => 15]);
+        $this->order($second, ['status' => 'in_progress', 'amount' => 15]);
 
         $response = $this->getJson("/api/vendor/{$this->vendor->id}/orders", $this->vendorHeaders());
 
@@ -134,7 +134,7 @@ class OrderManagementTest extends TestCase
             ->assertJsonPath('sessions.0.guestCount', 2)
             ->assertJsonPath('sessions.0.totalAmount', 25)
             ->assertJsonPath('sessions.0.kitchenSummary.total', 2)
-            ->assertJsonPath('sessions.0.kitchenSummary.ready', 1)
+            ->assertJsonPath('sessions.0.kitchenSummary.in_progress', 1)
             ->assertJsonCount(2, 'sessions.0.orders');
     }
 
@@ -158,8 +158,8 @@ class OrderManagementTest extends TestCase
             ['status' => 'preparing'],
             $this->staffHeaders('kitchen')
         )->assertOk()
-            ->assertJsonPath('items.0.status', 'in_progress')
-            ->assertJsonPath('status', 'preparing');
+            ->assertJsonPath('items.0.status', 'preparing')
+            ->assertJsonPath('status', 'in_progress');
 
         $this->assertNotNull($item->fresh()->preparing_start_at);
         $this->assertTrue(Notification::where('event', 'order_item_status_changed')
@@ -173,7 +173,7 @@ class OrderManagementTest extends TestCase
             $this->staffHeaders('kitchen')
         )->assertOk()
             ->assertJsonPath('items.0.status', 'ready')
-            ->assertJsonPath('status', 'ready');
+            ->assertJsonPath('status', 'in_progress');
 
         $this->assertNotNull($item->fresh()->ready_at);
     }

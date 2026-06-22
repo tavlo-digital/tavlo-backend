@@ -668,68 +668,206 @@ class CustomerFeaturesTest extends TestCase
     // REVIEWS
     // ================================================================
 
-    public function test_can_create_review(): void
+    public function test_customer_with_served_dine_in_order_can_leave_review(): void
     {
+        $session = $this->tableScanSession();
+        $category = MenuCategory::create([
+            'vendor_id' => $this->vendor->id,
+            'name' => 'Mains',
+            'slug' => 'mains-review',
+            'is_active' => true,
+            'sort_order' => 1,
+        ]);
+        $menuItem = MenuItem::create([
+            'vendor_id' => $this->vendor->id,
+            'menu_category_id' => $category->id,
+            'name' => 'Margherita Pizza',
+            'price' => 12.00,
+            'is_active' => true,
+            'available' => true,
+        ]);
+
         $order = Order::factory()->create([
             'customer_id' => $this->customer->id,
             'vendor_id' => $this->vendor->id,
+            'table_scan_session_id' => $session->id,
             'payment_received' => true,
             'payment_pending' => false,
-            'status' => 'completed',
+            'status' => 'served',
+        ]);
+
+        $cartItem = CartItem::create([
+            'table_scan_session_id' => $session->id,
+            'menu_item_id' => $menuItem->id,
+            'order_id' => $order->id,
+            'quantity' => 1,
+            'served_at' => now(),
         ]);
 
         $response = $this->postJson('/api/customer/reviews', [
-            'vendor_public_id' => $this->vendor->vendor_public_id,
+            'order_id' => $order->order_public_id,
             'rating' => 5,
             'review' => 'Amazing food!',
+            'items' => [
+                [
+                    'cart_item_id' => $cartItem->id,
+                    'rating' => 5,
+                    'review' => 'Best pizza ever',
+                ],
+            ],
         ], $this->headers);
 
         $response->assertCreated()
             ->assertJsonPath('review.rating', 5)
-            ->assertJsonPath('review.vendor_id', $this->vendor->id)
-            ->assertJsonPath('review.order_id', $order->id)
-            ->assertJsonPath('review.text', 'Amazing food!');
+            ->assertJsonPath('review.text', 'Amazing food!')
+            ->assertJsonPath('review.items.0.rating', 5)
+            ->assertJsonPath('review.items.0.text', 'Best pizza ever')
+            ->assertJsonPath('review.items.0.menu_item_name', 'Margherita Pizza');
+
+        $menuItem->refresh();
+        $this->assertEquals(5.00, (float) $menuItem->rating);
+        $this->assertEquals(1, $menuItem->review_count);
     }
 
-    public function test_cannot_review_vendor_without_order(): void
+    public function test_customer_without_any_qualifying_order_cannot_review(): void
     {
         $response = $this->postJson('/api/customer/reviews', [
-            'vendor_public_id' => $this->vendor->vendor_public_id,
+            'order_id' => 'ord_nonexistent',
             'rating' => 5,
             'review' => 'Amazing food!',
+            'items' => [['cart_item_id' => 1, 'rating' => 5]],
         ], $this->headers);
 
         $response->assertUnprocessable()
-            ->assertJsonValidationErrors(['vendor_public_id']);
+            ->assertJsonValidationErrors(['order_id']);
     }
 
-    public function test_cannot_review_vendor_with_unpaid_order(): void
+    public function test_cannot_review_unpaid_order(): void
     {
-        Order::factory()->create([
+        $session = $this->tableScanSession();
+        $category = MenuCategory::create([
+            'vendor_id' => $this->vendor->id,
+            'name' => 'Sides',
+            'slug' => 'sides-review',
+            'is_active' => true,
+            'sort_order' => 1,
+        ]);
+        $menuItem = MenuItem::create([
+            'vendor_id' => $this->vendor->id,
+            'menu_category_id' => $category->id,
+            'name' => 'Fries',
+            'price' => 5.00,
+            'is_active' => true,
+            'available' => true,
+        ]);
+
+        $order = Order::factory()->create([
             'customer_id' => $this->customer->id,
             'vendor_id' => $this->vendor->id,
+            'table_scan_session_id' => $session->id,
             'payment_received' => false,
             'payment_pending' => true,
             'status' => 'confirmed',
         ]);
 
+        $cartItem = CartItem::create([
+            'table_scan_session_id' => $session->id,
+            'menu_item_id' => $menuItem->id,
+            'order_id' => $order->id,
+            'quantity' => 1,
+            'served_at' => now(),
+        ]);
+
         $this->postJson('/api/customer/reviews', [
-            'vendor_public_id' => $this->vendor->vendor_public_id,
+            'order_id' => $order->order_public_id,
             'rating' => 5,
             'review' => 'Not yet paid.',
+            'items' => [['cart_item_id' => $cartItem->id, 'rating' => 5]],
         ], $this->headers)
             ->assertUnprocessable()
-            ->assertJsonValidationErrors(['vendor_public_id']);
+            ->assertJsonValidationErrors(['order_id']);
+    }
+
+    public function test_cannot_review_order_with_unserved_items(): void
+    {
+        $session = $this->tableScanSession();
+        $category = MenuCategory::create([
+            'vendor_id' => $this->vendor->id,
+            'name' => 'Drinks',
+            'slug' => 'drinks-review',
+            'is_active' => true,
+            'sort_order' => 1,
+        ]);
+        $menuItem = MenuItem::create([
+            'vendor_id' => $this->vendor->id,
+            'menu_category_id' => $category->id,
+            'name' => 'Cola',
+            'price' => 3.00,
+            'is_active' => true,
+            'available' => true,
+        ]);
+
+        $order = Order::factory()->create([
+            'customer_id' => $this->customer->id,
+            'vendor_id' => $this->vendor->id,
+            'table_scan_session_id' => $session->id,
+            'payment_received' => true,
+            'payment_pending' => false,
+            'status' => 'confirmed',
+        ]);
+
+        $cartItem = CartItem::create([
+            'table_scan_session_id' => $session->id,
+            'menu_item_id' => $menuItem->id,
+            'order_id' => $order->id,
+            'quantity' => 1,
+            'served_at' => null,
+        ]);
+
+        $this->postJson('/api/customer/reviews', [
+            'order_id' => $order->order_public_id,
+            'rating' => 4,
+            'review' => 'Still waiting...',
+            'items' => [['cart_item_id' => $cartItem->id, 'rating' => 4]],
+        ], $this->headers)
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['order_id']);
     }
 
     public function test_cannot_review_same_order_twice(): void
     {
+        $session = $this->tableScanSession();
+        $category = MenuCategory::create([
+            'vendor_id' => $this->vendor->id,
+            'name' => 'Salads',
+            'slug' => 'salads-review',
+            'is_active' => true,
+            'sort_order' => 1,
+        ]);
+        $menuItem = MenuItem::create([
+            'vendor_id' => $this->vendor->id,
+            'menu_category_id' => $category->id,
+            'name' => 'Caesar Salad',
+            'price' => 9.00,
+            'is_active' => true,
+            'available' => true,
+        ]);
+
         $order = Order::factory()->create([
             'customer_id' => $this->customer->id,
             'vendor_id' => $this->vendor->id,
+            'table_scan_session_id' => $session->id,
             'payment_received' => true,
             'payment_pending' => false,
-            'status' => 'completed',
+            'status' => 'served',
+        ]);
+
+        CartItem::create([
+            'table_scan_session_id' => $session->id,
+            'menu_item_id' => $menuItem->id,
+            'order_id' => $order->id,
+            'quantity' => 1,
+            'served_at' => now(),
         ]);
 
         Review::create([
@@ -741,9 +879,10 @@ class CustomerFeaturesTest extends TestCase
         ]);
 
         $response = $this->postJson('/api/customer/reviews', [
-            'vendor_public_id' => $this->vendor->vendor_public_id,
+            'order_id' => $order->order_public_id,
             'rating' => 5,
             'review' => 'Another review',
+            'items' => [['cart_item_id' => 1, 'rating' => 5]],
         ], $this->headers);
 
         $response->assertStatus(422);
@@ -751,14 +890,16 @@ class CustomerFeaturesTest extends TestCase
 
     public function test_can_update_review(): void
     {
+        $order = Order::factory()->create([
+            'customer_id' => $this->customer->id,
+            'vendor_id' => $this->vendor->id,
+        ]);
+
         $review = Review::create([
             'review_public_id' => 'rev_update',
             'customer_id' => $this->customer->id,
             'vendor_id' => $this->vendor->id,
-            'order_id' => Order::factory()->create([
-                'customer_id' => $this->customer->id,
-                'vendor_id' => $this->vendor->id,
-            ])->id,
+            'order_id' => $order->id,
             'rating' => 3,
             'text' => 'Was okay',
         ]);

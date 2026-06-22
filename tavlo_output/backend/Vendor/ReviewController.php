@@ -18,7 +18,7 @@ class ReviewController extends Controller
     {
         $vendor = $this->resolveVendor($vendorId);
 
-        $query = $vendor->reviews()->with(['customer:id,name,email', 'items.menuItem:id,name,image_url']);
+        $query = $vendor->reviews()->with('customer:id,name,email');
 
         $filter = $request->query('filter', 'all');
         if ($filter === 'pending') {
@@ -44,13 +44,6 @@ class ReviewController extends Controller
                 'flagged' => $r->flagged,
                 'flagReason' => $r->flag_reason,
                 'createdAt' => $r->created_at->toISOString(),
-                'itemReviews' => $r->items->map(fn ($ri) => [
-                    'menuItemId' => (string) $ri->menu_item_id,
-                    'menuItemName' => $ri->menuItem?->name,
-                    'menuItemImage' => $ri->menuItem?->image_url,
-                    'rating' => $ri->rating,
-                    'text' => $ri->text,
-                ])->values()->all(),
             ]);
 
         return response()->json($reviews);

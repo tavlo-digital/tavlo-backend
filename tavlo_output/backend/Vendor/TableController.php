@@ -9,7 +9,6 @@ use App\Models\TableScanSession;
 use App\Models\TeamMember;
 use App\Models\Vendor;
 use App\Models\VendorTakeawayQr;
-use App\Services\NotificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
@@ -72,7 +71,6 @@ class TableController extends Controller
             'is_active'    => true,
             'qr_created_at' => now(),
         ]);
-        $this->notifyTableChanged($request, $vendor, $table);
 
         return response()->json($this->formatTable($table), 201);
     }
@@ -93,7 +91,6 @@ class TableController extends Controller
         ]);
 
         $table->update($data);
-        $this->notifyTableChanged($request, $vendor, $table);
 
         return response()->json($this->formatTable($table->fresh()));
     }
@@ -110,7 +107,7 @@ class TableController extends Controller
 
         $hasActiveOrders = Order::where('vendor_id', $vendor->id)
             ->where('table_number', (string) $table->number)
-            ->whereIn('status', Order::ACTIVE_STATUSES)
+            ->whereIn('status', ['pending', 'confirmed', 'preparing', 'ready'])
             ->exists();
 
         if ($hasActiveOrders) {
@@ -118,7 +115,6 @@ class TableController extends Controller
         }
 
         $table->delete();
-        $this->notifyTableChanged($request, $vendor, $table);
 
         return response()->json(['message' => 'Table deleted']);
     }
@@ -132,22 +128,14 @@ class TableController extends Controller
         $vendor = $this->resolveVendor($vendorId);
         $this->authorizeVendor($request, $vendor);
 
-        $tablesWithActiveSessions = TableScanSession::where('status', 'active')
-            ->whereIn('restaurant_table_id', $vendor->restaurantTables()->pluck('id'))
-            ->pluck('restaurant_table_id')
-            ->unique();
-
-        $vendor->restaurantTables()->each(function (RestaurantTable $table) use ($tablesWithActiveSessions) {
-            if (! $tablesWithActiveSessions->contains($table->id)) {
-                $table->refreshQr();
-            }
+        $vendor->restaurantTables()->each(function (RestaurantTable $table) {
+            $table->refreshQr();
         });
 
         $tables = $vendor->restaurantTables()
             ->orderBy('number')
             ->get()
             ->map(fn (RestaurantTable $t) => $this->formatTable($t));
-        $this->notifyTableChanged($request, $vendor);
 
         return response()->json($tables);
     }
@@ -162,13 +150,16 @@ class TableController extends Controller
 
         $table = $vendor->restaurantTables()->findOrFail($tableId);
 
+        // ISSUE-023: Block regeneration while the table has active sessions.
+        // Regenerating mid-session breaks any customer who tries to re-scan or
+        // join via PIN, because both endpoints require a valid QR token.
         $activeSessions = TableScanSession::where('restaurant_table_id', $table->id)
             ->where('status', 'active')
             ->count();
 
         if ($activeSessions > 0) {
             return response()->json([
-                'message' => 'Cannot regenerate QR while the table has active sessions. Close the table first.',
+                'message'        => 'Cannot regenerate QR while the table has an active session. Close the table first.',
                 'active_sessions' => $activeSessions,
             ], 409);
         }
@@ -356,7 +347,6 @@ class TableController extends Controller
             'status'    => 'closed',
             'closed_at' => now(),
         ]);
-        $this->notifyTableChanged($request, $vendor, $table, false);
 
         return response()->json([
             'message' => 'Table session closed',
@@ -375,32 +365,6 @@ class TableController extends Controller
     // ----------------------------------------------------------------
     // Private helpers
     // ----------------------------------------------------------------
-
-    private function notifyTableChanged(
-        Request $request,
-        Vendor $vendor,
-        ?RestaurantTable $table = null,
-        bool $silent = true,
-    ): void {
-        $actor = $request->user();
-        NotificationService::notifyOperations(
-            $vendor->id,
-            'table_session_changed',
-            $table ? "Table {$table->name} was updated." : 'Restaurant tables were updated.',
-            [NotificationService::VENDOR, NotificationService::WAITER, NotificationService::KITCHEN],
-            [
-                'resources' => ['orders', 'tables', 'dashboard', 'notifications'],
-                'template' => $silent ? null : 'staff.table_session_changed',
-                'table_id' => $table?->id,
-                'table_label' => $table?->name ?? $table?->number,
-                'severity' => 'info',
-                'sound' => null,
-                'source_actor_type' => $actor instanceof TeamMember ? 'team_member' : 'vendor',
-                'source_actor_id' => $actor?->id,
-            ],
-            $silent,
-        );
-    }
 
     private function formatTable(RestaurantTable $table, string $status = 'idle'): array
     {

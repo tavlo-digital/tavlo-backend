@@ -10,7 +10,6 @@ use App\Models\StripeWebhookLog;
 use App\Models\Vendor;
 use App\Services\NotificationService;
 use App\Services\StripePaymentService;
-use App\Services\TaxCalculationService;
 use Closure;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
@@ -113,7 +112,8 @@ class PaymentController extends Controller
             return response()->json(['message' => 'Order is already paid.'], 422);
         }
 
-        // Return existing active intent instead of creating a duplicate (browser refresh / double-tap).
+        // ISSUE-008: Return existing active intent instead of creating a duplicate.
+        // Prevents double-intent from browser refresh or double-tap.
         $existingPayment = OrderPayment::where('order_id', $order->id)
             ->where('customer_id', $customer->id)
             ->whereNotIn('status', ['succeeded', 'canceled', 'payment_failed'])
@@ -131,13 +131,16 @@ class PaymentController extends Controller
                         'paymentIntentId' => $existingIntent['id'],
                     ]);
                 }
+                // Intent is cancelled/succeeded — fall through to create a fresh one
                 $existingPayment->update(['status' => $existingIntent['status']]);
             } catch (\Exception $e) {
                 \Log::warning("Could not retrieve existing payment intent: {$e->getMessage()}");
+                // Fall through to create a new intent
             }
         }
 
-        // Block payment if the customer has unsubmitted cart items.
+        // ISSUE-009: Block payment if the customer has unbound cart items not yet submitted.
+        // Prevents silently skipping items added after the first order confirmation.
         if ($order->table_scan_session_id) {
             $unboundCount = CartItem::where('table_scan_session_id', $order->table_scan_session_id)
                 ->whereNull('order_id')
@@ -161,7 +164,7 @@ class PaymentController extends Controller
             return response()->json(['message' => 'Order amount must be greater than zero.'], 422);
         }
 
-        $currency = $order->vendor?->currency ?? $order->currency ?? 'EUR';
+        $currency = $settings->currency ?: $order->currency;
         $metadata = [
             'order_id' => (string) $order->id,
             'order_public_id' => (string) $order->order_public_id,
@@ -205,7 +208,6 @@ class PaymentController extends Controller
 
             $order->update([
                 'amount' => $amount,
-                'service_fee' => $order->service_fee ?? 0,
                 'currency' => strtoupper($currency),
                 'payment_method' => 'stripe',
                 'transaction_id' => $intent['id'],
@@ -218,17 +220,7 @@ class PaymentController extends Controller
             $tableId = $order->tableScanSession?->restaurant_table_id;
             if ($tableId) {
                 $customerName = trim(($customer->first_name ?? '') . ' ' . ($customer->last_name ?? '')) ?: 'A guest';
-                NotificationService::notifyTableCustomers(
-                    $tableId,
-                    'payment_updated',
-                    "{$customerName} initiated a payment.",
-                    [
-                        'template' => 'payment.initiated',
-                        'customer_id' => $customer->id,
-                        'customer_name' => $customerName,
-                        'order_id' => $order->id,
-                    ],
-                );
+                NotificationService::notifyTableCustomers($tableId, 'payment_updated', "{$customerName} initiated a payment.");
             }
         }
 
@@ -292,7 +284,7 @@ class PaymentController extends Controller
         }
 
         $settings = $order->vendor?->vendorSetting;
-        $currency = $payment->currency ?: $order->currency ?: ($order->vendor?->currency ?? 'EUR');
+        $currency = $settings?->currency ?: $order->currency;
         $baseAmount = $this->finalOrderAmount($order);
         $tipAmount = round((float) $data['tip_amount'], 2);
         $payableAmount = round($baseAmount + $tipAmount, 2);
@@ -326,7 +318,6 @@ class PaymentController extends Controller
         DB::transaction(function () use ($order, $payment, $baseAmount, $tipAmount, $payableAmount, $currency, $updatedIntent, $metadata) {
             $order->update([
                 'amount' => $baseAmount,
-                'service_fee' => $order->service_fee ?? 0,
                 'tip_amount' => $tipAmount,
                 'currency' => strtoupper($currency),
                 'payment_method' => 'stripe',
@@ -348,18 +339,7 @@ class PaymentController extends Controller
             $tableId = $order->tableScanSession?->restaurant_table_id;
             if ($tableId) {
                 $customerName = trim(($customer->first_name ?? '') . ' ' . ($customer->last_name ?? '')) ?: 'A guest';
-                NotificationService::notifyTableCustomers(
-                    $tableId,
-                    'payment_updated',
-                    "{$customerName} updated the payment.",
-                    [
-                        'template' => 'payment.updated',
-                        'customer_id' => $customer->id,
-                        'customer_name' => $customerName,
-                        'order_id' => $order->id,
-                        'payment_id' => $payment->id,
-                    ],
-                );
+                NotificationService::notifyTableCustomers($tableId, 'payment_updated', "{$customerName} updated the payment.");
             }
         }
 
@@ -453,16 +433,7 @@ class PaymentController extends Controller
         if ($type === 'payment_intent.succeeded' && $payment->table_scan_session_id) {
             $session = $payment->order?->tableScanSession;
             if ($session) {
-                NotificationService::notifyTableCustomers(
-                    $session->restaurant_table_id,
-                    'payment_updated',
-                    'A payment has been completed on this table.',
-                    [
-                        'template' => 'payment.completed',
-                        'order_id' => $payment->order_id,
-                        'payment_id' => $payment->id,
-                    ],
-                );
+                NotificationService::notifyTableCustomers($session->restaurant_table_id, 'payment_updated', 'A payment has been completed on this table.');
             }
         }
 
@@ -484,7 +455,6 @@ class PaymentController extends Controller
     {
         return Order::with([
             'vendor.vendorSetting',
-            'vendor.countryRecord',
             'tableScanSession',
         ])
             ->where(function (Builder $query) use ($orderId) {
@@ -511,37 +481,59 @@ class PaymentController extends Controller
             return round((float) $order->amount, 2);
         }
 
-        $vendorCountry = $order->vendor?->country ?? 'AT';
-        $serviceFeeRate = (float) ($order->vendor?->vendorSetting?->service_fee_rate ?? 0);
-        $itemsGrossTotal = $this->computeTableOrderAmount($order, $vendorCountry);
+        $itemsTotal = $this->computeTableOrderAmount($order);
 
-        if ($itemsGrossTotal <= 0) {
+        if ($itemsTotal <= 0) {
             return round((float) $order->amount, 2);
         }
 
-        $serviceFee = round($itemsGrossTotal * ($serviceFeeRate / 100), 2);
-        $order->service_fee = $serviceFee;
-
-        return round($itemsGrossTotal + $serviceFee, 2);
+        return round($itemsTotal + (float) ($order->service_fee ?? 0) + (float) ($order->vat_amount ?? 0), 2);
     }
 
-    private function computeTableOrderAmount(Order $order, string $vendorCountry = 'AT'): float
+    private function computeTableOrderAmount(Order $order): float
     {
-        $owned = CartItem::with('menuItem:id,price,has_discount,discounted_price,vat_rate,tax_category')
+        $owned = CartItem::with('menuItem:id,price,has_discount,discounted_price')
             ->where('order_id', $order->id)
             ->get();
 
-        $sharedInto = CartItem::with('menuItem:id,price,has_discount,discounted_price,vat_rate,tax_category')
+        $sharedInto = CartItem::with('menuItem:id,price,has_discount,discounted_price')
             ->whereJsonContains('shared_order_ids', $order->id)
             ->where('table_scan_session_id', '!=', $order->table_scan_session_id)
             ->get();
 
-        return round($owned->merge($sharedInto)->sum(function (CartItem $item) use ($vendorCountry) {
-            $lineTotal = TaxCalculationService::cartItemLineTotalGross($item, $vendorCountry);
+        return round($owned->merge($sharedInto)->sum(function (CartItem $item) {
+            $unitPrice = $this->cartItemUnitPrice($item);
+            $lineTotal = $unitPrice * $item->quantity;
             $shareCount = 1 + count($item->shared_order_ids ?? []);
 
             return $lineTotal / $shareCount;
         }), 2);
+    }
+
+    private function cartItemUnitPrice(CartItem $item): float
+    {
+        $basePrice = $this->cartItemBasePrice($item);
+        $addonsTotal = collect($item->paid_addons ?? [])->sum(fn ($addon) => (float) ($addon['price'] ?? 0));
+        $modifiersTotal = collect($item->selected_modifiers ?? [])
+            ->flatMap(fn ($group) => is_array($group) ? ($group['options'] ?? []) : [])
+            ->sum(fn ($option) => (float) ($option['price_adjustment'] ?? 0));
+
+        return round($basePrice + $addonsTotal + $modifiersTotal, 2);
+    }
+
+    private function cartItemBasePrice(CartItem $item): float
+    {
+        $menuItem = $item->menuItem;
+
+        if (! $menuItem) {
+            return 0.0;
+        }
+
+        if ($menuItem->has_discount && $menuItem->discounted_price !== null) {
+            return (float) $menuItem->discounted_price;
+        }
+
+        return (float) $menuItem->price;
     }
 
     private function stripeAmountMinor(float $amount, string $currency): int

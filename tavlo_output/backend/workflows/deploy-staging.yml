@@ -1,0 +1,82 @@
+name: Deploy to Staging
+
+on:
+  push:
+    branches:
+      - staging
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          tools: composer:v2
+
+      - name: Install Composer dependencies
+        run: composer install --no-interaction --prefer-dist --optimize-autoloader --no-dev
+
+      - name: Write .env file
+        env:
+          ENV_FILE_CONTENT: ${{ secrets.STAGING_ENV_FILE }}
+        run: printenv ENV_FILE_CONTENT > .env
+
+      - name: Deploy files via rsync
+        uses: burnett01/rsync-deployments@7.0.1
+        with:
+          switches: -avz --delete
+            --exclude='.git/'
+            --exclude='node_modules/'
+            --exclude='vendor/'
+            --exclude='public/build/'
+            --exclude='public/storage/'
+            --exclude='storage/'
+
+          path: ./
+          remote_path: ${{ secrets.STAGING_DEPLOY_PATH }}
+          remote_host: ${{ secrets.SSH_HOST }}
+          remote_user: ${{ secrets.SSH_USERNAME }}
+          remote_key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Run post-deploy commands via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: 22
+          script: |
+            cd ${{ secrets.STAGING_DEPLOY_PATH }}
+
+            # NOTE: APP_KEY must be set in the STAGING_ENV_FILE GitHub Secret.
+            # ISSUE-020: key:generate --force was removed — rotating APP_KEY on every
+            # deploy invalidates all active sessions and logs out every user mid-service.
+            # To generate a key once: php artisan key:generate --show
+            # Then add the output as APP_KEY in the GitHub Secret STAGING_ENV_FILE.
+
+            # Set permissions
+            chmod -R 775 storage bootstrap/cache
+
+            # Install Node dependencies and build frontend
+            npm ci
+            npm run build
+
+            # Run database migrations
+            php artisan migrate --force
+
+            # Clear and cache config/routes/views
+            php artisan config:cache
+            php artisan route:cache
+            php artisan view:cache
+            php artisan event:cache
+
+            # Restart queue workers
+            php artisan queue:restart
+
+            echo "Deployment to staging complete."

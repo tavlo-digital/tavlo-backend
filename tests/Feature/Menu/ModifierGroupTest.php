@@ -221,7 +221,7 @@ class ModifierGroupTest extends TestCase
             ->assertJsonPath('data.options.0.priceAdjustment', 1.5)
             ->assertJsonPath('data.options.1.name', 'Salami');
 
-        $this->assertDatabaseMissing('modifier_options', ['id' => $opt2->id]);
+        $this->assertSoftDeleted('modifier_options', ['id' => $opt2->id]);
     }
 
     public function test_update_cannot_modify_another_vendors_group(): void
