@@ -318,6 +318,34 @@ class RestaurantBrowsingTest extends TestCase
             ->assertJsonPath('0.vat_rate', 10);
     }
 
+    public function test_restaurant_menu_returns_json_allergies_and_tags_without_pivot_rows(): void
+    {
+        $category = MenuCategory::create([
+            'vendor_id' => $this->vendor->id,
+            'name' => 'Tagged',
+            'slug' => 'tagged-menu',
+            'is_active' => true,
+            'sort_order' => 1,
+        ]);
+
+        MenuItem::create([
+            'vendor_id' => $this->vendor->id,
+            'menu_category_id' => $category->id,
+            'name' => 'Legacy Tagged Pasta',
+            'price' => 11.50,
+            'allergies' => ['Gluten'],
+            'special_tags' => ["Chef's Pick"],
+            'is_active' => true,
+            'available' => true,
+            'sort_order' => 1,
+        ]);
+
+        $this->getJson("/api/customer/restaurants/{$this->vendor->vendor_public_id}/menu")
+            ->assertOk()
+            ->assertJsonPath('0.allergens.0', 'Gluten')
+            ->assertJsonPath('0.tags.0', "Chef's Pick");
+    }
+
     public function test_unavailable_menu_items_are_not_browsable(): void
     {
         $category = MenuCategory::create([

@@ -655,6 +655,7 @@ class RestaurantController extends Controller
                 $locale,
                 $a->name
             ))
+            ->toBase()
             ->merge($this->stringValues($item->allergies))
             ->filter()
             ->unique(fn ($value) => Str::lower($value))
@@ -672,6 +673,7 @@ class RestaurantController extends Controller
                 $locale,
                 $t->label
             ))
+            ->toBase()
             ->merge($this->stringValues($item->special_tags))
             ->filter()
             ->unique(fn ($value) => Str::lower($value))
