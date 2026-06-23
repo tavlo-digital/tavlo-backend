@@ -2,10 +2,13 @@
 
 namespace Tests\Feature\Customer;
 
+use App\Models\Allergen;
+use App\Models\DietaryPreference;
 use App\Models\MenuCategory;
 use App\Models\MenuItem;
 use App\Models\ModifierGroup;
 use App\Models\ModifierOption;
+use App\Models\SpecialTag;
 use App\Models\Vendor;
 use App\Models\VendorSetting;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -54,6 +57,37 @@ class RestaurantTranslationTest extends TestCase
             'description' => 'Mit Gemüse serviert',
         ]);
 
+        $allergen = Allergen::create([
+            'name' => 'Milk',
+            'is_active' => true,
+        ]);
+        $allergen->localizedTranslations()->create([
+            'language' => 'de',
+            'name' => 'Milch',
+        ]);
+
+        $tag = SpecialTag::create([
+            'slug' => 'chefs-pick',
+            'label' => "Chef's Pick",
+            'is_active' => true,
+        ]);
+        $tag->localizedTranslations()->create([
+            'language' => 'de',
+            'label' => 'Empfehlung des Küchenchefs',
+        ]);
+
+        $preference = DietaryPreference::where('slug', 'vegetarian')->firstOrFail();
+        $preference->localizedTranslations()->updateOrCreate(
+            ['language' => 'de'],
+            ['name' => 'Vegetarisch']
+        );
+
+        $this->item->update([
+            'allergies' => ['Milk'],
+            'special_tags' => ['chefs-pick'],
+            'dietary_preference' => 'vegetarian',
+        ]);
+
         $group = ModifierGroup::create([
             'vendor_id' => $this->vendor->id,
             'name' => 'Choose a size',
@@ -78,6 +112,9 @@ class RestaurantTranslationTest extends TestCase
             ->assertJsonPath('0.name', 'Gegrilltes Hähnchen')
             ->assertJsonPath('0.description', 'Mit Gemüse serviert')
             ->assertJsonPath('0.category.name', 'Vorspeisen')
+            ->assertJsonPath('0.allergens.0', 'Milch')
+            ->assertJsonPath('0.tags.0', 'Empfehlung des Küchenchefs')
+            ->assertJsonPath('0.dietary_preference', 'Vegetarisch')
             ->assertJsonPath('0.modifier_groups.0.name', 'Größe wählen')
             ->assertJsonPath('0.modifier_groups.0.options.0.name', 'Groß');
     }
@@ -93,6 +130,9 @@ class RestaurantTranslationTest extends TestCase
             ->assertJsonPath('name', 'Gegrilltes Hähnchen')
             ->assertJsonPath('description', 'Mit Gemüse serviert')
             ->assertJsonPath('category.name', 'Vorspeisen')
+            ->assertJsonPath('allergens.0.name', 'Milch')
+            ->assertJsonPath('tags.0.label', 'Empfehlung des Küchenchefs')
+            ->assertJsonPath('dietary_preference', 'Vegetarisch')
             ->assertJsonPath('modifier_groups.0.name', 'Größe wählen')
             ->assertJsonPath('modifier_groups.0.options.0.name', 'Groß');
 
@@ -116,7 +156,10 @@ class RestaurantTranslationTest extends TestCase
             ->getJson($url.'?lang=fr')
             ->assertOk()
             ->assertHeader('Content-Language', 'en')
-            ->assertJsonPath('0.name', 'Grilled Chicken');
+            ->assertJsonPath('0.name', 'Grilled Chicken')
+            ->assertJsonPath('0.allergens.0', 'Milk')
+            ->assertJsonPath('0.tags.0', "Chef's Pick")
+            ->assertJsonPath('0.dietary_preference', 'Vegetarian');
 
         $this->withHeader('Accept-Language', 'fr-FR,fr;q=0.9')
             ->getJson($url)

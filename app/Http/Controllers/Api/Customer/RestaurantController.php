@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\Customer;
 use App\Http\Controllers\Controller;
 use App\Models\Allergen;
 use App\Models\CartItem;
+use App\Models\DietaryPreference;
 use App\Models\MenuCategory;
 use App\Models\MenuItem;
 use App\Models\RestaurantTable;
@@ -411,8 +412,11 @@ class RestaurantController extends Controller
         $ranked = $items->sortByDesc('ordered_count')->values();
 
         $vendorCountry = $vendor->country;
+        $allergenNameLookup = $this->translatedAllergenNameLookup($vendor, $locale);
+        $tagLabelLookup = $this->translatedTagLabelLookup($vendor, $locale);
+        $dietaryPreferenceLookup = $this->translatedDietaryPreferenceLookup($vendor, $locale);
 
-        $data = $items->map(function ($item) use ($ranked, $vendorCountry, $vendor, $locale) {
+        $data = $items->map(function ($item) use ($ranked, $vendorCountry, $vendor, $locale, $allergenNameLookup, $tagLabelLookup, $dietaryPreferenceLookup) {
             $rank = $ranked->search(fn ($r) => $r->id === $item->id);
             $vatRate = TaxCalculationService::itemVatRate($item, $vendorCountry);
 
@@ -451,7 +455,9 @@ class RestaurantController extends Controller
                 'fat' => $item->fat ? (float) $item->fat : null,
                 'carbs' => $item->carbs ? (float) $item->carbs : null,
                 'protein' => $item->protein ? (float) $item->protein : null,
-                'dietary_preference' => $item->dietary_preference,
+                'dietary_preference' => $item->dietary_preference
+                    ? $dietaryPreferenceLookup->get(Str::lower($item->dietary_preference), $item->dietary_preference)
+                    : null,
                 'paid_addons' => $this->customizations->formatPaidAddonDefinitions($item->paid_addons ?? [], $vendor, $locale, $item->tax_category ?? 'food', $vendorCountry),
                 'free_addons' => array_column($this->customizations->formatNamedDefinitions($item->free_addons ?? [], $vendor, $locale), 'name'),
                 'free_addon_options' => $this->customizations->formatNamedDefinitions($item->free_addons ?? [], $vendor, $locale),
@@ -470,8 +476,8 @@ class RestaurantController extends Controller
                     'slug' => $item->category->display_slug,
                     'icon' => $item->category->display_icon,
                 ] : null,
-                'allergens' => $this->menuItemAllergenNames($item, $vendor, $locale),
-                'tags' => $this->menuItemTagLabels($item, $vendor, $locale),
+                'allergens' => $this->menuItemAllergenNames($item, $vendor, $locale, $allergenNameLookup),
+                'tags' => $this->menuItemTagLabels($item, $vendor, $locale, $tagLabelLookup),
                 'modifier_groups' => $item->modifierGroups->map(fn ($g) => $this->formatModifierGroup(
                     $g,
                     $vendor,
@@ -554,7 +560,7 @@ class RestaurantController extends Controller
             'fat' => $item->fat ? (float) $item->fat : null,
             'carbs' => $item->carbs ? (float) $item->carbs : null,
             'protein' => $item->protein ? (float) $item->protein : null,
-            'dietary_preference' => $item->dietary_preference,
+            'dietary_preference' => $this->translatedDietaryPreference($item->dietary_preference, $vendor, $locale),
             'paid_addons' => $this->customizations->formatPaidAddonDefinitions($item->paid_addons ?? [], $vendor, $locale, $item->tax_category ?? 'food', $vendorCountry),
             'free_addons' => array_column($this->customizations->formatNamedDefinitions($item->free_addons ?? [], $vendor, $locale), 'name'),
             'free_addon_options' => $this->customizations->formatNamedDefinitions($item->free_addons ?? [], $vendor, $locale),
@@ -644,8 +650,12 @@ class RestaurantController extends Controller
         })->values()->all();
     }
 
-    private function menuItemAllergenNames(MenuItem $item, Vendor $vendor, string $locale): Collection
-    {
+    private function menuItemAllergenNames(
+        MenuItem $item,
+        Vendor $vendor,
+        string $locale,
+        Collection $allergenNameLookup,
+    ): Collection {
         return $item->allergens
             ->map(fn ($a) => $this->locales->translated(
                 $a,
@@ -656,14 +666,20 @@ class RestaurantController extends Controller
                 $a->name
             ))
             ->toBase()
-            ->merge($this->stringValues($item->allergies))
+            ->merge($this->stringValues($item->allergies)->map(
+                fn ($name) => $allergenNameLookup->get(Str::lower($name), $name)
+            ))
             ->filter()
             ->unique(fn ($value) => Str::lower($value))
             ->values();
     }
 
-    private function menuItemTagLabels(MenuItem $item, Vendor $vendor, string $locale): Collection
-    {
+    private function menuItemTagLabels(
+        MenuItem $item,
+        Vendor $vendor,
+        string $locale,
+        Collection $tagLabelLookup,
+    ): Collection {
         return $item->tags
             ->map(fn ($t) => $this->locales->translated(
                 $t,
@@ -674,10 +690,93 @@ class RestaurantController extends Controller
                 $t->label
             ))
             ->toBase()
-            ->merge($this->stringValues($item->special_tags))
+            ->merge($this->stringValues($item->special_tags)->map(
+                fn ($value) => $tagLabelLookup->get(Str::lower($value), $value)
+            ))
             ->filter()
             ->unique(fn ($value) => Str::lower($value))
             ->values();
+    }
+
+    private function translatedAllergenNameLookup(Vendor $vendor, string $locale): Collection
+    {
+        return Allergen::where('is_active', true)
+            ->with('localizedTranslations')
+            ->get(['id', 'name'])
+            ->mapWithKeys(fn (Allergen $allergen) => [
+                Str::lower($allergen->name) => $this->locales->translated(
+                    $allergen,
+                    'localizedTranslations',
+                    'name',
+                    $vendor,
+                    $locale,
+                    $allergen->name
+                ),
+            ]);
+    }
+
+    private function translatedTagLabelLookup(Vendor $vendor, string $locale): Collection
+    {
+        $lookup = collect();
+
+        SpecialTag::where('is_active', true)
+            ->with('localizedTranslations')
+            ->get(['id', 'slug', 'label'])
+            ->each(function (SpecialTag $tag) use ($lookup, $vendor, $locale) {
+                $label = $this->locales->translated(
+                    $tag,
+                    'localizedTranslations',
+                    'label',
+                    $vendor,
+                    $locale,
+                    $tag->label
+                );
+
+                $lookup->put(Str::lower($tag->slug), $label);
+                $lookup->put(Str::lower($tag->label), $label);
+            });
+
+        return $lookup;
+    }
+
+    private function translatedDietaryPreferenceLookup(Vendor $vendor, string $locale): Collection
+    {
+        return DietaryPreference::where('is_active', true)
+            ->with('localizedTranslations')
+            ->get(['id', 'slug', 'name'])
+            ->mapWithKeys(fn (DietaryPreference $preference) => [
+                Str::lower($preference->slug) => $this->locales->translated(
+                    $preference,
+                    'localizedTranslations',
+                    'name',
+                    $vendor,
+                    $locale,
+                    $preference->name
+                ),
+            ]);
+    }
+
+    private function translatedDietaryPreference(?string $slug, Vendor $vendor, string $locale): ?string
+    {
+        if ($slug === null || trim($slug) === '') {
+            return null;
+        }
+
+        $preference = DietaryPreference::where('is_active', true)
+            ->where('slug', $slug)
+            ->with('localizedTranslations')
+            ->first();
+
+        return $preference
+            ? $this->locales->translated(
+                $preference,
+                'localizedTranslations',
+                'name',
+                $vendor,
+                $locale,
+                $preference->name
+            )
+            : $slug;
     }
 
     private function formatMenuItemAllergens(MenuItem $item, Vendor $vendor, string $locale): Collection
