@@ -13,6 +13,7 @@ class RestaurantPlanController extends Controller
 {
     public function index(): JsonResponse
     {
+        $vendorFrontendUrl = rtrim((string) config('app.vendor_frontend_url'), '/');
         $plans = SubscriptionPlan::query()
             ->where('is_active', true)
             ->with(['features' => function ($query) {
@@ -42,12 +43,13 @@ class RestaurantPlanController extends Controller
                         'yearlyBadge' => 'Save up to 30%',
                     ],
                 ],
-                'plans' => $plans->map(function (SubscriptionPlan $plan) use ($planKeys) {
+                'plans' => $plans->map(function (SubscriptionPlan $plan) use ($planKeys, $vendorFrontendUrl) {
                     $yearlyPrice = (float) $plan->yearly_price;
 
                     return [
                         'id' => $planKeys[$plan->id],
                         'name' => $plan->name,
+                        'link' => "{$vendorFrontendUrl}/activate?plan={$plan->id}",
                         'prices' => [
                             'monthly' => [
                                 'amount' => (float) $plan->monthly_price,

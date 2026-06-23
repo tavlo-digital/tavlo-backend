@@ -13,6 +13,8 @@ class RestaurantPlansTest extends TestCase
 
     public function test_public_endpoint_returns_active_admin_plans_and_dynamic_comparison(): void
     {
+        config()->set('app.vendor_frontend_url', 'https://vendor.example.test/');
+
         $menuFeature = Feature::create([
             'name' => 'Menu Management',
             'description' => 'Manage menu items',
@@ -64,9 +66,11 @@ class RestaurantPlansTest extends TestCase
             ->assertJsonPath('data.hero.billingOptions.default', 'monthly')
             ->assertJsonPath('data.plans.0.id', 'basic')
             ->assertJsonPath('data.plans.0.name', 'Basic')
+            ->assertJsonPath('data.plans.0.link', "https://vendor.example.test/activate?plan={$basic->id}")
             ->assertJsonPath('data.plans.0.prices.monthly.amount', 99)
             ->assertJsonPath('data.plans.0.prices.yearly.monthlyEquivalent', 69.3)
             ->assertJsonPath('data.plans.1.id', 'standard')
+            ->assertJsonPath('data.plans.1.link', "https://vendor.example.test/activate?plan={$standard->id}")
             ->assertJsonPath('data.comparison.plans', ['basic', 'standard'])
             ->assertJsonPath('data.comparison.features.0.id', 'advanced-analytics')
             ->assertJsonPath('data.comparison.features.0.availability.basic', false)
