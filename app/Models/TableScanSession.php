@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class TableScanSession extends Model
 {
@@ -22,7 +23,7 @@ class TableScanSession extends Model
     {
         return [
             'scanned_at' => 'datetime',
-            'closed_at'  => 'datetime',
+            'closed_at' => 'datetime',
         ];
     }
 
@@ -49,6 +50,11 @@ class TableScanSession extends Model
     public function orders(): HasMany
     {
         return $this->hasMany(Order::class, 'table_scan_session_id');
+    }
+
+    public function review(): HasOne
+    {
+        return $this->hasOne(Review::class, 'table_scan_session_id');
     }
 
     public function sessionActivities(): HasMany

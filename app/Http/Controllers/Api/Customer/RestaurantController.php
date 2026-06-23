@@ -13,6 +13,7 @@ use App\Models\SpecialTag;
 use App\Models\Vendor;
 use App\Models\VendorSetting;
 use App\Services\LocaleService;
+use App\Services\MediaService;
 use App\Services\MenuCustomizationService;
 use App\Services\TaxCalculationService;
 use App\Services\VendorDateTimeService;
@@ -27,6 +28,7 @@ class RestaurantController extends Controller
         private readonly LocaleService $locales,
         private readonly MenuCustomizationService $customizations,
         private readonly VendorDateTimeService $dateTimes,
+        private readonly MediaService $media,
     ) {}
 
     /**
@@ -971,6 +973,7 @@ class RestaurantController extends Controller
                 'customer:id,first_name,last_name,profile_picture',
                 'order:id,table_scan_session_id',
                 'items.menuItem:id,name,image_url',
+                'items.cartItem:id,quantity',
             ]);
 
         if ($request->filled('rating')) {
@@ -1017,19 +1020,39 @@ class RestaurantController extends Controller
                 ->values()
                 ->all();
 
+            if ($menuItems === []) {
+                $menuItems = $review->items
+                    ->map(function ($itemReview) {
+                        $menuItem = $itemReview->menuItem;
+                        $name = $menuItem?->name;
+
+                        return [
+                            'id' => $menuItem?->id,
+                            'name' => $name,
+                            'slug' => $name ? Str::slug($name) : null,
+                            'image_url' => $menuItem?->image_url,
+                            'quantity' => (int) ($itemReview->cartItem?->quantity ?? 1),
+                        ];
+                    })
+                    ->unique('id')
+                    ->values()
+                    ->all();
+            }
+
             $itemReviews = $review->items->map(fn ($ri) => [
                 'menu_item_id' => $ri->menu_item_id,
                 'menu_item_name' => $ri->menuItem?->name,
                 'menu_item_image' => $ri->menuItem?->image_url,
                 'rating' => $ri->rating,
                 'text' => $ri->text,
+                'images' => $this->reviewMediaUrls($ri->images),
             ])->values()->all();
 
             return [
                 'review_public_id' => $review->review_public_id,
                 'rating' => $review->rating,
                 'text' => $review->text,
-                'images' => $review->images ?: [],
+                'images' => $this->reviewMediaUrls($review->images),
                 'created_at' => $this->dateTimes->formatDateTime($review->created_at, $vendor),
                 'reviewer' => [
                     'name' => $reviewerName !== '' ? $reviewerName : 'Anonymous',
@@ -1075,6 +1098,15 @@ class RestaurantController extends Controller
         ];
 
         return response()->json($payload);
+    }
+
+    private function reviewMediaUrls(?array $paths): array
+    {
+        return collect($paths ?? [])
+            ->map(fn (string $path) => $this->media->url($path))
+            ->filter()
+            ->values()
+            ->all();
     }
 
     private function cartItemsByReviewOrder(Collection $orders): Collection

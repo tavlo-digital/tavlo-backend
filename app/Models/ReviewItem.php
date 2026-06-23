@@ -13,7 +13,15 @@ class ReviewItem extends Model
         'menu_item_id',
         'rating',
         'text',
+        'images',
     ];
+
+    protected function casts(): array
+    {
+        return [
+            'images' => 'array',
+        ];
+    }
 
     public function review(): BelongsTo
     {

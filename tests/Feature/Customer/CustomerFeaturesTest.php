@@ -14,10 +14,13 @@ use App\Models\Order;
 use App\Models\Reservation;
 use App\Models\RestaurantTable;
 use App\Models\Review;
+use App\Models\ReviewItem;
 use App\Models\TableScanSession;
 use App\Models\Vendor;
 use App\Models\VendorSetting;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 class CustomerFeaturesTest extends TestCase
@@ -705,7 +708,7 @@ class CustomerFeaturesTest extends TestCase
         ]);
 
         $response = $this->postJson('/api/customer/reviews', [
-            'order_id' => $order->order_public_id,
+            'session_scan_table_id' => $session->id,
             'rating' => 5,
             'review' => 'Amazing food!',
             'items' => [
@@ -718,6 +721,7 @@ class CustomerFeaturesTest extends TestCase
         ], $this->headers);
 
         $response->assertCreated()
+            ->assertJsonPath('review.session_scan_table_id', $session->id)
             ->assertJsonPath('review.rating', 5)
             ->assertJsonPath('review.text', 'Amazing food!')
             ->assertJsonPath('review.items.0.rating', 5)
@@ -729,17 +733,201 @@ class CustomerFeaturesTest extends TestCase
         $this->assertEquals(1, $menuItem->review_count);
     }
 
+    public function test_can_get_reviewable_orders_for_a_session(): void
+    {
+        $session = $this->tableScanSession();
+        $category = MenuCategory::create([
+            'vendor_id' => $this->vendor->id,
+            'name' => 'Reviewable',
+            'slug' => 'reviewable-orders',
+            'is_active' => true,
+        ]);
+        $menuItem = MenuItem::create([
+            'vendor_id' => $this->vendor->id,
+            'menu_category_id' => $category->id,
+            'name' => 'Reviewable Item',
+            'price' => 10,
+            'is_active' => true,
+            'available' => true,
+        ]);
+
+        $firstOrder = Order::factory()->create([
+            'customer_id' => $this->customer->id,
+            'vendor_id' => $this->vendor->id,
+            'table_scan_session_id' => $session->id,
+            'amount' => 20,
+            'tip_amount' => 3,
+            'payment_received' => true,
+        ]);
+        $secondOrder = Order::factory()->create([
+            'customer_id' => $this->customer->id,
+            'vendor_id' => $this->vendor->id,
+            'table_scan_session_id' => $session->id,
+            'amount' => 8.50,
+            'tip_amount' => 0,
+            'payment_received' => true,
+        ]);
+
+        $firstItem = CartItem::create([
+            'table_scan_session_id' => $session->id,
+            'menu_item_id' => $menuItem->id,
+            'order_id' => $firstOrder->id,
+            'quantity' => 1,
+            'served_at' => now(),
+        ]);
+        $secondItem = CartItem::create([
+            'table_scan_session_id' => $session->id,
+            'menu_item_id' => $menuItem->id,
+            'order_id' => $secondOrder->id,
+            'quantity' => 1,
+            'served_at' => now(),
+        ]);
+
+        $this->getJson("/api/customer/reviews/session/{$session->id}", $this->headers)
+            ->assertOk()
+            ->assertJsonPath('session_scan_table_id', $session->id)
+            ->assertJsonPath('orders.0.order_id', $firstOrder->order_public_id)
+            ->assertJsonPath('orders.0.total_amount_paid', 23)
+            ->assertJsonPath('orders.0.items.0.cart_item_id', $firstItem->id)
+            ->assertJsonPath('orders.1.order_id', $secondOrder->order_public_id)
+            ->assertJsonPath('orders.1.total_amount_paid', 8.5)
+            ->assertJsonPath('orders.1.items.0.cart_item_id', $secondItem->id);
+    }
+
+    public function test_reviewable_session_endpoint_requires_paid_orders_and_served_items(): void
+    {
+        $session = $this->tableScanSession();
+
+        $this->getJson("/api/customer/reviews/session/{$session->id}", $this->headers)
+            ->assertUnprocessable()
+            ->assertJsonPath('errors.session_scan_table_id.0', 'This session has no orders.');
+
+        $category = MenuCategory::create([
+            'vendor_id' => $this->vendor->id,
+            'name' => 'Pending Review',
+            'slug' => 'pending-review',
+            'is_active' => true,
+        ]);
+        $menuItem = MenuItem::create([
+            'vendor_id' => $this->vendor->id,
+            'menu_category_id' => $category->id,
+            'name' => 'Pending Item',
+            'price' => 5,
+            'is_active' => true,
+            'available' => true,
+        ]);
+        $order = Order::factory()->create([
+            'customer_id' => $this->customer->id,
+            'vendor_id' => $this->vendor->id,
+            'table_scan_session_id' => $session->id,
+            'payment_received' => false,
+        ]);
+        $cartItem = CartItem::create([
+            'table_scan_session_id' => $session->id,
+            'menu_item_id' => $menuItem->id,
+            'order_id' => $order->id,
+            'quantity' => 1,
+            'served_at' => null,
+        ]);
+
+        $this->getJson("/api/customer/reviews/session/{$session->id}", $this->headers)
+            ->assertUnprocessable()
+            ->assertJsonPath(
+                'errors.session_scan_table_id.0',
+                'All orders must be paid before you can review this session.'
+            );
+
+        $order->update(['payment_received' => true]);
+
+        $this->getJson("/api/customer/reviews/session/{$session->id}", $this->headers)
+            ->assertUnprocessable()
+            ->assertJsonPath('errors.session_scan_table_id.0', 'Items are not served yet.');
+
+        $cartItem->update(['served_at' => now()]);
+        Review::create([
+            'review_public_id' => 'rev_session_endpoint',
+            'customer_id' => $this->customer->id,
+            'vendor_id' => $this->vendor->id,
+            'table_scan_session_id' => $session->id,
+            'rating' => 5,
+        ]);
+
+        $this->getJson("/api/customer/reviews/session/{$session->id}", $this->headers)
+            ->assertUnprocessable()
+            ->assertJsonPath(
+                'errors.session_scan_table_id.0',
+                'You have already reviewed this session.'
+            );
+    }
+
+    public function test_session_review_accepts_overall_and_item_photos(): void
+    {
+        Storage::fake('public');
+
+        $session = $this->tableScanSession();
+        $category = MenuCategory::create([
+            'vendor_id' => $this->vendor->id,
+            'name' => 'Photo Review',
+            'slug' => 'photo-review',
+            'is_active' => true,
+        ]);
+        $menuItem = MenuItem::create([
+            'vendor_id' => $this->vendor->id,
+            'menu_category_id' => $category->id,
+            'name' => 'Photogenic Pizza',
+            'price' => 15,
+            'is_active' => true,
+            'available' => true,
+        ]);
+        $order = Order::factory()->create([
+            'customer_id' => $this->customer->id,
+            'vendor_id' => $this->vendor->id,
+            'table_scan_session_id' => $session->id,
+            'payment_received' => true,
+        ]);
+        $cartItem = CartItem::create([
+            'table_scan_session_id' => $session->id,
+            'menu_item_id' => $menuItem->id,
+            'order_id' => $order->id,
+            'quantity' => 1,
+            'served_at' => now(),
+        ]);
+
+        $response = $this->post('/api/customer/reviews', [
+            'session_scan_table_id' => $session->id,
+            'rating' => 5,
+            'review' => 'Looks as good as it tastes.',
+            'photos' => [UploadedFile::fake()->image('table.jpg')],
+            'items' => [[
+                'cart_item_id' => $cartItem->id,
+                'rating' => 5,
+                'review' => 'Perfect crust.',
+                'photos' => [UploadedFile::fake()->image('pizza.png')],
+            ]],
+        ], $this->headers);
+
+        $response->assertCreated()
+            ->assertJsonCount(1, 'review.photos')
+            ->assertJsonCount(1, 'review.items.0.photos');
+
+        $review = Review::with('items')->where('table_scan_session_id', $session->id)->firstOrFail();
+        $reviewItem = ReviewItem::where('review_id', $review->id)->firstOrFail();
+
+        Storage::disk('public')->assertExists($review->images[0]);
+        Storage::disk('public')->assertExists($reviewItem->images[0]);
+    }
+
     public function test_customer_without_any_qualifying_order_cannot_review(): void
     {
         $response = $this->postJson('/api/customer/reviews', [
-            'order_id' => 'ord_nonexistent',
+            'session_scan_table_id' => 999999,
             'rating' => 5,
             'review' => 'Amazing food!',
             'items' => [['cart_item_id' => 1, 'rating' => 5]],
         ], $this->headers);
 
         $response->assertUnprocessable()
-            ->assertJsonValidationErrors(['order_id']);
+            ->assertJsonValidationErrors(['session_scan_table_id']);
     }
 
     public function test_cannot_review_unpaid_order(): void
@@ -779,13 +967,13 @@ class CustomerFeaturesTest extends TestCase
         ]);
 
         $this->postJson('/api/customer/reviews', [
-            'order_id' => $order->order_public_id,
+            'session_scan_table_id' => $session->id,
             'rating' => 5,
             'review' => 'Not yet paid.',
             'items' => [['cart_item_id' => $cartItem->id, 'rating' => 5]],
         ], $this->headers)
             ->assertUnprocessable()
-            ->assertJsonValidationErrors(['order_id']);
+            ->assertJsonValidationErrors(['session_scan_table_id']);
     }
 
     public function test_cannot_review_order_with_unserved_items(): void
@@ -825,13 +1013,14 @@ class CustomerFeaturesTest extends TestCase
         ]);
 
         $this->postJson('/api/customer/reviews', [
-            'order_id' => $order->order_public_id,
+            'session_scan_table_id' => $session->id,
             'rating' => 4,
             'review' => 'Still waiting...',
             'items' => [['cart_item_id' => $cartItem->id, 'rating' => 4]],
         ], $this->headers)
             ->assertUnprocessable()
-            ->assertJsonValidationErrors(['order_id']);
+            ->assertJsonValidationErrors(['session_scan_table_id'])
+            ->assertJsonPath('errors.session_scan_table_id.0', 'Items are not served yet.');
     }
 
     public function test_cannot_review_same_order_twice(): void
@@ -875,11 +1064,12 @@ class CustomerFeaturesTest extends TestCase
             'customer_id' => $this->customer->id,
             'vendor_id' => $this->vendor->id,
             'order_id' => $order->id,
+            'table_scan_session_id' => $session->id,
             'rating' => 4,
         ]);
 
         $response = $this->postJson('/api/customer/reviews', [
-            'order_id' => $order->order_public_id,
+            'session_scan_table_id' => $session->id,
             'rating' => 5,
             'review' => 'Another review',
             'items' => [['cart_item_id' => 1, 'rating' => 5]],

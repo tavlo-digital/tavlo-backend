@@ -13,6 +13,7 @@ class Review extends Model
         'customer_id',
         'vendor_id',
         'order_id',
+        'table_scan_session_id',
         'rating',
         'text',
         'images',
@@ -44,6 +45,11 @@ class Review extends Model
     public function order(): BelongsTo
     {
         return $this->belongsTo(Order::class);
+    }
+
+    public function tableScanSession(): BelongsTo
+    {
+        return $this->belongsTo(TableScanSession::class);
     }
 
     public function items(): HasMany
