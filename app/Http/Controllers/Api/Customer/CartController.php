@@ -101,7 +101,7 @@ class CartController extends Controller
             : 'en';
 
         $translateTaxGroups = fn (array $groups) => array_map(fn (array $g) => array_merge($g, [
-            'tax_category' => $this->locales->translatedTaxCategoryName($g['tax_category'], $vendorCountry, $locale),
+            'label' => $this->locales->translatedTaxCategoryName($g['tax_category'], $vendorCountry, $locale),
         ]), $groups);
 
         $people = $sessions->map(function (TableScanSession $s) use ($mySession, $orderedOrderIds, $vendorCountry, $serviceFeeRate, $vendor, $locale, $translateTaxGroups) {
@@ -479,7 +479,7 @@ class CartController extends Controller
                 'total_price' => round($personalTotal, 2),
                 'items' => $items,
                 'tax_groups' => array_map(fn (array $g) => array_merge($g, [
-                    'tax_category' => $this->locales->translatedTaxCategoryName($g['tax_category'], $vendorCountry, $locale),
+                    'label' => $this->locales->translatedTaxCategoryName($g['tax_category'], $vendorCountry, $locale),
                 ]), $personTaxGroups),
                 'totals' => $personTotals,
             ];
@@ -990,7 +990,7 @@ class CartController extends Controller
                 'total_amount' => round($personTotal, 2),
                 'orders' => $orderPayloads,
                 'tax_groups' => array_map(fn (array $g) => array_merge($g, [
-                    'tax_category' => $this->locales->translatedTaxCategoryName($g['tax_category'], $vendorCountry, $locale),
+                    'label' => $this->locales->translatedTaxCategoryName($g['tax_category'], $vendorCountry, $locale),
                 ]), $personTaxGroups),
                 'totals' => $personTotals,
             ];
@@ -1075,7 +1075,7 @@ class CartController extends Controller
             'removed_items' => $this->formatCartNamedSelections($ci, 'removed_items', $vendor, $locale),
             'selected_modifiers' => $this->formatCartSelectedModifiers($ci, $itemTaxCategory, $vendorCountry, $vendor, $locale),
             'vat_rate' => $vatRate,
-            'tax_category' => $this->locales->translatedTaxCategoryName($itemTaxCategory, $vendorCountry, $locale),
+            'tax_category' => $itemTaxCategory,
             'vat_amount' => $vatAmount,
             'line_total' => $lineTotal,
             'is_mine' => (int) $ci->table_scan_session_id === (int) $mySession->id,
@@ -1333,7 +1333,7 @@ class CartController extends Controller
                     : $menuItem->name,
                 'price' => $baseGross,
                 'vat_rate' => $vatRate,
-                'tax_category' => $this->locales->translatedTaxCategoryName($menuItem->tax_category ?? 'food', $vendorCountry, $locale),
+                'tax_category' => $menuItem->tax_category,
                 'image_url' => $menuItem->image_url,
             ] : null,
         ];

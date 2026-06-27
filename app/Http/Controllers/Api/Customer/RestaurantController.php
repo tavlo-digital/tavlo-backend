@@ -411,9 +411,7 @@ class RestaurantController extends Controller
         $tagLabelLookup = $this->translatedTagLabelLookup($vendor, $locale);
         $dietaryPreferenceLookup = $this->translatedDietaryPreferenceLookup($vendor, $locale);
 
-        $taxCategoryNameFn = fn (string $slug) => $this->locales->translatedTaxCategoryName($slug, $vendorCountry, $locale);
-
-        $data = $items->map(function ($item) use ($ranked, $vendorCountry, $vendor, $locale, $allergenNameLookup, $tagLabelLookup, $dietaryPreferenceLookup, $taxCategoryNameFn) {
+        $data = $items->map(function ($item) use ($ranked, $vendorCountry, $vendor, $locale, $allergenNameLookup, $tagLabelLookup, $dietaryPreferenceLookup) {
             $rank = $ranked->search(fn ($r) => $r->id === $item->id);
             $vatRate = TaxCalculationService::itemVatRate($item, $vendorCountry);
 
@@ -443,7 +441,7 @@ class RestaurantController extends Controller
                     ? TaxCalculationService::gross((float) $item->discounted_price, $vatRate)
                     : null,
                 'vat_rate' => $vatRate,
-                'tax_category' => $taxCategoryNameFn($item->tax_category ?? 'food'),
+                'tax_category' => $item->tax_category,
                 'rating' => (float) ($item->rating ?? 0),
                 'review_count' => (int) ($item->review_count ?? 0),
                 'ordered_count' => (int) ($item->ordered_count ?? 0),
@@ -541,7 +539,7 @@ class RestaurantController extends Controller
                 ? TaxCalculationService::gross((float) $item->discounted_price, $vatRate)
                 : null,
             'vat_rate' => $vatRate,
-            'tax_category' => $this->locales->translatedTaxCategoryName($item->tax_category ?? 'food', $vendorCountry, $locale),
+            'tax_category' => $item->tax_category,
             'available' => (bool) $item->available,
             'rating' => (float) ($item->rating ?? 0),
             'review_count' => (int) ($item->review_count ?? 0),

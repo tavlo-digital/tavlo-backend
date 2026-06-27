@@ -234,7 +234,7 @@ class TableCartTest extends TestCase
         $this->assertSame(0.7, $myItem['vat_amount']);
         $this->assertSame(7.7, $myItem['line_total']);
         $this->assertSame(10, $myItem['menu_item']['vat_rate']);
-        $this->assertSame('Food', $myItem['menu_item']['tax_category']);
+        $this->assertSame('food', $myItem['menu_item']['tax_category']);
 
         $this->assertSame(0.35, $otherItem['vat_amount']);
         $this->assertSame(10, $otherItem['menu_item']['vat_rate']);
@@ -1104,7 +1104,7 @@ class TableCartTest extends TestCase
         $this->assertSame(7.15, $payload['unit_price']);
         $this->assertSame(14.3, $payload['line_total']);
         $this->assertSame(10, $payload['vat_rate']);
-        $this->assertSame('Food', $payload['tax_category']);
+        $this->assertSame('food', $payload['tax_category']);
         $this->assertSame(1.3, $payload['vat_amount']);
         $this->assertSame('Cheese sauce', $payload['paid_addons'][0]['name']);
         $this->assertSame(1.65, $payload['paid_addons'][0]['price']);

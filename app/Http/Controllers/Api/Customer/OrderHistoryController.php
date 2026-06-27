@@ -250,9 +250,7 @@ class OrderHistoryController extends Controller
         $countryCode = TaxCalculationService::countryCode($vendorCountry);
         $receiptLocale = 'en-'.$countryCode;
 
-        $taxCategoryNameFn = fn (string $slug) => $this->locales->translatedTaxCategoryName($slug, $vendorCountry, $contentLocale);
-
-        $receiptItems = $items->map(function (CartItem $item) use ($order, $vendorCountry, $vendor, $contentLocale, $taxCategoryNameFn) {
+        $receiptItems = $items->map(function (CartItem $item) use ($order, $vendorCountry, $vendor, $contentLocale) {
             $menuItem = $item->menuItem;
             $unitPrice = $this->cartItemUnitPrice($item, $vendorCountry);
             $lineGross = round($unitPrice * $item->quantity, 2);
@@ -275,7 +273,7 @@ class OrderHistoryController extends Controller
                 'free_addons' => $this->formatNamedSelections($item, 'free_addons', $vendor, $contentLocale),
                 'removed_items' => $this->formatNamedSelections($item, 'removed_items', $vendor, $contentLocale),
                 'selected_modifiers' => $this->formatSelectedModifiers($item, $taxCategory, $vendorCountry, $vendor, $contentLocale),
-                'tax_category' => $taxCategoryNameFn($taxCategory),
+                'tax_category' => strtoupper($taxCategory),
                 'vat_rate' => $vatRate,
                 'vat_amount' => $vatAmount,
                 'is_mine' => (int) $item->order_id === (int) $order->id,
@@ -285,7 +283,8 @@ class OrderHistoryController extends Controller
         })->values()->all();
 
         $taxGroupsFormatted = array_map(fn (array $group) => array_merge($group, [
-            'tax_category' => $taxCategoryNameFn($group['tax_category']),
+            'tax_category' => strtoupper($group['tax_category']),
+            'label' => $this->locales->translatedTaxCategoryName($group['tax_category'], $vendorCountry, $contentLocale),
         ]), $taxGroups);
 
         return response()->json([
@@ -488,7 +487,7 @@ class OrderHistoryController extends Controller
             'removed_items' => $this->formatNamedSelections($item, 'removed_items', $vendor, $locale),
             'selected_modifiers' => $this->formatSelectedModifiers($item, $itemTaxCategory, $vendorCountry, $vendor, $locale),
             'vat_rate' => $vatRate,
-            'tax_category' => $this->locales->translatedTaxCategoryName($itemTaxCategory, $vendorCountry, $locale),
+            'tax_category' => $itemTaxCategory,
             'vat_amount' => $vatAmount,
             'line_total' => $lineTotal,
             'is_mine' => (int) $item->order_id === (int) $order->id,
@@ -674,7 +673,7 @@ class OrderHistoryController extends Controller
             'unit_price' => $unitPrice,
             'line_total' => $lineTotal,
             'vat_rate' => $vatRate,
-            'tax_category' => $this->locales->translatedTaxCategoryName($itemTaxCategory, $vendorCountry, $locale),
+            'tax_category' => $itemTaxCategory,
             'status' => $item->status(),
             'notes' => $item->notes,
             'paid_addons' => $this->formatPaidAddons($item, $itemTaxCategory, $vendorCountry, $vendor, $locale),
@@ -687,7 +686,7 @@ class OrderHistoryController extends Controller
     private function translateTaxGroups(array $taxGroups, string $vendorCountry, string $locale): array
     {
         return array_map(fn (array $group) => array_merge($group, [
-            'tax_category' => $this->locales->translatedTaxCategoryName($group['tax_category'], $vendorCountry, $locale),
+            'label' => $this->locales->translatedTaxCategoryName($group['tax_category'], $vendorCountry, $locale),
         ]), $taxGroups);
     }
 
