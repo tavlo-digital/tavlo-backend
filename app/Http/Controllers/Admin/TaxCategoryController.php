@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Country;
 use App\Models\TaxCategory;
+use App\Services\LocaleService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -13,9 +14,14 @@ use Inertia\Response;
 
 class TaxCategoryController extends Controller
 {
+    public function __construct(
+        private readonly LocaleService $locales,
+    ) {}
+
     public function index(): Response
     {
         $categories = TaxCategory::query()
+            ->with('localizedTranslations')
             ->orderBy('country')
             ->orderBy('slug')
             ->get()
@@ -26,6 +32,12 @@ class TaxCategoryController extends Controller
                 'name'     => $tc->name,
                 'vatRate'  => (float) $tc->vat_rate,
                 'isActive' => $tc->is_active,
+                'translations' => $this->locales->translationMap(
+                    $tc,
+                    'localizedTranslations',
+                    ['name'],
+                    ['name' => $tc->name]
+                ),
             ]);
 
         $countries = Country::where('is_active', true)
@@ -40,6 +52,7 @@ class TaxCategoryController extends Controller
         return Inertia::render('admin/tax-categories/index', [
             'categories' => $categories,
             'countries'  => $countries,
+            'languages'  => $this->locales->languageOptions(),
         ]);
     }
 
@@ -54,15 +67,27 @@ class TaxCategoryController extends Controller
             'name'     => ['required', 'string', 'max:255'],
             'vat_rate' => ['required', 'numeric', 'min:0', 'max:100'],
             'is_active' => ['boolean'],
+            'translations' => ['nullable', 'array'],
+            'translations.*' => ['array'],
+            'translations.*.name' => ['nullable', 'string', 'max:255'],
         ]);
 
-        TaxCategory::create([
+        $category = TaxCategory::create([
             'country'   => $validated['country'],
             'slug'      => $validated['slug'],
             'name'      => $validated['name'],
             'vat_rate'  => $validated['vat_rate'],
             'is_active' => $validated['is_active'] ?? true,
         ]);
+
+        $translations = $validated['translations'] ?? [];
+        $translations['en'] = ['name' => $validated['name']];
+        $this->locales->syncTranslations(
+            $category,
+            'localizedTranslations',
+            $translations,
+            ['name']
+        );
 
         return to_route('admin.tax-categories.index')->with('status', 'Tax category created.');
     }
@@ -78,6 +103,9 @@ class TaxCategoryController extends Controller
             'name'     => ['required', 'string', 'max:255'],
             'vat_rate' => ['required', 'numeric', 'min:0', 'max:100'],
             'is_active' => ['boolean'],
+            'translations' => ['nullable', 'array'],
+            'translations.*' => ['array'],
+            'translations.*.name' => ['nullable', 'string', 'max:255'],
         ]);
 
         $taxCategory->update([
@@ -87,6 +115,15 @@ class TaxCategoryController extends Controller
             'vat_rate'  => $validated['vat_rate'],
             'is_active' => $validated['is_active'] ?? false,
         ]);
+
+        $translations = $validated['translations'] ?? [];
+        $translations['en'] = ['name' => $validated['name']];
+        $this->locales->syncTranslations(
+            $taxCategory,
+            'localizedTranslations',
+            $translations,
+            ['name']
+        );
 
         return to_route('admin.tax-categories.index')->with('status', 'Tax category updated.');
     }

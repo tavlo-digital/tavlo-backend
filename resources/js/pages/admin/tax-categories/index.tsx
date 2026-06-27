@@ -1,6 +1,8 @@
 import { Head, router, useForm } from '@inertiajs/react';
 import { CircleCheckBig, CircleX, Edit2, Receipt, Search, Trash2, X } from 'lucide-react';
 import { FormEvent, useMemo, useState } from 'react';
+import AdminLanguageTabs, { languageDirection } from '@/components/admin-language-tabs';
+import type { AdminLanguage } from '@/components/admin-language-tabs';
 import AdminLayout from '@/layouts/admin-layout';
 
 type TaxCategory = {
@@ -10,6 +12,7 @@ type TaxCategory = {
     name: string;
     vatRate: number;
     isActive: boolean;
+    translations: Record<string, { name?: string }>;
 };
 
 type TaxCategoryForm = {
@@ -19,6 +22,7 @@ type TaxCategoryForm = {
     name: string;
     vat_rate: number;
     is_active: boolean;
+    translations: Record<string, { name: string }>;
 };
 
 type CountryOption = {
@@ -27,22 +31,24 @@ type CountryOption = {
     flag: string | null;
 };
 
-const emptyForm: TaxCategoryForm = {
+const emptyForm = (languages: AdminLanguage[]): TaxCategoryForm => ({
     country: 'AT',
     slug: '',
     name: '',
     vat_rate: 0,
     is_active: true,
-};
+    translations: Object.fromEntries(languages.map((language) => [language.code, { name: '' }])),
+});
 
-export default function AdminTaxCategoriesIndex({ categories, countries }: { categories: TaxCategory[]; countries: CountryOption[] }) {
+export default function AdminTaxCategoriesIndex({ categories, countries, languages }: { categories: TaxCategory[]; countries: CountryOption[]; languages: AdminLanguage[] }) {
     function countryLabel(code: string) {
         return countries.find((c) => c.code === code);
     }
     const [editing, setEditing] = useState<TaxCategory | null>(null);
     const [searchQuery, setSearchQuery] = useState('');
     const [countryFilter, setCountryFilter] = useState<string>('all');
-    const form = useForm<TaxCategoryForm>(emptyForm);
+    const [selectedLang, setSelectedLang] = useState('en');
+    const form = useForm<TaxCategoryForm>(emptyForm(languages));
 
     const filteredCategories = useMemo(() => {
         let result = categories;
@@ -98,20 +104,34 @@ export default function AdminTaxCategoriesIndex({ categories, countries }: { cat
 
     function startEdit(tc: TaxCategory) {
         setEditing(tc);
+        setSelectedLang('en');
         form.setData({
             country: tc.country,
             slug: tc.slug,
             name: tc.name,
             vat_rate: tc.vatRate,
             is_active: tc.isActive,
+            translations: Object.fromEntries(languages.map((language) => [language.code, { name: tc.translations[language.code]?.name ?? '' }])),
         });
         form.clearErrors();
     }
 
     function resetForm() {
         setEditing(null);
-        form.setData(emptyForm);
+        setSelectedLang('en');
+        form.setData(emptyForm(languages));
         form.clearErrors();
+    }
+
+    function setTranslation(language: string, value: string) {
+        form.setData({
+            ...form.data,
+            name: language === 'en' ? value : form.data.name,
+            translations: {
+                ...form.data.translations,
+                [language]: { name: value },
+            },
+        });
     }
 
     function submit(event: FormEvent) {
@@ -139,6 +159,9 @@ export default function AdminTaxCategoriesIndex({ categories, countries }: { cat
 
         router.delete(`/admin/tax-categories/${tc.id}`, { preserveScroll: true });
     }
+
+    const selectedLanguage = languages.find((language) => language.code === selectedLang) ?? languages[0];
+    const namesByLanguage = Object.fromEntries(languages.map((language) => [language.code, language.code === 'en' ? form.data.name : form.data.translations[language.code]?.name]));
 
     return (
         <AdminLayout>
@@ -299,6 +322,8 @@ export default function AdminTaxCategoriesIndex({ categories, countries }: { cat
                         </div>
 
                         <div className="space-y-4 p-5">
+                            <AdminLanguageTabs languages={languages} activeLanguage={selectedLang} onLanguageChange={setSelectedLang} values={namesByLanguage} />
+
                             <label className="block">
                                 <span className="text-sm font-medium text-gray-700">Country</span>
                                 <select
@@ -316,15 +341,16 @@ export default function AdminTaxCategoriesIndex({ categories, countries }: { cat
                             </label>
 
                             <label className="block">
-                                <span className="text-sm font-medium text-gray-700">Name</span>
+                                <span className="text-sm font-medium text-gray-700">Name ({selectedLanguage?.name ?? selectedLang.toUpperCase()}) *</span>
                                 <input
                                     type="text"
-                                    value={form.data.name}
-                                    onChange={(e) => form.setData('name', e.target.value)}
+                                    value={selectedLang === 'en' ? form.data.name : (form.data.translations[selectedLang]?.name ?? '')}
+                                    onChange={(e) => setTranslation(selectedLang, e.target.value)}
+                                    dir={languageDirection(selectedLanguage)}
                                     className="mt-1.5 w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 focus:border-transparent focus:ring-2 focus:ring-purple-600 focus:outline-none"
-                                    placeholder="e.g. Food, Beverage (Non-Alcoholic)"
+                                    placeholder={`e.g. Food, Beverage (${selectedLanguage?.name ?? selectedLang.toUpperCase()})`}
                                 />
-                                {form.errors.name && <p className="mt-1 text-xs text-red-600">{form.errors.name}</p>}
+                                {selectedLang === 'en' && form.errors.name && <p className="mt-1 text-xs text-red-600">{form.errors.name}</p>}
                             </label>
 
                             <label className="block">

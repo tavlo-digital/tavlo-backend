@@ -27,4 +27,9 @@ class TaxCategory extends Model
     {
         return $this->hasMany(MenuCategory::class);
     }
+
+    public function localizedTranslations(): HasMany
+    {
+        return $this->hasMany(TaxCategoryTranslation::class);
+    }
 }
