@@ -45,7 +45,7 @@ class OrderController extends Controller
             ->orderBy('scanned_at')
             ->get();
 
-        $ordersByScanSession = Order::with([
+        $sessionOrders = Order::with([
             'customer:id,first_name,last_name,email,phone,customer_public_id',
             'tableScanSession.restaurantTable:id,number,name',
             'vendor.vendorSetting',
@@ -54,19 +54,15 @@ class OrderController extends Controller
             ->whereIn('table_scan_session_id', $activeScanSessions->pluck('id'))
             ->when($statusFilter, fn ($q) => $q->where('status', $statusFilter))
             ->orderBy('created_at')
-            ->get()
-            ->groupBy('table_scan_session_id');
+            ->get();
 
-        $sessions = $activeScanSessions
-            ->groupBy('restaurant_table_id')
-            ->map(fn (Collection $group) => $this->formatTableScanSessionGroup($group, $ordersByScanSession))
-            ->values();
-
-        // Takeaway / non-session orders
         $takeawayQuery = $vendor->orders()
             ->whereNull('table_scan_session_id')
             ->where('order_type', '!=', 'dine-in')
-            ->with('customer:id,first_name,last_name,email,phone,customer_public_id')
+            ->with([
+                'customer:id,first_name,last_name,email,phone,customer_public_id',
+                'vendor.vendorSetting',
+            ])
             ->orderByDesc('created_at');
 
         if ($statusFilter) {
@@ -77,7 +73,19 @@ class OrderController extends Controller
             $takeawayQuery->where('order_type', $orderTypeFilter);
         }
 
-        $takeaway = $takeawayQuery->get()->map(fn (Order $order) => $this->formatOrder($order));
+        $takeawayOrders = $takeawayQuery->get();
+
+        $allOrders = $sessionOrders->merge($takeawayOrders);
+        $cartItemCache = $this->batchLoadLinkedCartItems($allOrders);
+
+        $ordersByScanSession = $sessionOrders->groupBy('table_scan_session_id');
+
+        $sessions = $activeScanSessions
+            ->groupBy('restaurant_table_id')
+            ->map(fn (Collection $group) => $this->formatTableScanSessionGroup($group, $ordersByScanSession, $cartItemCache))
+            ->values();
+
+        $takeaway = $takeawayOrders->map(fn (Order $order) => $this->formatOrder($order, $cartItemCache));
 
         return response()->json([
             'sessions' => $sessions,
@@ -501,7 +509,7 @@ class OrderController extends Controller
     // Private helpers
     // ----------------------------------------------------------------
 
-    private function formatTableScanSessionGroup(Collection $scanSessions, Collection $ordersByScanSession): array
+    private function formatTableScanSessionGroup(Collection $scanSessions, Collection $ordersByScanSession, ?Collection $cartItemCache = null): array
     {
         /** @var TableScanSession $first */
         $first = $scanSessions->first();
@@ -558,7 +566,7 @@ class OrderController extends Controller
             'cashPending' => $hasCashPending,
             'closedAt' => null,
             'kitchenSummary' => $kitchenSummary,
-            'orders' => $orders->map(fn (Order $order) => $this->formatOrder($order))->values(),
+            'orders' => $orders->map(fn (Order $order) => $this->formatOrder($order, $cartItemCache))->values(),
             'createdAt' => $scanSessions->min('scanned_at')?->toISOString() ?? $first->created_at?->toISOString(),
             'updatedAt' => $scanSessions->max('updated_at')?->toISOString() ?? $first->updated_at?->toISOString(),
         ];
@@ -600,7 +608,7 @@ class OrderController extends Controller
         ];
     }
 
-    private function formatOrder(Order $order): array
+    private function formatOrder(Order $order, ?Collection $cartItemCache = null): array
     {
         $vendor = $order->relationLoaded('vendor') ? $order->vendor : ($order->vendor ?? null);
         $vendorCountry = $vendor?->country ?? 'AT';
@@ -608,7 +616,7 @@ class OrderController extends Controller
         $serviceFeeRate = (float) ($vendor?->vendorSetting?->service_fee_rate ?? 0);
         $total = (float) $order->amount;
 
-        $linkedItems = $this->loadLinkedCartItems($order);
+        $linkedItems = $cartItemCache ? ($cartItemCache->get($order->id) ?? collect()) : $this->loadLinkedCartItems($order);
         $itemsCount = (int) $linkedItems->sum('quantity');
         $readyAt = $linkedItems->isNotEmpty() && $linkedItems->every(fn (CartItem $ci) => $ci->ready_at !== null)
             ? $linkedItems->max(fn (CartItem $ci) => $ci->ready_at)
@@ -766,6 +774,70 @@ class OrderController extends Controller
      * Load every cart_item linked to an order: owned by the order's session
      * (if any) plus any cart_item whose shared_order_ids JSON contains the order id.
      */
+    /**
+     * Batch-load all cart items for a collection of orders in a single query.
+     * Returns a Collection keyed by order ID, each value being the linked cart items.
+     */
+    private function batchLoadLinkedCartItems(Collection $orders): Collection
+    {
+        if ($orders->isEmpty()) {
+            return collect();
+        }
+
+        $orderIds = $orders->pluck('id')->all();
+
+        $draftSessionIds = $orders
+            ->filter(fn (Order $o) => $o->status === 'draft' && $o->table_scan_session_id)
+            ->pluck('table_scan_session_id')
+            ->unique()
+            ->all();
+
+        $nonDraftOrderIds = $orders
+            ->reject(fn (Order $o) => $o->status === 'draft' && $o->table_scan_session_id)
+            ->pluck('id')
+            ->all();
+
+        $allItems = CartItem::with('menuItem:id,name,price,has_discount,discounted_price,image_url,menu_category_id,vat_rate,tax_category,paid_addons,free_addons,removable_items', 'menuItem.category.masterCategory')
+            ->where(function ($q) use ($nonDraftOrderIds, $draftSessionIds, $orderIds) {
+                if (! empty($nonDraftOrderIds)) {
+                    $q->orWhereIn('order_id', $nonDraftOrderIds);
+                }
+                if (! empty($draftSessionIds)) {
+                    $q->orWhere(function ($sub) use ($draftSessionIds) {
+                        $sub->whereIn('table_scan_session_id', $draftSessionIds)
+                            ->whereNull('order_id');
+                    });
+                }
+                foreach ($orderIds as $orderId) {
+                    $q->orWhereJsonContains('shared_order_ids', $orderId);
+                }
+            })
+            ->get();
+
+        $cache = collect();
+        foreach ($orders as $order) {
+            $items = $allItems->filter(function (CartItem $ci) use ($order) {
+                if ($order->status === 'draft' && $order->table_scan_session_id) {
+                    if ($ci->table_scan_session_id == $order->table_scan_session_id && $ci->order_id === null) {
+                        return true;
+                    }
+                } else {
+                    if ($ci->order_id == $order->id) {
+                        return true;
+                    }
+                }
+
+                $shared = is_array($ci->shared_order_ids) ? $ci->shared_order_ids : [];
+
+                return in_array($order->id, $shared);
+            })->values();
+
+            $cache->put($order->id, $items);
+        }
+
+        return $cache;
+    }
+
     private function loadLinkedCartItems(Order $order)
     {
         return CartItem::with('menuItem:id,name,price,has_discount,discounted_price,image_url,menu_category_id,vat_rate,tax_category,paid_addons,free_addons,removable_items', 'menuItem.category.masterCategory')
