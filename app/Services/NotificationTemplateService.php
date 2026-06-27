@@ -159,8 +159,8 @@ class NotificationTemplateService
         'table.call' => [
             'event' => 'table_call',
             'label' => 'Table call',
-            'default' => 'Table {table_label} is calling.',
-            'placeholders' => ['table_label'],
+            'default' => 'Table {table_label} is calling. {note}',
+            'placeholders' => ['table_label', 'note'],
         ],
         'staff.order_confirmed' => [
             'event' => 'order_confirmed',
@@ -218,7 +218,15 @@ class NotificationTemplateService
             ?? (self::TEMPLATES[$key]['default'] ?? null)
             ?? $notification->message;
 
-        return $this->replacePlaceholders($template, $this->placeholderValues($notification, $locale));
+        $rendered = $this->replacePlaceholders($template, $this->placeholderValues($notification, $locale));
+        $note = trim((string) ($metadata['note'] ?? ''));
+
+        // Existing customized templates may predate the optional note placeholder.
+        if ($key === 'table.call' && $note !== '' && ! str_contains($template, '{note}')) {
+            $rendered .= ' '.$note;
+        }
+
+        return trim($rendered);
     }
 
     public function messageFor(string $key, string $locale): ?string
@@ -248,6 +256,7 @@ class NotificationTemplateService
             'item_name' => $this->itemName($metadata, $notification->vendor, $locale),
             'table_label' => $metadata['table_label'] ?? $this->tableLabel($metadata['table_id'] ?? null),
             'order_number' => $metadata['order_number'] ?? $metadata['order_id'] ?? '',
+            'note' => $metadata['note'] ?? '',
         ];
     }
 

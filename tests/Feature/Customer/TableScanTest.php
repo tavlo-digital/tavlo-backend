@@ -12,6 +12,7 @@ use App\Models\RestaurantTable;
 use App\Models\TableScanSession;
 use App\Models\TeamMember;
 use App\Models\Vendor;
+use App\Services\NotificationTemplateService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -944,6 +945,45 @@ class TableScanTest extends TestCase
             'waiter_id' => $waiter2->id,
             'event' => 'table_call',
         ]);
+    }
+
+    public function test_call_accepts_an_optional_note_for_waiters(): void
+    {
+        $table = $this->makeTable();
+        $waiter = TeamMember::create([
+            'vendor_id' => $this->vendor->id,
+            'name' => 'Waiter',
+            'email' => 'waiter-note@test.com',
+            'role' => 'waiter',
+            'status' => 'active',
+        ]);
+
+        $this->postCall([
+            'table_id' => $table->id,
+            'note' => 'Please bring the bill.',
+        ])->assertOk();
+
+        $notification = Notification::where('waiter_id', $waiter->id)
+            ->where('event', 'table_call')
+            ->firstOrFail();
+
+        $this->assertSame('Note: Please bring the bill.', $notification->metadata['note']);
+        $this->assertStringContainsString('Please bring the bill.', $notification->message);
+        $this->assertStringContainsString(
+            'Please bring the bill.',
+            app(NotificationTemplateService::class)->render($notification, 'en'),
+        );
+    }
+
+    public function test_call_rejects_a_note_longer_than_500_characters(): void
+    {
+        $table = $this->makeTable();
+
+        $this->postCall([
+            'table_id' => $table->id,
+            'note' => str_repeat('a', 501),
+        ])->assertUnprocessable()
+            ->assertJsonValidationErrors('note');
     }
 
     public function test_call_does_not_notify_kitchen_staff(): void

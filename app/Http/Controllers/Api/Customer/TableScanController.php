@@ -428,10 +428,17 @@ class TableScanController extends Controller
     {
         $data = Validator::make($request->all(), [
             'table_id' => ['required', 'integer', 'exists:restaurant_tables,id'],
+            'note' => ['nullable', 'string', 'max:500'],
         ])->validate();
 
         $table = RestaurantTable::query()->findOrFail($data['table_id']);
         $tableLabel = $table->name ?? "#{$table->number}";
+        $note = $data['note'] ?? null;
+        $message = "Table {$tableLabel} is calling.";
+
+        if ($note) {
+            $message .= " Note: {$note}";
+        }
 
         $waiterIds = TeamMember::query()
             ->where('vendor_id', $table->vendor_id)
@@ -448,13 +455,14 @@ class TableScanController extends Controller
         NotificationService::notifyOperations(
             $table->vendor_id,
             'table_call',
-            "Table {$tableLabel} is calling.",
+            $message,
             [NotificationService::WAITER],
             [
                 'resources' => ['tables', 'notifications'],
                 'template' => 'table.call',
                 'table_id' => $table->id,
                 'table_label' => $tableLabel,
+                'note' => $note ? "Note: {$note}" : '',
                 'severity' => 'urgent',
                 'sound' => 'table_call',
                 'source_actor_type' => 'customer',
