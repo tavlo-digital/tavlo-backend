@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Language;
+use App\Models\TaxCategory;
 use App\Models\Vendor;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
@@ -223,6 +224,46 @@ class LocaleService
 
             $model->{$relation}()->updateOrCreate(['language' => $language], $values);
         }
+    }
+
+    public function translatedTaxCategoryName(string $slug, string $country, string $locale): string
+    {
+        $lookup = $this->taxCategoryLookup($country, $locale);
+
+        return $lookup[$slug] ?? ucfirst(str_replace(['_', '-'], ' ', $slug));
+    }
+
+    private function taxCategoryLookup(string $country, string $locale): array
+    {
+        static $cache = [];
+        $key = "{$country}:{$locale}";
+
+        if (isset($cache[$key])) {
+            return $cache[$key];
+        }
+
+        $categories = TaxCategory::where('country', $country)
+            ->with('localizedTranslations')
+            ->get();
+
+        $map = [];
+        foreach ($categories as $tc) {
+            $name = null;
+
+            if ($locale !== 'en') {
+                $name = $tc->localizedTranslations->firstWhere('language', $locale)?->name;
+            }
+
+            if (! $name) {
+                $name = $tc->localizedTranslations->firstWhere('language', 'en')?->name ?? $tc->name;
+            }
+
+            $map[$tc->slug] = $name ?: $tc->slug;
+        }
+
+        $cache[$key] = $map;
+
+        return $map;
     }
 
     private function normalizeAgainst(mixed $language, array $active): ?string

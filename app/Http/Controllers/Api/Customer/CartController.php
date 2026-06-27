@@ -100,7 +100,11 @@ class CartController extends Controller
             ? $this->locales->resolveCustomerLocaleFromHeader($request, $vendor)
             : 'en';
 
-        $people = $sessions->map(function (TableScanSession $s) use ($mySession, $orderedOrderIds, $vendorCountry, $serviceFeeRate, $vendor, $locale) {
+        $translateTaxGroups = fn (array $groups) => array_map(fn (array $g) => array_merge($g, [
+            'tax_category' => $this->locales->translatedTaxCategoryName($g['tax_category'], $vendorCountry, $locale),
+        ]), $groups);
+
+        $people = $sessions->map(function (TableScanSession $s) use ($mySession, $orderedOrderIds, $vendorCountry, $serviceFeeRate, $vendor, $locale, $translateTaxGroups) {
             $personItems = $s->cartItems
                 ->filter(fn (CartItem $item) => $item->order_id === null
                     && ! $this->cartItemBelongsToOrderedOrder($item, $orderedOrderIds))
@@ -118,7 +122,7 @@ class CartController extends Controller
                     : 'Guest',
                 'personal_items' => $personItems
                     ->map(fn (CartItem $item) => $this->itemPayload($item, $vendorCountry, $vendor, $locale)),
-                'tax_groups' => $personTaxGroups,
+                'tax_groups' => $translateTaxGroups($personTaxGroups),
                 'totals' => $personTotals,
             ];
         });
@@ -474,7 +478,9 @@ class CartController extends Controller
                 'item_count' => $personalCount,
                 'total_price' => round($personalTotal, 2),
                 'items' => $items,
-                'tax_groups' => $personTaxGroups,
+                'tax_groups' => array_map(fn (array $g) => array_merge($g, [
+                    'tax_category' => $this->locales->translatedTaxCategoryName($g['tax_category'], $vendorCountry, $locale),
+                ]), $personTaxGroups),
                 'totals' => $personTotals,
             ];
         })->values();
@@ -983,7 +989,9 @@ class CartController extends Controller
                 'orders_count' => $personOrders->count(),
                 'total_amount' => round($personTotal, 2),
                 'orders' => $orderPayloads,
-                'tax_groups' => $personTaxGroups,
+                'tax_groups' => array_map(fn (array $g) => array_merge($g, [
+                    'tax_category' => $this->locales->translatedTaxCategoryName($g['tax_category'], $vendorCountry, $locale),
+                ]), $personTaxGroups),
                 'totals' => $personTotals,
             ];
         })->values();
@@ -1067,7 +1075,7 @@ class CartController extends Controller
             'removed_items' => $this->formatCartNamedSelections($ci, 'removed_items', $vendor, $locale),
             'selected_modifiers' => $this->formatCartSelectedModifiers($ci, $itemTaxCategory, $vendorCountry, $vendor, $locale),
             'vat_rate' => $vatRate,
-            'tax_category' => $itemTaxCategory,
+            'tax_category' => $this->locales->translatedTaxCategoryName($itemTaxCategory, $vendorCountry, $locale),
             'vat_amount' => $vatAmount,
             'line_total' => $lineTotal,
             'is_mine' => (int) $ci->table_scan_session_id === (int) $mySession->id,
@@ -1325,7 +1333,7 @@ class CartController extends Controller
                     : $menuItem->name,
                 'price' => $baseGross,
                 'vat_rate' => $vatRate,
-                'tax_category' => $menuItem->tax_category,
+                'tax_category' => $this->locales->translatedTaxCategoryName($menuItem->tax_category ?? 'food', $vendorCountry, $locale),
                 'image_url' => $menuItem->image_url,
             ] : null,
         ];
