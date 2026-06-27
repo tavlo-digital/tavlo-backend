@@ -4,6 +4,7 @@ namespace Tests\Feature\Customer;
 
 use App\Models\Allergen;
 use App\Models\DietaryPreference;
+use App\Models\MasterMenuCategory;
 use App\Models\MenuCategory;
 use App\Models\MenuItem;
 use App\Models\ModifierGroup;
@@ -137,6 +138,31 @@ class RestaurantTranslationTest extends TestCase
             ->assertJsonPath('modifier_groups.0.options.0.name', 'Groß');
 
         $this->assertStringContainsString('Accept-Language', $response->headers->get('Vary'));
+    }
+
+    public function test_accept_language_localizes_categories_from_master_category_translations(): void
+    {
+        $masterCategory = MasterMenuCategory::create([
+            'name' => 'Mains',
+            'slug' => 'mains',
+            'is_active' => true,
+        ]);
+        $masterCategory->localizedTranslations()->create([
+            'language' => 'de',
+            'name' => 'Hauptgerichte',
+        ]);
+        MenuCategory::create([
+            'vendor_id' => $this->vendor->id,
+            'master_menu_category_id' => $masterCategory->id,
+            'is_active' => true,
+            'sort_order' => 2,
+        ]);
+
+        $this->withHeader('Accept-Language', 'de-DE,de;q=0.9,en;q=0.8')
+            ->getJson("/api/customer/restaurants/{$this->vendor->vendor_public_id}/categories")
+            ->assertOk()
+            ->assertHeader('Content-Language', 'de')
+            ->assertJsonFragment(['name' => 'Hauptgerichte']);
     }
 
     public function test_query_language_overrides_accept_language(): void

@@ -343,19 +343,12 @@ class RestaurantController extends Controller
 
         $categories = MenuCategory::where('vendor_id', $vendor->id)
             ->where('is_active', true)
-            ->with(['masterCategory', 'localizedTranslations'])
+            ->with(['masterCategory.localizedTranslations', 'localizedTranslations'])
             ->orderBy('sort_order')
             ->get()
             ->map(fn (MenuCategory $category) => [
                 'id' => $category->id,
-                'name' => $this->locales->translated(
-                    $category,
-                    'localizedTranslations',
-                    'name',
-                    $vendor,
-                    $locale,
-                    $category->display_name
-                ),
+                'name' => $this->translatedCategoryName($category, $vendor, $locale),
                 'slug' => $category->display_slug,
                 'icon' => $category->display_icon,
                 'sort_order' => $category->sort_order,
@@ -378,7 +371,7 @@ class RestaurantController extends Controller
             ->where('is_active', true)
             ->where('available', true)
             ->with([
-                'category.masterCategory',
+                'category.masterCategory.localizedTranslations',
                 'category.localizedTranslations',
                 'itemTranslations',
                 'allergens' => fn ($q) => $q->select('allergens.id', 'name', 'icon')->with('localizedTranslations'),
@@ -467,14 +460,7 @@ class RestaurantController extends Controller
                 'removable_item_options' => $this->customizations->formatNamedDefinitions($item->removable_items ?? [], $vendor, $locale),
                 'category' => $item->category ? [
                     'id' => $item->category->id,
-                    'name' => $this->locales->translated(
-                        $item->category,
-                        'localizedTranslations',
-                        'name',
-                        $vendor,
-                        $locale,
-                        $item->category->display_name
-                    ),
+                    'name' => $this->translatedCategoryName($item->category, $vendor, $locale),
                     'slug' => $item->category->display_slug,
                     'icon' => $item->category->display_icon,
                 ] : null,
@@ -508,7 +494,7 @@ class RestaurantController extends Controller
             ->where('is_active', true)
             ->where('available', true)
             ->with([
-                'category.masterCategory',
+                'category.masterCategory.localizedTranslations',
                 'category.localizedTranslations',
                 'itemTranslations',
                 'allergens' => fn ($q) => $q->select('allergens.id', 'name', 'icon')->with('localizedTranslations'),
@@ -571,14 +557,7 @@ class RestaurantController extends Controller
             'ingredients' => $item->ingredients,
             'category' => $item->category ? [
                 'id' => $item->category->id,
-                'name' => $this->locales->translated(
-                    $item->category,
-                    'localizedTranslations',
-                    'name',
-                    $vendor,
-                    $locale,
-                    $item->category->display_name
-                ),
+                'name' => $this->translatedCategoryName($item->category, $vendor, $locale),
                 'slug' => $item->category->display_slug,
                 'icon' => $item->category->display_icon,
             ] : null,
@@ -1247,6 +1226,30 @@ class RestaurantController extends Controller
         }
 
         return $customer->favorites()->where('vendors.id', $vendorId)->exists();
+    }
+
+    private function translatedCategoryName(MenuCategory $category, Vendor $vendor, string $locale): string
+    {
+        $vendorTranslations = $category->localizedTranslations;
+        $masterTranslations = $category->masterCategory?->localizedTranslations ?? collect();
+
+        foreach ($this->locales->fallbackChain($vendor, $locale) as $language) {
+            $vendorName = $vendorTranslations->firstWhere('language', $language)?->name;
+            if (is_string($vendorName) && trim($vendorName) !== '') {
+                return trim($vendorName);
+            }
+
+            $masterName = $masterTranslations->firstWhere('language', $language)?->name;
+            if (is_string($masterName) && trim($masterName) !== '') {
+                return trim($masterName);
+            }
+
+            if ($language === 'en') {
+                return $category->display_name;
+            }
+        }
+
+        return $category->display_name;
     }
 
     private function discoverableVendor(string $vendorPublicId): Vendor
