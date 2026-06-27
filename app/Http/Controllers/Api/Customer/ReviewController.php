@@ -45,6 +45,94 @@ class ReviewController extends Controller
         return response()->json($reviews);
     }
 
+    /**
+     * GET /api/customer/reviews/item/{menuItemId}
+     * Returns only the matching item-level entry from each session review.
+     */
+    public function itemReviews(Request $request, int $menuItemId): JsonResponse
+    {
+        $menuItem = MenuItem::query()
+            ->with([
+                'vendor:id,vendor_public_id,restaurant_name',
+                'vendor.vendorSetting:id,vendor_id,date_format,time_format,is_live_and_discoverable',
+            ])
+            ->whereKey($menuItemId)
+            ->where('is_active', true)
+            ->firstOrFail();
+
+        if (! $menuItem->vendor?->vendorSetting?->is_live_and_discoverable) {
+            abort(404);
+        }
+
+        $perPage = min(max($request->integer('per_page', 20), 1), 100);
+        $reviews = ReviewItem::query()
+            ->where('menu_item_id', $menuItem->id)
+            ->whereHas('review', fn ($query) => $query->where('flagged', false))
+            ->with([
+                'review:id,review_public_id,customer_id,vendor_id,order_id,table_scan_session_id,flagged,created_at,updated_at',
+                'review.customer:id,first_name,last_name,profile_picture',
+            ])
+            ->orderByDesc('created_at')
+            ->paginate($perPage);
+
+        $reviews->getCollection()->transform(function (ReviewItem $itemReview) use ($menuItem) {
+            $review = $itemReview->review;
+            $customer = $review?->customer;
+            $reviewerName = $customer
+                ? trim(($customer->first_name ?? '').' '.($customer->last_name ?? ''))
+                : '';
+
+            return [
+                'review_public_id' => $review?->review_public_id,
+                'session_scan_table_id' => $review?->table_scan_session_id,
+                'cart_item_id' => $itemReview->cart_item_id,
+                'rating' => $itemReview->rating,
+                'text' => $itemReview->text,
+                'photos' => $this->mediaUrls($itemReview->images),
+                'reviewer' => [
+                    'name' => $reviewerName !== '' ? $reviewerName : 'Anonymous',
+                    'profile_picture' => $customer?->profile_picture,
+                ],
+                'created_at' => $this->dateTimes->formatDateTime($itemReview->created_at, $menuItem->vendor),
+                'updated_at' => $this->dateTimes->formatDateTime($itemReview->updated_at, $menuItem->vendor),
+            ];
+        });
+
+        $counts = ReviewItem::query()
+            ->where('menu_item_id', $menuItem->id)
+            ->whereHas('review', fn ($query) => $query->where('flagged', false))
+            ->selectRaw('rating, COUNT(*) as count')
+            ->groupBy('rating')
+            ->pluck('count', 'rating');
+
+        $totalReviews = (int) $counts->sum();
+        $weightedRating = $counts->reduce(
+            fn (int|float $total, $count, $rating) => $total + ((int) $rating * (int) $count),
+            0,
+        );
+        $payload = $reviews->toArray();
+        $payload['menu_item'] = [
+            'id' => $menuItem->id,
+            'name' => $menuItem->name,
+            'image_url' => $menuItem->image_url,
+        ];
+        $payload['review_summary'] = [
+            'average_rating' => $totalReviews > 0 ? round($weightedRating / $totalReviews, 1) : 0,
+            'total_reviews' => $totalReviews,
+            'rating_breakdown' => collect(range(5, 1))->map(function (int $rating) use ($counts, $totalReviews) {
+                $count = (int) ($counts[$rating] ?? 0);
+
+                return [
+                    'star' => $rating,
+                    'count' => $count,
+                    'percent' => $totalReviews > 0 ? round(($count / $totalReviews) * 100, 1) : 0,
+                ];
+            })->all(),
+        ];
+
+        return response()->json($payload);
+    }
+
     public function sessionOrders(Request $request, int $sessionScanTableId): JsonResponse
     {
         $session = TableScanSession::whereKey($sessionScanTableId)

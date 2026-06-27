@@ -1151,6 +1151,135 @@ class CustomerFeaturesTest extends TestCase
             ->assertJsonPath('data.0.created_at', $review->created_at->format('m/d/Y g:i A'));
     }
 
+    public function test_can_list_only_reviews_for_a_specific_menu_item(): void
+    {
+        $category = MenuCategory::create([
+            'vendor_id' => $this->vendor->id,
+            'name' => 'Reviewed Items',
+            'slug' => 'reviewed-items',
+            'is_active' => true,
+        ]);
+        $menuItem = MenuItem::create([
+            'vendor_id' => $this->vendor->id,
+            'menu_category_id' => $category->id,
+            'name' => 'Margherita Pizza',
+            'price' => 12,
+            'is_active' => true,
+            'available' => true,
+        ]);
+        $otherMenuItem = MenuItem::create([
+            'vendor_id' => $this->vendor->id,
+            'menu_category_id' => $category->id,
+            'name' => 'Tiramisu',
+            'price' => 7,
+            'is_active' => true,
+            'available' => true,
+        ]);
+
+        $otherCustomer = Customer::factory()->create([
+            'first_name' => 'Other',
+            'last_name' => 'Customer',
+        ]);
+        $flaggedCustomer = Customer::factory()->create();
+        $reviewTable = RestaurantTable::create([
+            'vendor_id' => $this->vendor->id,
+            'number' => 99,
+            'name' => 'Review Table',
+            'qr_token' => RestaurantTable::generateQrToken(),
+            'is_active' => true,
+            'qr_created_at' => now(),
+        ]);
+        $nextPin = 1200;
+
+        $createItemReview = function (
+            Customer $customer,
+            MenuItem $item,
+            int $rating,
+            string $itemText,
+            bool $flagged = false,
+        ) use ($reviewTable, &$nextPin): array {
+            $session = TableScanSession::create([
+                'vendor_id' => $this->vendor->id,
+                'restaurant_table_id' => $reviewTable->id,
+                'customer_id' => $customer->id,
+                'pin' => (string) $nextPin++,
+                'status' => 'active',
+                'scanned_at' => now(),
+            ]);
+            $order = Order::factory()->create([
+                'customer_id' => $customer->id,
+                'vendor_id' => $this->vendor->id,
+                'table_scan_session_id' => $session->id,
+            ]);
+            $cartItem = CartItem::create([
+                'table_scan_session_id' => $session->id,
+                'menu_item_id' => $item->id,
+                'order_id' => $order->id,
+                'quantity' => 1,
+            ]);
+            $review = Review::create([
+                'review_public_id' => 'rev_item_'.uniqid(),
+                'customer_id' => $customer->id,
+                'vendor_id' => $this->vendor->id,
+                'table_scan_session_id' => $session->id,
+                'rating' => 1,
+                'text' => 'This overall session review must not be returned.',
+                'flagged' => $flagged,
+            ]);
+            $itemReview = ReviewItem::create([
+                'review_id' => $review->id,
+                'cart_item_id' => $cartItem->id,
+                'menu_item_id' => $item->id,
+                'rating' => $rating,
+                'text' => $itemText,
+            ]);
+
+            return [$review, $itemReview];
+        };
+
+        [$firstReview] = $createItemReview($this->customer, $menuItem, 5, 'Excellent pizza.');
+        $createItemReview($otherCustomer, $menuItem, 3, 'Good crust.');
+        $createItemReview($flaggedCustomer, $menuItem, 1, 'Flagged review.', true);
+
+        $otherCartItem = CartItem::create([
+            'table_scan_session_id' => $firstReview->table_scan_session_id,
+            'menu_item_id' => $otherMenuItem->id,
+            'quantity' => 1,
+        ]);
+        ReviewItem::create([
+            'review_id' => $firstReview->id,
+            'cart_item_id' => $otherCartItem->id,
+            'menu_item_id' => $otherMenuItem->id,
+            'rating' => 2,
+            'text' => 'This belongs to another item.',
+        ]);
+
+        $response = $this->getJson(
+            "/api/customer/reviews/item/{$menuItem->id}",
+            $this->headers,
+        );
+
+        $response->assertOk()
+            ->assertJsonCount(2, 'data')
+            ->assertJsonPath('menu_item.id', $menuItem->id)
+            ->assertJsonPath('menu_item.name', 'Margherita Pizza')
+            ->assertJsonPath('review_summary.average_rating', 4)
+            ->assertJsonPath('review_summary.total_reviews', 2)
+            ->assertJsonPath('review_summary.rating_breakdown.0.star', 5)
+            ->assertJsonPath('review_summary.rating_breakdown.0.count', 1)
+            ->assertJsonFragment(['text' => 'Excellent pizza.'])
+            ->assertJsonFragment(['text' => 'Good crust.'])
+            ->assertJsonMissing(['text' => 'Flagged review.'])
+            ->assertJsonMissing(['text' => 'This belongs to another item.'])
+            ->assertJsonMissing(['text' => 'This overall session review must not be returned.']);
+    }
+
+    public function test_item_reviews_require_authentication(): void
+    {
+        $this->getJson('/api/customer/reviews/item/999999')
+            ->assertUnauthorized();
+    }
+
     public function test_notifications_and_loyalty_transactions_follow_vendor_formats(): void
     {
         $this->vendor->vendorSetting()->update([
