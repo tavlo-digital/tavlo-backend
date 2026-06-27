@@ -37,7 +37,6 @@ class OrderController extends Controller
         $orderTypeFilter = $request->query('orderType');
 
         $activeScanSessions = TableScanSession::with([
-            'customer:id,first_name,last_name,email,phone,customer_public_id',
             'restaurantTable:id,number,name',
         ])
             ->where('vendor_id', $vendor->id)
@@ -47,8 +46,6 @@ class OrderController extends Controller
 
         $sessionOrders = Order::with([
             'customer:id,first_name,last_name,email,phone,customer_public_id',
-            'tableScanSession.restaurantTable:id,number,name',
-            'vendor.vendorSetting',
         ])
             ->where('vendor_id', $vendor->id)
             ->whereIn('table_scan_session_id', $activeScanSessions->pluck('id'))
@@ -56,12 +53,17 @@ class OrderController extends Controller
             ->orderBy('created_at')
             ->get();
 
+        $scanSessionsById = $activeScanSessions->keyBy('id');
+        $sessionOrders->each(function (Order $order) use ($scanSessionsById, $vendor) {
+            $order->setRelation('tableScanSession', $scanSessionsById->get($order->table_scan_session_id));
+            $order->setRelation('vendor', $vendor);
+        });
+
         $takeawayQuery = $vendor->orders()
             ->whereNull('table_scan_session_id')
             ->where('order_type', '!=', 'dine-in')
             ->with([
                 'customer:id,first_name,last_name,email,phone,customer_public_id',
-                'vendor.vendorSetting',
             ])
             ->orderByDesc('created_at');
 
@@ -74,9 +76,11 @@ class OrderController extends Controller
         }
 
         $takeawayOrders = $takeawayQuery->get();
+        $takeawayOrders->each(fn (Order $order) => $order->setRelation('vendor', $vendor));
 
         $allOrders = $sessionOrders->merge($takeawayOrders);
         $cartItemCache = $this->batchLoadLinkedCartItems($allOrders);
+        $this->customizations->preloadSelectedModifiers($cartItemCache->flatten(1));
 
         $ordersByScanSession = $sessionOrders->groupBy('table_scan_session_id');
 

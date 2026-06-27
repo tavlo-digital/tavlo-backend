@@ -13,6 +13,7 @@ use App\Models\TableScanSession;
 use App\Models\TeamMember;
 use App\Models\Vendor;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Tests\TestCase;
 
@@ -136,6 +137,31 @@ class OrderManagementTest extends TestCase
             ->assertJsonPath('sessions.0.kitchenSummary.total', 2)
             ->assertJsonPath('sessions.0.kitchenSummary.in_progress', 1)
             ->assertJsonCount(2, 'sessions.0.orders');
+    }
+
+    public function test_index_loads_active_languages_only_once_while_formatting_orders(): void
+    {
+        $session = $this->scanSession();
+
+        foreach (range(1, 3) as $number) {
+            $order = $this->order($session, [
+                'order_public_id' => 'ord-'.$number.'-'.uniqid(),
+            ]);
+            $this->cartItem($session, ['order_id' => $order->id]);
+        }
+
+        $languageQueries = 0;
+        DB::listen(function ($query) use (&$languageQueries) {
+            if (str_contains($query->sql, 'languages')) {
+                $languageQueries++;
+            }
+        });
+
+        $this->getJson("/api/vendor/{$this->vendor->id}/orders", $this->vendorHeaders())
+            ->assertOk()
+            ->assertJsonCount(3, 'sessions.0.orders');
+
+        $this->assertSame(1, $languageQueries);
     }
 
     public function test_index_excludes_closed_table_scan_sessions(): void

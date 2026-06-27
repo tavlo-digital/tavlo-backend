@@ -18,7 +18,7 @@ class LocaleService
 
     public function languageOptions(): array
     {
-        return Language::query()
+        return once(fn () => Language::query()
             ->where('is_active', true)
             ->orderBy('sort_order')
             ->orderBy('name')
@@ -32,7 +32,7 @@ class LocaleService
                 'flag' => $language->flag,
                 'direction' => $language->direction,
             ])
-            ->all();
+            ->all());
     }
 
     public function normalize(mixed $language): ?string

@@ -17,6 +17,55 @@ class MenuCustomizationService
 
     public function __construct(private readonly LocaleService $locales) {}
 
+    /**
+     * Batch-load modifier records used by a set of cart items so order-list
+     * formatting does not issue one query per selected group and option.
+     */
+    public function preloadSelectedModifiers(Collection $cartItems): void
+    {
+        $groups = $cartItems
+            ->flatMap(fn ($item) => collect($item->selected_modifiers ?? []))
+            ->filter(fn ($group) => is_array($group));
+
+        $groupIds = $groups
+            ->map(fn (array $group) => (int) ($group['modifier_group_id'] ?? $group['id'] ?? 0))
+            ->filter()
+            ->unique()
+            ->values();
+
+        $optionIds = $groups
+            ->flatMap(fn (array $group) => collect($group['options'] ?? []))
+            ->filter(fn ($option) => is_array($option))
+            ->map(fn (array $option) => (int) ($option['id'] ?? $option['option_id'] ?? 0))
+            ->filter()
+            ->unique()
+            ->values();
+
+        if ($groupIds->isNotEmpty()) {
+            $models = ModifierGroup::withTrashed()
+                ->with('localizedTranslations')
+                ->whereIn('id', $groupIds)
+                ->get()
+                ->keyBy('id');
+
+            foreach ($groupIds as $id) {
+                $this->modifierGroups[$id] = $models->get($id);
+            }
+        }
+
+        if ($optionIds->isNotEmpty()) {
+            $models = ModifierOption::withTrashed()
+                ->with('localizedTranslations')
+                ->whereIn('id', $optionIds)
+                ->get()
+                ->keyBy('id');
+
+            foreach ($optionIds as $id) {
+                $this->modifierOptions[$id] = $models->get($id);
+            }
+        }
+    }
+
     public function paidAddonDefinitions(array $addons): Collection
     {
         return collect($addons)
