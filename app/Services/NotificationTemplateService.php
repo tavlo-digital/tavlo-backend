@@ -126,6 +126,18 @@ class NotificationTemplateService
             'default' => '{customer_name} updated the payment.',
             'placeholders' => ['customer_name'],
         ],
+        'payment.assigned' => [
+            'event' => 'payment_updated',
+            'label' => 'Payment assigned',
+            'default' => '{payer_name} is paying for {customer_name}\'s orders.',
+            'placeholders' => ['payer_name', 'customer_name'],
+        ],
+        'payment.assignment_released' => [
+            'event' => 'payment_updated',
+            'label' => 'Payment assignment released',
+            'default' => '{payer_name} is no longer paying for {customer_name}\'s orders.',
+            'placeholders' => ['payer_name', 'customer_name'],
+        ],
         'payment.completed' => [
             'event' => 'payment_updated',
             'label' => 'Payment completed',

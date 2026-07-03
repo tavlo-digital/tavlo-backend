@@ -44,6 +44,7 @@ class OrderHistoryController extends Controller
             ->with([
                 'vendor.vendorSetting:id,vendor_id,logo_url,service_fee_rate,date_format,time_format,supported_languages',
                 'tableScanSession:id,customer_id',
+                'paidBy:id,first_name,last_name',
             ])
             ->orderByDesc('created_at')
             ->get();
@@ -147,10 +148,12 @@ class OrderHistoryController extends Controller
             ->orderByDesc('created_at')
             ->paginate($request->integer('per_page', 20), [
                 'id', 'order_public_id', 'order_type', 'table_number',
-                'amount', 'currency', 'status', 'created_at',
+                'amount', 'currency', 'status', 'paid_by', 'created_at',
             ]);
+        $orders->getCollection()->load('paidBy:id,first_name,last_name');
         $orders->getCollection()->transform(function (Order $order) use ($vendor) {
             $payload = $order->toArray();
+            $payload['paid_by'] = $this->paidByPayload($order);
             $payload['created_at'] = $this->dateTimes->formatDateTime($order->created_at, $vendor);
 
             return $payload;
@@ -183,6 +186,7 @@ class OrderHistoryController extends Controller
             ->with([
                 'vendor.vendorSetting:id,vendor_id,logo_url,service_fee_rate,date_format,time_format,supported_languages',
                 'tableScanSession:id,customer_id',
+                'paidBy:id,first_name,last_name',
             ])
             ->firstOrFail();
 
@@ -201,6 +205,7 @@ class OrderHistoryController extends Controller
             ->with([
                 'vendor.vendorSetting:id,vendor_id,estimated_prep_time,service_fee_rate,date_format,time_format,supported_languages',
                 'tableScanSession:id,customer_id',
+                'paidBy:id,first_name,last_name',
             ])
             ->firstOrFail();
 
@@ -216,6 +221,7 @@ class OrderHistoryController extends Controller
             ->with([
                 'vendor.vendorSetting',
                 'tableScanSession.restaurantTable:id,number,name',
+                'paidBy:id,first_name,last_name',
             ])
             ->firstOrFail();
 
@@ -308,6 +314,7 @@ class OrderHistoryController extends Controller
                     'locale' => $receiptLocale,
                 ],
                 'order' => [
+                    'paid_by' => $this->paidByPayload($order),
                     'items' => $receiptItems,
                 ],
                 'tax_groups' => $taxGroupsFormatted,
@@ -413,6 +420,22 @@ class OrderHistoryController extends Controller
             );
     }
 
+    private function paidByPayload(Order $order): ?array
+    {
+        if (! $order->relationLoaded('paidBy')) {
+            $order->load('paidBy:id,first_name,last_name');
+        }
+
+        if (! $order->paidBy) {
+            return null;
+        }
+
+        return [
+            'id' => $order->paidBy->id,
+            'name' => trim(($order->paidBy->first_name ?? '').' '.($order->paidBy->last_name ?? '')) ?: 'Guest',
+        ];
+    }
+
     private function formatHistoryOrder(Order $order, Request $request): array
     {
         $items = $this->linkedCartItems($order);
@@ -438,6 +461,7 @@ class OrderHistoryController extends Controller
             'order_type' => $order->order_type,
             'payment_status' => $this->paymentStatus($order),
             'payment_method' => $order->payment_method,
+            'paid_by' => $this->paidByPayload($order),
             'items_count' => (int) $items->sum('quantity'),
             'total_amount' => round((float) $order->amount, 2),
             'tip_amount' => $tipAmount,
@@ -601,6 +625,7 @@ class OrderHistoryController extends Controller
             'order_type' => $order->order_type,
             'payment_status' => $this->paymentStatus($order),
             'payment_method' => $order->payment_method,
+            'paid_by' => $this->paidByPayload($order),
             'tip_amount' => $tipAmount,
             'items' => $items->map(fn (CartItem $item) => $this->formatHistoryItem($item, $order, $ordersById, $sessionCustomerNames, $vendorCountry, $vendor, $locale))->values()->all(),
             'tax_groups' => $this->translateTaxGroups($taxGroups, $vendorCountry, $locale),
@@ -639,6 +664,7 @@ class OrderHistoryController extends Controller
             'currency' => $order->currency ?? $order->vendor?->currency,
             'order_type' => $order->order_type,
             'payment_method' => $order->payment_method,
+            'paid_by' => $this->paidByPayload($order),
             'payment_pending' => (bool) $order->payment_pending,
             'payment_received' => (bool) $order->payment_received,
             'items' => $ownedItems

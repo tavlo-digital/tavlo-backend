@@ -21,7 +21,7 @@ class ReconcileStalePayments extends Command
                 ->where('payment_received', false)
                 ->where('payment_pending', true)
             )
-            ->with('order')
+            ->with(['order', 'orders'])
             ->get();
 
         $reconciled = 0;
@@ -35,6 +35,9 @@ class ReconcileStalePayments extends Command
             }
 
             $stripeStatus = $intent['status'] ?? null;
+            $orders = $payment->orders->isNotEmpty()
+                ? $payment->orders
+                : collect([$payment->order])->filter();
 
             if ($stripeStatus === 'succeeded') {
                 $now = now();
@@ -46,16 +49,18 @@ class ReconcileStalePayments extends Command
                     'paid_at' => $payment->paid_at ?? $now,
                 ]);
 
-                $payment->order->update([
-                    'payment_method' => 'stripe',
-                    'transaction_id' => $payment->stripe_payment_intent_id,
-                    'payment_pending' => false,
-                    'payment_received' => true,
-                    'payment_confirmed_at' => $payment->order->payment_confirmed_at ?? $now,
-                ]);
+                foreach ($orders as $order) {
+                    $order->update([
+                        'payment_method' => 'stripe',
+                        'transaction_id' => $payment->stripe_payment_intent_id,
+                        'payment_pending' => false,
+                        'payment_received' => true,
+                        'payment_confirmed_at' => $order->payment_confirmed_at ?? $now,
+                    ]);
+                }
 
                 $reconciled++;
-                $this->info("Reconciled order #{$payment->order->id} via {$payment->stripe_payment_intent_id}");
+                $this->info("Reconciled {$orders->count()} order(s) via {$payment->stripe_payment_intent_id}");
             } elseif (in_array($stripeStatus, ['canceled', 'requires_payment_method'], true)) {
                 $payment->update([
                     'status' => $stripeStatus === 'canceled' ? 'canceled' : 'failed',
@@ -63,11 +68,13 @@ class ReconcileStalePayments extends Command
                     'failed_at' => $payment->failed_at ?? now(),
                 ]);
 
-                $payment->order->update([
-                    'payment_pending' => false,
-                    'payment_received' => false,
-                    'payment_note' => 'Stripe payment was not completed.',
-                ]);
+                foreach ($orders as $order) {
+                    $order->update([
+                        'payment_pending' => false,
+                        'payment_received' => false,
+                        'payment_note' => 'Stripe payment was not completed.',
+                    ]);
+                }
             }
         }
 

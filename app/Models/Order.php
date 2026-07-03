@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 
@@ -28,6 +29,7 @@ class Order extends Model
         'order_public_id',
         'invoice_number',
         'customer_id',
+        'paid_by',
         'vendor_id',
         'status',
         'amount',
@@ -96,6 +98,11 @@ class Order extends Model
         return $this->belongsTo(Customer::class);
     }
 
+    public function paidBy(): BelongsTo
+    {
+        return $this->belongsTo(Customer::class, 'paid_by');
+    }
+
     public function vendor(): BelongsTo
     {
         return $this->belongsTo(Vendor::class);
@@ -109,6 +116,13 @@ class Order extends Model
     public function payments(): HasMany
     {
         return $this->hasMany(OrderPayment::class);
+    }
+
+    public function coveredPayments(): BelongsToMany
+    {
+        return $this->belongsToMany(OrderPayment::class, 'order_payment_orders')
+            ->withPivot('amount')
+            ->withTimestamps();
     }
 
     public function cartItems(): HasMany

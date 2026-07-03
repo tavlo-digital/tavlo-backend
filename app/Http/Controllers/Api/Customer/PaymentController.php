@@ -7,12 +7,14 @@ use App\Models\CartItem;
 use App\Models\Order;
 use App\Models\OrderPayment;
 use App\Models\StripeWebhookLog;
+use App\Models\TableScanSession;
 use App\Models\Vendor;
 use App\Services\NotificationService;
 use App\Services\StripePaymentService;
 use App\Services\TaxCalculationService;
 use Closure;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -23,6 +25,8 @@ use UnexpectedValueException;
 
 class PaymentController extends Controller
 {
+    private const TERMINAL_PAYMENT_STATUSES = ['succeeded', 'canceled', 'failed', 'payment_failed'];
+
     public function __construct(private readonly StripePaymentService $stripe)
     {
     }
@@ -76,6 +80,181 @@ class PaymentController extends Controller
     }
 
     /**
+     * POST /api/customer/payments/pay-for
+     */
+    public function payFor(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'customer_id' => ['required', 'integer'],
+        ]);
+
+        $payer = $request->user();
+        $targetCustomerId = (int) $data['customer_id'];
+
+        if ($targetCustomerId === (int) $payer->id) {
+            throw ValidationException::withMessages([
+                'customer_id' => ['You cannot assign your own orders to yourself.'],
+            ]);
+        }
+
+        $payerSession = $this->activeSession((int) $payer->id);
+        if (! $payerSession) {
+            return response()->json(['message' => 'No active table session found.'], 422);
+        }
+
+        $targetSession = TableScanSession::with('customer:id,first_name,last_name')
+            ->where('customer_id', $targetCustomerId)
+            ->where('vendor_id', $payerSession->vendor_id)
+            ->where('restaurant_table_id', $payerSession->restaurant_table_id)
+            ->where('status', 'active')
+            ->latest('scanned_at')
+            ->first();
+
+        if (! $targetSession) {
+            return response()->json([
+                'message' => 'The selected customer is not active at your table.',
+            ], 422);
+        }
+
+        $orders = DB::transaction(function () use ($targetSession, $payer) {
+            $orders = Order::where('table_scan_session_id', $targetSession->id)
+                ->whereNotIn('status', [Order::STATUS_DRAFT, Order::STATUS_CANCELLED])
+                ->where('payment_received', false)
+                ->where('payment_pending', false)
+                ->lockForUpdate()
+                ->get();
+
+            if ($orders->isEmpty()) {
+                throw ValidationException::withMessages([
+                    'customer_id' => ['The selected customer has no eligible unpaid orders.'],
+                ]);
+            }
+
+            if ($orders->contains(fn (Order $order) => $order->paid_by !== null
+                && (int) $order->paid_by !== (int) $payer->id)) {
+                abort(409, 'One or more orders are already assigned to another payer.');
+            }
+
+            Order::whereIn('id', $orders->pluck('id'))
+                ->whereNull('paid_by')
+                ->update(['paid_by' => $payer->id]);
+
+            return $orders->map(function (Order $order) use ($payer) {
+                $order->paid_by = $payer->id;
+
+                return $order;
+            });
+        });
+
+        $payerIdentity = $this->customerIdentity($payer);
+        $targetIdentity = $this->customerIdentity($targetSession->customer);
+        NotificationService::notifyTableCustomers(
+            $payerSession->restaurant_table_id,
+            'payment_updated',
+            "{$payerIdentity['name']} is paying for {$targetIdentity['name']}'s orders.",
+            [
+                'template' => 'payment.assigned',
+                'customer_id' => $payer->id,
+                'payer_id' => $payer->id,
+                'payer_name' => $payerIdentity['name'],
+                'target_customer_id' => $targetCustomerId,
+                'customer_name' => $targetIdentity['name'],
+                'order_ids' => $orders->pluck('id')->values()->all(),
+            ],
+            false,
+        );
+
+        return response()->json([
+            'message' => 'Orders assigned for payment.',
+            'paid_by' => $payerIdentity,
+            'orders_count' => $orders->count(),
+            'orders' => $orders->map(fn (Order $order) => [
+                'id' => $order->id,
+                'order_public_id' => $order->order_public_id,
+            ])->values(),
+        ]);
+    }
+
+    /**
+     * DELETE /api/customer/payments/pay-for/{customerId}
+     */
+    public function releasePayFor(Request $request, int $customerId): JsonResponse
+    {
+        $payer = $request->user();
+        $payerSession = $this->activeSession((int) $payer->id);
+
+        if (! $payerSession) {
+            return response()->json(['message' => 'No active table session found.'], 422);
+        }
+
+        $targetSession = TableScanSession::with('customer:id,first_name,last_name')
+            ->where('customer_id', $customerId)
+            ->where('vendor_id', $payerSession->vendor_id)
+            ->where('restaurant_table_id', $payerSession->restaurant_table_id)
+            ->where('status', 'active')
+            ->latest('scanned_at')
+            ->first();
+
+        if (! $targetSession) {
+            return response()->json([
+                'message' => 'The selected customer is not active at your table.',
+            ], 422);
+        }
+
+        $releasedCount = DB::transaction(function () use ($targetSession, $payer) {
+            $orders = Order::where('table_scan_session_id', $targetSession->id)
+                ->where('paid_by', $payer->id)
+                ->where('payment_received', false)
+                ->lockForUpdate()
+                ->get();
+
+            if ($orders->isEmpty()) {
+                return 0;
+            }
+
+            $hasActivePayment = OrderPayment::whereNotIn('status', self::TERMINAL_PAYMENT_STATUSES)
+                ->where(function (Builder $query) use ($orders) {
+                    $orderIds = $orders->pluck('id');
+                    $query->whereIn('order_id', $orderIds)
+                        ->orWhereHas('orders', fn (Builder $covered) => $covered->whereIn('orders.id', $orderIds));
+                })
+                ->exists();
+
+            if ($hasActivePayment) {
+                abort(409, 'Orders with an active payment cannot be released.');
+            }
+
+            return Order::whereIn('id', $orders->pluck('id'))
+                ->update(['paid_by' => null]);
+        });
+
+        if ($releasedCount > 0) {
+            $payerIdentity = $this->customerIdentity($payer);
+            $targetIdentity = $this->customerIdentity($targetSession->customer);
+            NotificationService::notifyTableCustomers(
+                $payerSession->restaurant_table_id,
+                'payment_updated',
+                "{$payerIdentity['name']} is no longer paying for {$targetIdentity['name']}'s orders.",
+                [
+                    'template' => 'payment.assignment_released',
+                    'customer_id' => $payer->id,
+                    'payer_id' => $payer->id,
+                    'payer_name' => $payerIdentity['name'],
+                    'target_customer_id' => $customerId,
+                    'customer_name' => $targetIdentity['name'],
+                    'released_orders_count' => $releasedCount,
+                ],
+                false,
+            );
+        }
+
+        return response()->json([
+            'message' => 'Payment assignment released.',
+            'released_orders_count' => $releasedCount,
+        ]);
+    }
+
+    /**
      * POST /api/customer/payments/create-intent
      */
     public function createIntent(Request $request): JsonResponse
@@ -108,41 +287,27 @@ class PaymentController extends Controller
         }
 
         $order = $this->customerOrder((string) $data['order_id'], $customer->id);
+        $ownerCustomerId = $this->orderOwnerCustomerId($order);
 
         if ($order->payment_received) {
             return response()->json(['message' => 'Order is already paid.'], 422);
         }
 
-        // Return existing active intent instead of creating a duplicate (browser refresh / double-tap).
-        $existingPayment = OrderPayment::where('order_id', $order->id)
-            ->where('customer_id', $customer->id)
-            ->whereNotIn('status', ['succeeded', 'canceled', 'payment_failed'])
-            ->latest()
-            ->first();
-
-        if ($existingPayment) {
-            try {
-                $existingIntent = $this->stripe->retrievePaymentIntent(
-                    $existingPayment->stripe_payment_intent_id
-                );
-                if (! in_array($existingIntent['status'], ['canceled', 'succeeded'], true)) {
-                    return response()->json([
-                        'clientSecret'    => $existingIntent['client_secret'],
-                        'paymentIntentId' => $existingIntent['id'],
-                    ]);
-                }
-                $existingPayment->update(['status' => $existingIntent['status']]);
-            } catch (\Exception $e) {
-                \Log::warning("Could not retrieve existing payment intent: {$e->getMessage()}");
-            }
+        if ($ownerCustomerId === (int) $customer->id
+            && $order->paid_by !== null
+            && (int) $order->paid_by !== (int) $customer->id) {
+            return response()->json([
+                'message' => 'This order is assigned to another payer.',
+            ], 409);
         }
 
-        // Block payment if the customer has unsubmitted cart items.
-        if ($order->table_scan_session_id) {
-            $unboundCount = CartItem::where('table_scan_session_id', $order->table_scan_session_id)
+        $orders = $this->groupedOrdersForPayment($order, (int) $customer->id);
+        $orderIds = $orders->pluck('id');
+
+        foreach ($orders->pluck('table_scan_session_id')->filter()->unique() as $sessionId) {
+            $unboundCount = CartItem::where('table_scan_session_id', $sessionId)
                 ->whereNull('order_id')
                 ->count();
-
             if ($unboundCount > 0) {
                 return response()->json([
                     'message'            => 'You have items in your cart that have not been submitted. Please confirm your full order before paying.',
@@ -156,8 +321,12 @@ class PaymentController extends Controller
             return response()->json(['message' => 'Stripe payments are not enabled for this restaurant.'], 422);
         }
 
-        $amount = $this->finalOrderAmount($order);
-        if ($amount <= 0) {
+        $amounts = $orders->mapWithKeys(fn (Order $coveredOrder) => [
+            $coveredOrder->id => $this->finalOrderAmount($coveredOrder),
+        ]);
+        $amount = round((float) $amounts->sum(), 2);
+
+        if ($amount <= 0 || $amounts->contains(fn (float $orderAmount) => $orderAmount <= 0)) {
             return response()->json(['message' => 'Order amount must be greater than zero.'], 422);
         }
 
@@ -168,6 +337,7 @@ class PaymentController extends Controller
             'vendor_id' => (string) $order->vendor_id,
             'customer_id' => (string) $customer->id,
             'payment_for' => $order->table_scan_session_id ? 'dine_in' : 'order',
+            'covered_order_count' => (string) $orders->count(),
         ];
 
         if ($order->table_scan_session_id) {
@@ -175,44 +345,87 @@ class PaymentController extends Controller
         }
 
         try {
-            $intent = $this->stripe->createPaymentIntent(
-                $this->stripeAmountMinor($amount, $currency),
-                $currency,
-                $settings->stripe_account_id,
-                $metadata
-            );
+            $intent = DB::transaction(function () use ($order, $orderIds, $amounts, $customer, $settings, $amount, $currency, $metadata) {
+                $lockedOrders = Order::whereIn('id', $orderIds)->lockForUpdate()->get();
+
+                $existingPayment = OrderPayment::where('customer_id', $customer->id)
+                    ->whereNotIn('status', self::TERMINAL_PAYMENT_STATUSES)
+                    ->where(function (Builder $query) use ($orderIds) {
+                        $query->whereIn('order_id', $orderIds)
+                            ->orWhereHas('orders', fn (Builder $covered) => $covered->whereIn('orders.id', $orderIds));
+                    })
+                    ->latest()
+                    ->first();
+
+                if ($existingPayment) {
+                    $existingIntent = $this->stripe->retrievePaymentIntent($existingPayment->stripe_payment_intent_id);
+                    if (($existingIntent['status'] ?? null) === 'succeeded') {
+                        $this->syncPaymentIntentStatus($existingPayment, $existingIntent);
+
+                        return $existingIntent;
+                    }
+
+                    if (($existingIntent['status'] ?? null) !== 'canceled') {
+                        return $existingIntent;
+                    }
+
+                    $this->syncPaymentIntentStatus($existingPayment, $existingIntent);
+                }
+
+                if ($lockedOrders->contains(fn (Order $locked) => $locked->payment_received)) {
+                    abort(409, 'One or more orders are already paid.');
+                }
+
+                if ($lockedOrders->contains(fn (Order $locked) => $this->orderOwnerCustomerId($locked) !== (int) $customer->id
+                    && (int) $locked->paid_by !== (int) $customer->id)) {
+                    abort(409, 'One or more orders are no longer assigned to this payer.');
+                }
+
+                $intent = $this->stripe->createPaymentIntent(
+                    $this->stripeAmountMinor($amount, $currency),
+                    $currency,
+                    $settings->stripe_account_id,
+                    $metadata
+                );
+
+                $payment = OrderPayment::create([
+                    'order_id' => $order->id,
+                    'vendor_id' => $order->vendor_id,
+                    'customer_id' => $customer->id,
+                    'table_scan_session_id' => $order->table_scan_session_id,
+                    'stripe_account_id' => $settings->stripe_account_id,
+                    'stripe_payment_intent_id' => $intent['id'],
+                    'amount' => $amount,
+                    'currency' => strtoupper($currency),
+                    'status' => $intent['status'] ?? 'pending',
+                    'payment_method' => $intent['payment_method'] ?? null,
+                    'metadata' => $metadata,
+                ]);
+
+                $payment->orders()->attach($amounts->mapWithKeys(fn ($orderAmount, $id) => [
+                    $id => ['amount' => $orderAmount],
+                ])->all());
+
+                foreach ($lockedOrders as $lockedOrder) {
+                    $lockedOrder->update([
+                        'amount' => $amounts[$lockedOrder->id],
+                        'service_fee' => $lockedOrder->service_fee ?? 0,
+                        'currency' => strtoupper($currency),
+                        'payment_method' => 'stripe',
+                        'transaction_id' => $intent['id'],
+                        'payment_pending' => true,
+                        'payment_received' => false,
+                    ]);
+                }
+
+                return $intent;
+            });
         } catch (StripeInvalidRequestException $e) {
             \Log::error("Stripe payment intent failed for vendor {$order->vendor_id}: {$e->getMessage()}");
             return response()->json([
                 'message' => 'Online payments are not available for this restaurant yet. Please pay on-site.',
             ], 422);
         }
-
-        DB::transaction(function () use ($order, $customer, $settings, $intent, $amount, $currency, $metadata) {
-            OrderPayment::create([
-                'order_id' => $order->id,
-                'vendor_id' => $order->vendor_id,
-                'customer_id' => $customer->id,
-                'table_scan_session_id' => $order->table_scan_session_id,
-                'stripe_account_id' => $settings->stripe_account_id,
-                'stripe_payment_intent_id' => $intent['id'],
-                'amount' => $amount,
-                'currency' => strtoupper($currency),
-                'status' => $intent['status'] ?? 'pending',
-                'payment_method' => $intent['payment_method'] ?? null,
-                'metadata' => $metadata,
-            ]);
-
-            $order->update([
-                'amount' => $amount,
-                'service_fee' => $order->service_fee ?? 0,
-                'currency' => strtoupper($currency),
-                'payment_method' => 'stripe',
-                'transaction_id' => $intent['id'],
-                'payment_pending' => true,
-                'payment_received' => false,
-            ]);
-        });
 
         if ($order->table_scan_session_id) {
             $tableId = $order->tableScanSession?->restaurant_table_id;
@@ -279,7 +492,8 @@ class PaymentController extends Controller
         }
 
         $paymentIntentId = $this->normalizePaymentIntentId($data['payment_intent_id']);
-        $payment = OrderPayment::where('stripe_payment_intent_id', $paymentIntentId)
+        $payment = OrderPayment::with(['order.tableScanSession', 'orders.tableScanSession'])
+            ->where('stripe_payment_intent_id', $paymentIntentId)
             ->where('order_id', $order->id)
             ->where('customer_id', $customer->id)
             ->firstOrFail();
@@ -291,10 +505,23 @@ class PaymentController extends Controller
             return response()->json(['message' => 'PaymentIntent cannot be updated in its current status.'], 422);
         }
 
-        $settings = $order->vendor?->vendorSetting;
         $currency = $payment->currency ?: $order->currency ?: ($order->vendor?->currency ?? 'EUR');
-        $baseAmount = $this->finalOrderAmount($order);
+        $coveredOrders = $this->paymentOrders($payment);
+        $baseAmounts = $coveredOrders->mapWithKeys(fn (Order $coveredOrder) => [
+            $coveredOrder->id => $this->finalOrderAmount($coveredOrder),
+        ]);
+        $baseAmount = round((float) $baseAmounts->sum(), 2);
         $tipAmount = round((float) $data['tip_amount'], 2);
+        $tipOrder = $coveredOrders->first(
+            fn (Order $coveredOrder) => $this->orderOwnerCustomerId($coveredOrder) === (int) $customer->id
+        );
+
+        if ($tipAmount > 0 && ! $tipOrder) {
+            return response()->json([
+                'message' => 'A tip cannot be added when paying only for another customer’s orders.',
+            ], 422);
+        }
+
         $payableAmount = round($baseAmount + $tipAmount, 2);
 
         if ($payableAmount <= 0) {
@@ -323,17 +550,25 @@ class PaymentController extends Controller
             return response()->json(['message' => 'PaymentIntent could not be updated.'], 422);
         }
 
-        DB::transaction(function () use ($order, $payment, $baseAmount, $tipAmount, $payableAmount, $currency, $updatedIntent, $metadata) {
-            $order->update([
-                'amount' => $baseAmount,
-                'service_fee' => $order->service_fee ?? 0,
-                'tip_amount' => $tipAmount,
-                'currency' => strtoupper($currency),
-                'payment_method' => 'stripe',
-                'transaction_id' => $updatedIntent['id'],
-                'payment_pending' => true,
-                'payment_received' => false,
-            ]);
+        DB::transaction(function () use ($coveredOrders, $tipOrder, $payment, $baseAmounts, $tipAmount, $payableAmount, $currency, $updatedIntent, $metadata) {
+            foreach ($coveredOrders as $coveredOrder) {
+                $coveredOrder->update([
+                    'amount' => $baseAmounts[$coveredOrder->id],
+                    'service_fee' => $coveredOrder->service_fee ?? 0,
+                    'tip_amount' => $tipOrder && $coveredOrder->is($tipOrder) ? $tipAmount : 0,
+                    'currency' => strtoupper($currency),
+                    'payment_method' => 'stripe',
+                    'transaction_id' => $updatedIntent['id'],
+                    'payment_pending' => true,
+                    'payment_received' => false,
+                ]);
+
+                if ($payment->orders->contains('id', $coveredOrder->id)) {
+                    $payment->orders()->updateExistingPivot($coveredOrder->id, [
+                        'amount' => $baseAmounts[$coveredOrder->id],
+                    ]);
+                }
+            }
 
             $payment->update([
                 'amount' => $payableAmount,
@@ -378,7 +613,7 @@ class PaymentController extends Controller
             'payment_intent' => ['required', 'string', 'max:255'],
         ]);
 
-        $payment = OrderPayment::with('order')
+        $payment = OrderPayment::with(['order.tableScanSession', 'orders.tableScanSession'])
             ->where('stripe_payment_intent_id', $data['payment_intent'])
             ->where('customer_id', $request->user()->id)
             ->firstOrFail();
@@ -433,7 +668,7 @@ class PaymentController extends Controller
             return response()->json(['received' => true]);
         }
 
-        $payment = OrderPayment::with('order')
+        $payment = OrderPayment::with(['order.tableScanSession', 'orders.tableScanSession'])
             ->where('stripe_payment_intent_id', $intent['id'])
             ->first();
 
@@ -486,6 +721,7 @@ class PaymentController extends Controller
             'vendor.vendorSetting',
             'vendor.countryRecord',
             'tableScanSession',
+            'paidBy:id,first_name,last_name',
         ])
             ->where(function (Builder $query) use ($orderId) {
                 $query->where('order_public_id', $orderId);
@@ -497,12 +733,102 @@ class PaymentController extends Controller
             ->where(function (Builder $query) use ($customerId) {
                 $query
                     ->where('customer_id', $customerId)
+                    ->orWhere('paid_by', $customerId)
                     ->orWhereHas(
                         'tableScanSession',
                         fn (Builder $session) => $session->where('customer_id', $customerId)
                     );
             })
             ->firstOrFail();
+    }
+
+    private function activeSession(int $customerId): ?TableScanSession
+    {
+        return TableScanSession::where('customer_id', $customerId)
+            ->where('status', 'active')
+            ->latest('scanned_at')
+            ->first();
+    }
+
+    private function orderOwnerCustomerId(Order $order): ?int
+    {
+        if ($order->customer_id) {
+            return (int) $order->customer_id;
+        }
+
+        if ($order->relationLoaded('tableScanSession')) {
+            return $order->tableScanSession?->customer_id
+                ? (int) $order->tableScanSession->customer_id
+                : null;
+        }
+
+        $customerId = $order->tableScanSession()->value('customer_id');
+
+        return $customerId ? (int) $customerId : null;
+    }
+
+    private function groupedOrdersForPayment(Order $anchor, int $payerId): EloquentCollection
+    {
+        $orders = new EloquentCollection([$anchor]);
+
+        if (! $anchor->table_scan_session_id) {
+            return $orders;
+        }
+
+        $anchorSession = $anchor->tableScanSession;
+        $payerSession = $this->activeSession($payerId);
+
+        if (! $anchorSession || ! $payerSession
+            || (int) $payerSession->vendor_id !== (int) $anchorSession->vendor_id
+            || (int) $payerSession->restaurant_table_id !== (int) $anchorSession->restaurant_table_id) {
+            abort(409, 'The order is not part of your active table visit.');
+        }
+
+        $activeSessionIds = TableScanSession::where('vendor_id', $payerSession->vendor_id)
+            ->where('restaurant_table_id', $payerSession->restaurant_table_id)
+            ->where('status', 'active')
+            ->pluck('id');
+
+        $assignedOrders = Order::with([
+            'vendor.vendorSetting',
+            'vendor.countryRecord',
+            'tableScanSession',
+            'paidBy:id,first_name,last_name',
+        ])
+            ->where('paid_by', $payerId)
+            ->whereIn('table_scan_session_id', $activeSessionIds)
+            ->whereNotIn('status', [Order::STATUS_DRAFT, Order::STATUS_CANCELLED])
+            ->where('payment_received', false)
+            ->get();
+
+        return $orders->merge($assignedOrders)->unique('id')->values();
+    }
+
+    private function paymentOrders(OrderPayment $payment): EloquentCollection
+    {
+        if (! $payment->relationLoaded('orders')) {
+            $payment->load('orders.tableScanSession');
+        }
+
+        if ($payment->orders->isNotEmpty()) {
+            return $payment->orders;
+        }
+
+        if (! $payment->relationLoaded('order')) {
+            $payment->load('order.tableScanSession');
+        }
+
+        return $payment->order
+            ? new EloquentCollection([$payment->order])
+            : new EloquentCollection();
+    }
+
+    private function customerIdentity($customer): array
+    {
+        return [
+            'id' => $customer?->id,
+            'name' => trim(($customer->first_name ?? '').' '.($customer->last_name ?? '')) ?: 'Guest',
+        ];
     }
 
     private function finalOrderAmount(Order $order): float
@@ -590,41 +916,47 @@ class PaymentController extends Controller
             'failed_at' => in_array($status, ['failed', 'canceled'], true) ? ($payment->failed_at ?? $now) : $payment->failed_at,
         ]);
 
-        $order = $payment->order;
-        if (! $order) {
+        $orders = $this->paymentOrders($payment);
+        if ($orders->isEmpty()) {
             return;
         }
 
         if ($status === 'succeeded') {
-            $order->update([
-                'payment_method' => 'stripe',
-                'transaction_id' => $payment->stripe_payment_intent_id,
-                'payment_pending' => false,
-                'payment_received' => true,
-                'payment_confirmed_at' => $order->payment_confirmed_at ?? $now,
-            ]);
+            foreach ($orders as $order) {
+                $order->update([
+                    'payment_method' => 'stripe',
+                    'transaction_id' => $payment->stripe_payment_intent_id,
+                    'payment_pending' => false,
+                    'payment_received' => true,
+                    'payment_confirmed_at' => $order->payment_confirmed_at ?? $now,
+                ]);
+            }
 
             return;
         }
 
         if (in_array($status, ['failed', 'canceled'], true)) {
-            $order->update([
-                'payment_method' => 'stripe',
-                'transaction_id' => $payment->stripe_payment_intent_id,
-                'payment_pending' => false,
-                'payment_received' => false,
-                'payment_note' => 'Stripe payment was not completed.',
-            ]);
+            foreach ($orders as $order) {
+                $order->update([
+                    'payment_method' => 'stripe',
+                    'transaction_id' => $payment->stripe_payment_intent_id,
+                    'payment_pending' => false,
+                    'payment_received' => false,
+                    'payment_note' => 'Stripe payment was not completed.',
+                ]);
+            }
 
             return;
         }
 
-        $order->update([
-            'payment_method' => 'stripe',
-            'transaction_id' => $payment->stripe_payment_intent_id,
-            'payment_pending' => true,
-            'payment_received' => false,
-        ]);
+        foreach ($orders as $order) {
+            $order->update([
+                'payment_method' => 'stripe',
+                'transaction_id' => $payment->stripe_payment_intent_id,
+                'payment_pending' => true,
+                'payment_received' => false,
+            ]);
+        }
     }
 
     private function statusFromStripe(string $status, ?string $eventType = null): string

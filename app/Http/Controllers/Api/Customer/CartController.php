@@ -906,7 +906,8 @@ class CartController extends Controller
 
         $sessionIds = $sessions->pluck('id')->all();
 
-        $orders = Order::whereIn('table_scan_session_id', $sessionIds)
+        $orders = Order::with('paidBy:id,first_name,last_name')
+            ->whereIn('table_scan_session_id', $sessionIds)
             ->orderBy('created_at')
             ->orderBy('id')
             ->get()
@@ -1100,6 +1101,10 @@ class CartController extends Controller
             'id' => $o->id,
             'order_public_id' => $o->order_public_id,
             'customer_id' => $o->customer_id,
+            'paid_by' => $o->paidBy ? [
+                'id' => $o->paidBy->id,
+                'name' => trim(($o->paidBy->first_name ?? '').' '.($o->paidBy->last_name ?? '')) ?: 'Guest',
+            ] : null,
             'vendor_id' => $o->vendor_id,
             'table_scan_session_id' => $o->table_scan_session_id,
             'status' => $o->status,
