@@ -204,6 +204,150 @@ class OrderManagementTest extends TestCase
         $this->assertNotNull($item->fresh()->ready_at);
     }
 
+    public function test_item_status_can_jump_forward_directly_to_ready(): void
+    {
+        $session = $this->scanSession();
+        $order = $this->order($session);
+        $item = $this->cartItem($session, [
+            'order_id' => $order->id,
+            'received_at' => now(),
+        ]);
+
+        $this->patchJson(
+            "/api/vendor/orders/{$order->id}/items/{$item->id}",
+            ['status' => 'ready'],
+            $this->vendorHeaders()
+        )->assertOk()
+            ->assertJsonPath('items.0.status', 'ready');
+
+        $item->refresh();
+        $this->assertNotNull($item->preparing_start_at);
+        $this->assertNotNull($item->ready_at);
+        $this->assertNull($item->served_at);
+    }
+
+    public function test_late_backward_item_status_update_returns_conflict_without_erasing_progress(): void
+    {
+        $session = $this->scanSession();
+        $order = $this->order($session);
+        $item = $this->cartItem($session, [
+            'order_id' => $order->id,
+            'received_at' => now(),
+        ]);
+        $headers = $this->vendorHeaders();
+
+        $this->patchJson(
+            "/api/vendor/orders/{$order->id}/items/{$item->id}",
+            ['status' => 'ready'],
+            $headers
+        )->assertOk();
+
+        $readyItem = $item->fresh();
+        $preparingAt = $readyItem->preparing_start_at;
+        $readyAt = $readyItem->ready_at;
+        $notificationCount = Notification::where('event', 'order_item_status_changed')->count();
+
+        $this->patchJson(
+            "/api/vendor/orders/{$order->id}/items/{$item->id}",
+            ['status' => 'new'],
+            $headers
+        )->assertStatus(409)
+            ->assertJson([
+                'message' => 'Item status has already advanced.',
+                'current_status' => 'ready',
+                'requested_status' => 'new',
+            ]);
+
+        $item->refresh();
+        $this->assertTrue($item->preparing_start_at->equalTo($preparingAt));
+        $this->assertTrue($item->ready_at->equalTo($readyAt));
+        $this->assertNull($item->served_at);
+        $this->assertSame('in_progress', $order->fresh()->status);
+        $this->assertSame(
+            $notificationCount,
+            Notification::where('event', 'order_item_status_changed')->count()
+        );
+    }
+
+    public function test_new_request_is_an_idempotent_no_op_for_received_item(): void
+    {
+        $session = $this->scanSession();
+        $order = $this->order($session);
+        $item = $this->cartItem($session, [
+            'order_id' => $order->id,
+            'received_at' => now(),
+        ]);
+
+        $this->patchJson(
+            "/api/vendor/orders/{$order->id}/items/{$item->id}",
+            ['status' => 'new'],
+            $this->vendorHeaders()
+        )->assertOk()
+            ->assertJsonPath('items.0.status', 'received');
+
+        $item->refresh();
+        $this->assertNotNull($item->received_at);
+        $this->assertNull($item->preparing_start_at);
+        $this->assertNull($item->ready_at);
+        $this->assertNull($item->served_at);
+        $this->assertSame(0, Notification::where('event', 'order_item_status_changed')->count());
+    }
+
+    public function test_repeating_item_status_is_idempotent_without_duplicate_notifications(): void
+    {
+        $session = $this->scanSession();
+        $order = $this->order($session);
+        $item = $this->cartItem($session, ['order_id' => $order->id]);
+        $headers = $this->vendorHeaders();
+
+        $this->patchJson(
+            "/api/vendor/orders/{$order->id}/items/{$item->id}",
+            ['status' => 'preparing'],
+            $headers
+        )->assertOk();
+
+        $item->refresh();
+        $preparingAt = $item->preparing_start_at;
+        $notificationCount = Notification::where('event', 'order_item_status_changed')->count();
+
+        $this->patchJson(
+            "/api/vendor/orders/{$order->id}/items/{$item->id}",
+            ['status' => 'preparing'],
+            $headers
+        )->assertOk()
+            ->assertJsonPath('items.0.status', 'preparing');
+
+        $this->assertTrue($item->fresh()->preparing_start_at->equalTo($preparingAt));
+        $this->assertSame(
+            $notificationCount,
+            Notification::where('event', 'order_item_status_changed')->count()
+        );
+    }
+
+    public function test_served_item_cannot_move_back_to_ready(): void
+    {
+        $session = $this->scanSession();
+        $order = $this->order($session);
+        $servedAt = now();
+        $item = $this->cartItem($session, [
+            'order_id' => $order->id,
+            'preparing_start_at' => $servedAt->copy()->subMinutes(10),
+            'ready_at' => $servedAt->copy()->subMinutes(5),
+            'served_at' => $servedAt,
+        ]);
+        $persistedServedAt = $item->fresh()->served_at;
+
+        $this->patchJson(
+            "/api/vendor/orders/{$order->id}/items/{$item->id}",
+            ['status' => 'ready'],
+            $this->vendorHeaders()
+        )->assertStatus(409)
+            ->assertJsonPath('current_status', 'served')
+            ->assertJsonPath('requested_status', 'ready');
+
+        $this->assertTrue($item->fresh()->served_at->equalTo($persistedServedAt));
+    }
+
     public function test_waiter_can_mark_item_served_but_kitchen_cannot(): void
     {
         $session = $this->scanSession();
@@ -232,10 +376,14 @@ class OrderManagementTest extends TestCase
     public function test_close_table_session_requires_force_when_unpaid_then_closes(): void
     {
         $session = $this->scanSession();
-        $this->order($session, [
+        $order = $this->order($session, [
             'amount' => 20,
             'payment_pending' => true,
             'payment_received' => false,
+        ]);
+        $this->cartItem($session, [
+            'order_id' => $order->id,
+            'served_at' => now(),
         ]);
 
         $this->postJson(
@@ -243,6 +391,7 @@ class OrderManagementTest extends TestCase
             [],
             $this->staffHeaders('waiter')
         )->assertStatus(409)
+            ->assertJsonPath('code', 'unpaid_balance')
             ->assertJsonPath('paymentSummary.remainingAmount', 20);
 
         $this->postJson(
@@ -256,6 +405,129 @@ class OrderManagementTest extends TestCase
             'id' => $session->id,
             'status' => 'closed',
         ]);
+    }
+
+    public function test_close_table_session_blocks_unfinished_items_even_when_forced_and_keeps_ticket_visible(): void
+    {
+        $session = $this->scanSession();
+        $order = $this->order($session, [
+            'payment_pending' => false,
+            'payment_received' => true,
+        ]);
+        $this->cartItem($session, [
+            'order_id' => $order->id,
+            'received_at' => now(),
+        ]);
+        $headers = $this->staffHeaders('waiter');
+
+        $this->postJson(
+            "/api/vendor/{$this->vendor->id}/tables/{$this->table->id}/close-session",
+            [],
+            $headers
+        )->assertStatus(409)
+            ->assertJsonPath('code', 'unfinished_items')
+            ->assertJsonPath('fulfillmentSummary.unfinishedOrdersCount', 1)
+            ->assertJsonPath('fulfillmentSummary.unservedItemsCount', 1);
+
+        $this->postJson(
+            "/api/vendor/{$this->vendor->id}/tables/{$this->table->id}/close-session",
+            ['force' => true],
+            $headers
+        )->assertStatus(409)
+            ->assertJsonPath('code', 'unfinished_items');
+
+        $this->assertDatabaseHas('table_scan_sessions', [
+            'id' => $session->id,
+            'status' => 'active',
+        ]);
+        $this->assertDatabaseHas('orders', [
+            'id' => $order->id,
+            'status' => 'confirmed',
+        ]);
+
+        $this->getJson(
+            "/api/vendor/{$this->vendor->id}/orders",
+            $headers
+        )->assertOk()
+            ->assertJsonPath('sessions.0.orders.0.id', (string) $order->id);
+    }
+
+    public function test_close_table_session_allows_fully_served_paid_orders(): void
+    {
+        $session = $this->scanSession();
+        $order = $this->order($session, [
+            'payment_pending' => false,
+            'payment_received' => true,
+        ]);
+        $this->cartItem($session, [
+            'order_id' => $order->id,
+            'served_at' => now(),
+        ]);
+
+        $this->postJson(
+            "/api/vendor/{$this->vendor->id}/tables/{$this->table->id}/close-session",
+            [],
+            $this->staffHeaders('waiter')
+        )->assertOk();
+
+        $this->assertDatabaseHas('table_scan_sessions', [
+            'id' => $session->id,
+            'status' => 'closed',
+        ]);
+    }
+
+    public function test_cancelled_and_draft_orders_do_not_block_table_closure(): void
+    {
+        $session = $this->scanSession();
+        $cancelledOrder = $this->order($session, [
+            'status' => 'cancelled',
+            'payment_pending' => false,
+            'payment_received' => false,
+        ]);
+        $draftOrder = $this->order($session, [
+            'status' => 'draft',
+            'payment_pending' => true,
+            'payment_received' => false,
+        ]);
+        $this->cartItem($session, ['order_id' => $cancelledOrder->id]);
+        $this->cartItem($session, ['order_id' => $draftOrder->id]);
+
+        $this->postJson(
+            "/api/vendor/{$this->vendor->id}/tables/{$this->table->id}/close-session",
+            [],
+            $this->staffHeaders('waiter')
+        )->assertOk();
+
+        $this->assertDatabaseHas('table_scan_sessions', [
+            'id' => $session->id,
+            'status' => 'closed',
+        ]);
+    }
+
+    public function test_shared_unserved_item_blocks_each_affected_order_but_is_counted_once(): void
+    {
+        $session = $this->scanSession();
+        $firstOrder = $this->order($session, [
+            'payment_pending' => false,
+            'payment_received' => true,
+        ]);
+        $secondOrder = $this->order($session, [
+            'payment_pending' => false,
+            'payment_received' => true,
+        ]);
+        $this->cartItem($session, [
+            'order_id' => $firstOrder->id,
+            'shared_order_ids' => [$secondOrder->id],
+        ]);
+
+        $this->postJson(
+            "/api/vendor/{$this->vendor->id}/tables/{$this->table->id}/close-session",
+            [],
+            $this->staffHeaders('waiter')
+        )->assertStatus(409)
+            ->assertJsonPath('code', 'unfinished_items')
+            ->assertJsonPath('fulfillmentSummary.unfinishedOrdersCount', 2)
+            ->assertJsonPath('fulfillmentSummary.unservedItemsCount', 1);
     }
 
     public function test_close_table_session_requires_waiter_role(): void

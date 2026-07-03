@@ -16,6 +16,7 @@ use App\Services\TaxCalculationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 class OrderController extends Controller
 {
@@ -276,40 +277,79 @@ class OrderController extends Controller
 
         $this->authorizeItemStatus($request, $data['status']);
 
-        $item = $this->loadLinkedCartItems($order)
-            ->first(fn (CartItem $cartItem) => (string) $cartItem->id === (string) $cartItemId);
+        $transition = DB::transaction(function () use ($order, $cartItemId, $data) {
+            $item = $this->linkedCartItemsQuery($order)
+                ->whereKey($cartItemId)
+                ->lockForUpdate()
+                ->first();
 
-        if (! $item) {
+            if (! $item) {
+                return ['outcome' => 'not_found'];
+            }
+
+            $currentStatus = $item->status();
+            $currentRank = $this->itemStatusRank($currentStatus);
+            $requestedRank = $this->itemStatusRank($data['status']);
+
+            if ($requestedRank < $currentRank) {
+                return [
+                    'outcome' => 'conflict',
+                    'current_status' => $currentStatus,
+                ];
+            }
+
+            if ($requestedRank === $currentRank) {
+                return [
+                    'outcome' => 'unchanged',
+                    'item' => $item,
+                ];
+            }
+
+            $now = now();
+            $updates = match ($data['status']) {
+                'preparing' => [
+                    'preparing_start_at' => $item->preparing_start_at ?? $now,
+                ],
+                'ready' => [
+                    'preparing_start_at' => $item->preparing_start_at ?? $now,
+                    'ready_at' => $item->ready_at ?? $now,
+                ],
+                'served' => [
+                    'preparing_start_at' => $item->preparing_start_at ?? $now,
+                    'ready_at' => $item->ready_at ?? $now,
+                    'served_at' => $item->served_at ?? $now,
+                ],
+            };
+
+            $item->update($updates);
+            $this->syncOrderStatusFromCartItems($order);
+
+            return [
+                'outcome' => 'updated',
+                'item' => $item,
+            ];
+        });
+
+        if ($transition['outcome'] === 'not_found') {
             return response()->json(['message' => 'Cart item is not linked to this order.'], 404);
         }
 
-        $now = now();
+        if ($transition['outcome'] === 'conflict') {
+            return response()->json([
+                'message' => 'Item status has already advanced.',
+                'current_status' => $transition['current_status'],
+                'requested_status' => $data['status'],
+            ], 409);
+        }
 
-        $updates = match ($data['status']) {
-            'new' => [
-                'preparing_start_at' => null,
-                'ready_at' => null,
-                'served_at' => null,
-            ],
-            'preparing' => [
-                'preparing_start_at' => $item->preparing_start_at ?? $now,
-                'ready_at' => null,
-                'served_at' => null,
-            ],
-            'ready' => [
-                'preparing_start_at' => $item->preparing_start_at ?? $now,
-                'ready_at' => $item->ready_at ?? $now,
-                'served_at' => null,
-            ],
-            'served' => [
-                'preparing_start_at' => $item->preparing_start_at ?? $now,
-                'ready_at' => $item->ready_at ?? $now,
-                'served_at' => $item->served_at ?? $now,
-            ],
-        };
+        if ($transition['outcome'] === 'unchanged') {
+            return response()->json($this->formatOrder(
+                $order->fresh()->load(['customer', 'tableScanSession.restaurantTable'])
+            ));
+        }
 
-        $item->update($updates);
-        $this->syncOrderStatusFromCartItems($order);
+        /** @var CartItem $item */
+        $item = $transition['item'];
 
         $template = match ($data['status']) {
             'preparing' => 'cart.item_preparing',
@@ -842,7 +882,7 @@ class OrderController extends Controller
         return $cache;
     }
 
-    private function loadLinkedCartItems(Order $order)
+    private function linkedCartItemsQuery(Order $order)
     {
         return CartItem::with('menuItem:id,name,price,has_discount,discounted_price,image_url,menu_category_id,vat_rate,tax_category,paid_addons,free_addons,removable_items', 'menuItem.category.masterCategory')
             ->where(function ($q) use ($order) {
@@ -856,8 +896,23 @@ class OrderController extends Controller
                 }
 
                 $q->orWhereJsonContains('shared_order_ids', $order->id);
-            })
-            ->get();
+            });
+    }
+
+    private function loadLinkedCartItems(Order $order)
+    {
+        return $this->linkedCartItemsQuery($order)->get();
+    }
+
+    private function itemStatusRank(string $status): int
+    {
+        return match ($status) {
+            CartItem::STATUS_NEW, CartItem::STATUS_RECEIVED => 0,
+            CartItem::STATUS_PREPARING => 1,
+            CartItem::STATUS_READY => 2,
+            CartItem::STATUS_SERVED => 3,
+            CartItem::STATUS_PICKED_UP => 4,
+        };
     }
 
     private function cartItemUnitPrice(CartItem $item, string $vendorCountry = 'AT'): float

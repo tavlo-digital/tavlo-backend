@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\Vendor;
 
 use App\Http\Controllers\Controller;
+use App\Models\CartItem;
 use App\Models\Order;
 use App\Models\RestaurantTable;
 use App\Models\TableScanSession;
@@ -12,6 +13,8 @@ use App\Models\VendorTakeawayQr;
 use App\Services\NotificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 class TableController extends Controller
@@ -315,66 +318,136 @@ class TableController extends Controller
 
         $table = $vendor->restaurantTables()->findOrFail($tableId);
 
-        $sessions = TableScanSession::where('vendor_id', $vendor->id)
-            ->where('restaurant_table_id', $table->id)
-            ->where('status', 'active')
-            ->get();
+        $result = DB::transaction(function () use ($vendor, $table, $data) {
+            $sessions = TableScanSession::where('vendor_id', $vendor->id)
+                ->where('restaurant_table_id', $table->id)
+                ->where('status', 'active')
+                ->lockForUpdate()
+                ->get();
 
-        if ($sessions->isEmpty()) {
+            if ($sessions->isEmpty()) {
+                return ['outcome' => 'not_found'];
+            }
+
+            $orders = Order::whereIn('table_scan_session_id', $sessions->pluck('id'))
+                ->whereNotIn('status', ['cancelled', 'draft'])
+                ->lockForUpdate()
+                ->get();
+
+            $paymentSummary = $this->paymentSummary($orders);
+            $fulfillmentOrderIds = $orders->pluck('id')->values();
+
+            $unfinishedItems = collect();
+
+            if ($fulfillmentOrderIds->isNotEmpty()) {
+                $unfinishedItems = CartItem::query()
+                    ->where(function ($query) use ($fulfillmentOrderIds) {
+                        $query->whereIn('order_id', $fulfillmentOrderIds);
+
+                        foreach ($fulfillmentOrderIds as $orderId) {
+                            $query->orWhereJsonContains('shared_order_ids', $orderId);
+                        }
+                    })
+                    ->whereNull('served_at')
+                    ->lockForUpdate()
+                    ->get(['id', 'order_id', 'shared_order_ids']);
+            }
+
+            if ($unfinishedItems->isNotEmpty()) {
+                $unfinishedOrderCount = $fulfillmentOrderIds
+                    ->filter(function ($orderId) use ($unfinishedItems) {
+                        return $unfinishedItems->contains(function (CartItem $item) use ($orderId) {
+                            $sharedOrderIds = is_array($item->shared_order_ids) ? $item->shared_order_ids : [];
+
+                            return (string) $item->order_id === (string) $orderId
+                                || in_array((int) $orderId, array_map('intval', $sharedOrderIds), true);
+                        });
+                    })
+                    ->count();
+
+                return [
+                    'outcome' => 'unfinished_items',
+                    'paymentSummary' => $paymentSummary,
+                    'fulfillmentSummary' => [
+                        'unfinishedOrdersCount' => $unfinishedOrderCount,
+                        'unservedItemsCount' => $unfinishedItems->count(),
+                    ],
+                ];
+            }
+
+            if ($paymentSummary['remainingAmount'] > 0 && ! ($data['force'] ?? false)) {
+                return [
+                    'outcome' => 'unpaid_balance',
+                    'paymentSummary' => $paymentSummary,
+                ];
+            }
+
+            TableScanSession::whereIn('id', $sessions->pluck('id'))->update([
+                'status' => 'closed',
+                'closed_at' => now(),
+            ]);
+
+            return [
+                'outcome' => 'closed',
+                'sessions' => $sessions,
+                'paymentSummary' => $paymentSummary,
+            ];
+        });
+
+        if ($result['outcome'] === 'not_found') {
             return response()->json(['message' => 'No active table session found.'], 404);
         }
 
-        $orders = Order::whereIn('table_scan_session_id', $sessions->pluck('id'))
-            ->where('status', '!=', 'cancelled')
-            ->get();
-
-        $total = round((float) $orders->sum(fn (Order $order) => (float) $order->amount), 2);
-        $paid = round((float) $orders
-            ->filter(fn (Order $order) => (bool) $order->payment_received)
-            ->sum(fn (Order $order) => (float) $order->amount), 2);
-        $remaining = round(max(0, $total - $paid), 2);
-        $cashPending = $orders
-            ->filter(fn (Order $order) => $order->payment_method === 'cash'
-                && (bool) $order->payment_pending
-                && ! (bool) $order->payment_received)
-            ->count();
-
-        if ($remaining > 0 && ! ($data['force'] ?? false)) {
+        if ($result['outcome'] === 'unfinished_items') {
             return response()->json([
-                'message' => 'This table still has unpaid balances.',
-                'paymentSummary' => [
-                    'totalAmount'       => $total,
-                    'paidAmount'        => $paid,
-                    'remainingAmount'   => $remaining,
-                    'cashPendingOrders' => $cashPending,
-                    'ordersCount'       => $orders->count(),
-                ],
+                'message' => 'This table still has unfinished order items.',
+                'code' => 'unfinished_items',
+                'fulfillmentSummary' => $result['fulfillmentSummary'],
+                'paymentSummary' => $result['paymentSummary'],
             ], 409);
         }
 
-        TableScanSession::whereIn('id', $sessions->pluck('id'))->update([
-            'status'    => 'closed',
-            'closed_at' => now(),
-        ]);
+        if ($result['outcome'] === 'unpaid_balance') {
+            return response()->json([
+                'message' => 'This table still has unpaid balances.',
+                'code' => 'unpaid_balance',
+                'paymentSummary' => $result['paymentSummary'],
+            ], 409);
+        }
+
         $this->notifyTableChanged($request, $vendor, $table, false);
 
         return response()->json([
             'message' => 'Table session closed',
             'table' => $this->formatTable($table->fresh(), 'idle'),
-            'closedSessionIds' => $sessions->pluck('id')->map(fn ($id) => (string) $id)->values(),
-            'paymentSummary' => [
-                'totalAmount'       => $total,
-                'paidAmount'        => $paid,
-                'remainingAmount'   => $remaining,
-                'cashPendingOrders' => $cashPending,
-                'ordersCount'       => $orders->count(),
-            ],
+            'closedSessionIds' => $result['sessions']->pluck('id')->map(fn ($id) => (string) $id)->values(),
+            'paymentSummary' => $result['paymentSummary'],
         ]);
     }
 
     // ----------------------------------------------------------------
     // Private helpers
     // ----------------------------------------------------------------
+
+    private function paymentSummary(Collection $orders): array
+    {
+        $total = round((float) $orders->sum(fn (Order $order) => (float) $order->amount), 2);
+        $paid = round((float) $orders
+            ->filter(fn (Order $order) => (bool) $order->payment_received)
+            ->sum(fn (Order $order) => (float) $order->amount), 2);
+
+        return [
+            'totalAmount' => $total,
+            'paidAmount' => $paid,
+            'remainingAmount' => round(max(0, $total - $paid), 2),
+            'cashPendingOrders' => $orders
+                ->filter(fn (Order $order) => $order->payment_method === 'cash'
+                    && (bool) $order->payment_pending
+                    && ! (bool) $order->payment_received)
+                ->count(),
+            'ordersCount' => $orders->count(),
+        ];
+    }
 
     private function notifyTableChanged(
         Request $request,
