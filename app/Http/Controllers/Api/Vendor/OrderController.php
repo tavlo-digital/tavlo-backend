@@ -602,6 +602,8 @@ class OrderController extends Controller
             'vendorId' => (string) $first->vendor_id,
             'tableNumber' => $table?->number,
             'tableName' => $table?->name,
+            'pin' => $first->pin,
+            'callWaiterRequested' => $table?->call_waiter_at !== null,
             'status' => 'active',
             'guestCount' => $scanSessions->count(),
             'totalAmount' => $totalAmount,

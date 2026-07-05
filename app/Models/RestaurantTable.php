@@ -17,6 +17,7 @@ class RestaurantTable extends Model
         'is_active',
         'qr_created_at',
         'last_scanned_at',
+        'call_waiter_at',
     ];
 
     protected function casts(): array
@@ -25,6 +26,7 @@ class RestaurantTable extends Model
             'is_active'      => 'boolean',
             'qr_created_at'  => 'datetime',
             'last_scanned_at' => 'datetime',
+            'call_waiter_at' => 'datetime',
         ];
     }
 

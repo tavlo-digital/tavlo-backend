@@ -423,6 +423,7 @@ class TableController extends Controller
             ], 409);
         }
 
+        $table->update(['call_waiter_at' => null]);
         $this->notifyTableChanged($request, $vendor, $table, false);
 
         return response()->json([
@@ -430,6 +431,71 @@ class TableController extends Controller
             'table' => $this->formatTable($table->fresh(), 'idle'),
             'closedSessionIds' => $result['sessions']->pluck('id')->map(fn ($id) => (string) $id)->values(),
             'paymentSummary' => $result['paymentSummary'],
+        ]);
+    }
+
+    public function dismissCall(Request $request, string $vendorId, string $tableId): JsonResponse
+    {
+        $vendor = Vendor::where('vendor_public_id', $vendorId)->firstOrFail();
+        $table = $vendor->restaurantTables()->findOrFail($tableId);
+
+        $table->update(['call_waiter_at' => null]);
+
+        return response()->json(['message' => 'Call dismissed.']);
+    }
+
+    public function transfer(Request $request, string $vendorId, string $tableId): JsonResponse
+    {
+        $vendor = Vendor::where('vendor_public_id', $vendorId)->firstOrFail();
+        $sourceTable = $vendor->restaurantTables()->findOrFail($tableId);
+
+        $data = $request->validate([
+            'target_table_id' => ['required', 'integer'],
+        ]);
+
+        $targetTable = $vendor->restaurantTables()->findOrFail($data['target_table_id']);
+
+        $sessions = TableScanSession::where('vendor_id', $vendor->id)
+            ->where('restaurant_table_id', $sourceTable->id)
+            ->where('status', 'active')
+            ->get();
+
+        if ($sessions->isEmpty()) {
+            return response()->json(['message' => 'No active session on this table.'], 404);
+        }
+
+        TableScanSession::whereIn('id', $sessions->pluck('id'))
+            ->update(['restaurant_table_id' => $targetTable->id]);
+
+        $sourceTable->update(['call_waiter_at' => null]);
+
+        $sourceLabel = $sourceTable->name ?? "#{$sourceTable->number}";
+        $targetLabel = $targetTable->name ?? "#{$targetTable->number}";
+
+        $this->notifyTableChanged($request, $vendor, $targetTable, false);
+
+        NotificationService::notifyOperations(
+            $vendor->id,
+            'table_session_changed',
+            "Table {$sourceLabel} transferred to Table {$targetLabel}.",
+            [NotificationService::VENDOR, NotificationService::WAITER, NotificationService::KITCHEN],
+            [
+                'resources' => ['orders', 'tables', 'dashboard', 'notifications'],
+                'template' => 'staff.table_session_changed',
+                'table_id' => $targetTable->id,
+                'table_label' => $targetLabel,
+                'severity' => 'info',
+                'sound' => null,
+                'source_actor_type' => $request->user() instanceof TeamMember ? 'team_member' : 'vendor',
+                'source_actor_id' => $request->user()?->id,
+            ],
+        );
+
+        return response()->json([
+            'message' => "Transferred to Table {$targetLabel}.",
+            'source_table_id' => (string) $sourceTable->id,
+            'target_table_id' => (string) $targetTable->id,
+            'sessions_transferred' => $sessions->count(),
         ]);
     }
 

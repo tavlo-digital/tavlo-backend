@@ -432,6 +432,7 @@ class TableScanController extends Controller
         ])->validate();
 
         $table = RestaurantTable::query()->findOrFail($data['table_id']);
+        $table->update(['call_waiter_at' => now()]);
         $tableLabel = $table->name ?? "#{$table->number}";
         $note = $data['note'] ?? null;
         $message = "Table {$tableLabel} is calling.";

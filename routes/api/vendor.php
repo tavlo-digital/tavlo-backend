@@ -19,6 +19,7 @@ use App\Http\Controllers\Api\Vendor\ReviewController;
 use App\Http\Controllers\Api\Vendor\SpecialTagController;
 use App\Http\Controllers\Api\Vendor\StripeConnectController;
 use App\Http\Controllers\Api\Vendor\SubscriptionWebhookController;
+use App\Http\Controllers\Api\Vendor\StaffOrderController;
 use App\Http\Controllers\Api\Vendor\TableController;
 use App\Http\Controllers\Api\Vendor\TeamController;
 use App\Http\Controllers\Api\Vendor\VendorSettingsController;
@@ -155,6 +156,9 @@ Route::middleware(['auth:vendor,team_member', 'vendor.staff.access'])->group(fun
     Route::post('{vendorId}/tables/takeaway-qr/refresh', [TableController::class, 'refreshTakeawayQR'])->name('tables.refreshTakeawayQR');
     Route::post('{vendorId}/tables/sync', [TableController::class, 'sync'])->name('tables.sync');
     Route::post('{vendorId}/tables/{tableId}/close-session', [TableController::class, 'closeSession'])->name('tables.closeSession');
+    Route::post('{vendorId}/tables/{tableId}/dismiss-call', [TableController::class, 'dismissCall'])->name('tables.dismissCall');
+    Route::post('{vendorId}/tables/{tableId}/transfer', [TableController::class, 'transfer'])->name('tables.transfer');
+    Route::post('{vendorId}/tables/{tableId}/staff-order', [StaffOrderController::class, 'store'])->name('tables.staffOrder');
 
     // Team
     Route::get('{vendorId}/team', [TeamController::class, 'index'])->name('team.index');
