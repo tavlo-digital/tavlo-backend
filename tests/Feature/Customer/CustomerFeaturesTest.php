@@ -831,19 +831,29 @@ class CustomerFeaturesTest extends TestCase
         ]);
 
         $this->getJson("/api/customer/reviews/session/{$session->id}", $this->headers)
-            ->assertUnprocessable()
-            ->assertJsonPath(
-                'errors.session_scan_table_id.0',
-                'All orders must be paid before you can review this session.'
-            );
+            ->assertOk()
+            ->assertJsonPath('all_paid', false)
+            ->assertJsonPath('all_served', false)
+            ->assertJsonPath('reviewable', false)
+            ->assertJsonPath('reviewed', false);
 
         $order->update(['payment_received' => true]);
 
         $this->getJson("/api/customer/reviews/session/{$session->id}", $this->headers)
-            ->assertUnprocessable()
-            ->assertJsonPath('errors.session_scan_table_id.0', 'Items are not served yet.');
+            ->assertOk()
+            ->assertJsonPath('all_paid', true)
+            ->assertJsonPath('all_served', false)
+            ->assertJsonPath('reviewable', false);
 
         $cartItem->update(['served_at' => now()]);
+
+        $this->getJson("/api/customer/reviews/session/{$session->id}", $this->headers)
+            ->assertOk()
+            ->assertJsonPath('all_paid', true)
+            ->assertJsonPath('all_served', true)
+            ->assertJsonPath('reviewable', true)
+            ->assertJsonPath('reviewed', false);
+
         Review::create([
             'review_public_id' => 'rev_session_endpoint',
             'customer_id' => $this->customer->id,
@@ -853,11 +863,11 @@ class CustomerFeaturesTest extends TestCase
         ]);
 
         $this->getJson("/api/customer/reviews/session/{$session->id}", $this->headers)
-            ->assertUnprocessable()
-            ->assertJsonPath(
-                'errors.session_scan_table_id.0',
-                'You have already reviewed this session.'
-            );
+            ->assertOk()
+            ->assertJsonPath('reviewed', true)
+            ->assertJsonPath('reviewable', false)
+            ->assertJsonPath('review.rating', 5)
+            ->assertJsonPath('review.review_public_id', 'rev_session_endpoint');
     }
 
     public function test_session_review_accepts_overall_and_item_photos(): void

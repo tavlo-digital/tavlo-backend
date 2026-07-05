@@ -133,18 +133,114 @@ class ReviewController extends Controller
         return response()->json($payload);
     }
 
+    public function sessions(Request $request): JsonResponse
+    {
+        $customer = $request->user();
+
+        $sessions = TableScanSession::where('customer_id', $customer->id)
+            ->orderByDesc('id')
+            ->get();
+
+        if ($sessions->isEmpty()) {
+            return response()->json(['data' => []]);
+        }
+
+        $sessionIds = $sessions->pluck('id');
+
+        $allOrders = Order::whereIn('table_scan_session_id', $sessionIds)
+            ->where('customer_id', $customer->id)
+            ->orderBy('id')
+            ->get()
+            ->groupBy('table_scan_session_id');
+
+        $allReviews = Review::with([
+            'items.menuItem:id,name,image_url',
+            'vendor:id,vendor_public_id,restaurant_name',
+            'vendor.vendorSetting:id,vendor_id,date_format,time_format',
+        ])
+            ->whereIn('table_scan_session_id', $sessionIds)
+            ->get()
+            ->keyBy('table_scan_session_id');
+
+        $data = $sessions->map(function (TableScanSession $session) use ($allOrders, $allReviews) {
+            $orders = $allOrders->get($session->id, collect());
+
+            if ($orders->isEmpty()) {
+                return null;
+            }
+
+            $cartItems = $this->cartItemsForOrders($orders);
+
+            $allPaid = ! $orders->contains(fn (Order $order) => ! $order->payment_received);
+            $allServed = $cartItems->isNotEmpty() && ! $cartItems->contains(fn (CartItem $item) => $item->served_at === null);
+
+            $existingReview = $allReviews->get($session->id);
+
+            $entry = [
+                'session_scan_table_id' => $session->id,
+                'reviewed' => $existingReview !== null,
+                'reviewable' => $allPaid && $allServed && $existingReview === null,
+                'all_paid' => $allPaid,
+                'all_served' => $allServed,
+                'orders' => $this->formatSessionOrders($orders, $cartItems),
+            ];
+
+            if ($existingReview) {
+                $entry['review'] = $this->formatReview($existingReview);
+            }
+
+            return $entry;
+        })->filter()->values()->all();
+
+        return response()->json(['data' => $data]);
+    }
+
     public function sessionOrders(Request $request, int $sessionScanTableId): JsonResponse
     {
+        $customer = $request->user();
+
         $session = TableScanSession::whereKey($sessionScanTableId)
-            ->where('customer_id', $request->user()->id)
+            ->where('customer_id', $customer->id)
             ->firstOrFail();
 
-        [$orders, $cartItems] = $this->assertSessionReviewable($session, $request->user()->id);
+        $orders = Order::where('table_scan_session_id', $session->id)
+            ->where('customer_id', $customer->id)
+            ->orderBy('id')
+            ->get();
 
-        return response()->json([
+        if ($orders->isEmpty()) {
+            throw ValidationException::withMessages([
+                'session_scan_table_id' => ['This session has no orders.'],
+            ]);
+        }
+
+        $cartItems = $this->cartItemsForOrders($orders);
+
+        $allPaid = ! $orders->contains(fn (Order $order) => ! $order->payment_received);
+        $allServed = $cartItems->isNotEmpty() && ! $cartItems->contains(fn (CartItem $item) => $item->served_at === null);
+
+        $existingReview = Review::with([
+            'items.menuItem:id,name,image_url',
+            'vendor:id,vendor_public_id,restaurant_name',
+            'vendor.vendorSetting:id,vendor_id,date_format,time_format',
+        ])
+            ->where('table_scan_session_id', $session->id)
+            ->first();
+
+        $response = [
             'session_scan_table_id' => $session->id,
+            'reviewed' => $existingReview !== null,
+            'reviewable' => $allPaid && $allServed && $existingReview === null,
+            'all_paid' => $allPaid,
+            'all_served' => $allServed,
             'orders' => $this->formatSessionOrders($orders, $cartItems),
-        ]);
+        ];
+
+        if ($existingReview) {
+            $response['review'] = $this->formatReview($existingReview);
+        }
+
+        return response()->json($response);
     }
 
     public function store(Request $request): JsonResponse

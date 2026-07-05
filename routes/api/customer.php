@@ -134,6 +134,7 @@ Route::middleware(['auth:customer', 'track.session.activity'])->group(function (
     // Reviews
     Route::get('reviews',                       [ReviewController::class, 'index'])->name('reviews.index');
     Route::get('reviews/item/{menuItemId}',     [ReviewController::class, 'itemReviews'])->name('reviews.item');
+    Route::get('reviews/sessions',             [ReviewController::class, 'sessions'])->name('reviews.sessions');
     Route::get('reviews/session/{sessionScanTableId}', [ReviewController::class, 'sessionOrders'])->name('reviews.session-orders');
     Route::post('reviews',                      [ReviewController::class, 'store'])->name('reviews.store');
     Route::patch('reviews/{reviewPublicId}',    [ReviewController::class, 'update'])->name('reviews.update');
