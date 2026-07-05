@@ -37,11 +37,13 @@ Route::get('health', function () {
 })->name('health');
 
 // Auth (public)
-Route::post('register',        [AuthController::class, 'register'])->name('register');
-Route::post('guest',           [AuthController::class, 'loginAsGuest'])->name('guest');
-Route::post('login',           [AuthController::class, 'login'])->name('login');
-Route::post('social/register', [AuthController::class, 'socialRegister'])->name('social.register');
-Route::post('social/login',    [AuthController::class, 'socialLogin'])->name('social.login');
+Route::middleware('throttle:auth')->group(function () {
+    Route::post('register',        [AuthController::class, 'register'])->name('register');
+    Route::post('guest',           [AuthController::class, 'loginAsGuest'])->name('guest');
+    Route::post('login',           [AuthController::class, 'login'])->name('login');
+    Route::post('social/register', [AuthController::class, 'socialRegister'])->name('social.register');
+    Route::post('social/login',    [AuthController::class, 'socialLogin'])->name('social.login');
+});
 
 // Public browsing (no auth required)
 Route::get('categories', [RestaurantController::class, 'allCategories'])->name('categories');
@@ -81,7 +83,7 @@ Route::middleware(['auth:customer', 'track.session.activity'])->group(function (
 
     // Table session flow
     Route::post('table/scan', [TableScanController::class, 'scan'])->name('table.scan');
-    Route::post('table/pin', [TableScanController::class, 'pin'])->name('table.pin');
+    Route::post('table/pin', [TableScanController::class, 'pin'])->middleware('throttle:table-pin')->name('table.pin');
     Route::get('table/session/status', [TableScanController::class, 'sessionStatus'])->name('table.session.status');
     Route::post('table/close', [TableScanController::class, 'close'])->name('table.close');
     Route::get('table/order/start',      [CartController::class, 'orderStart'])->name('table.order.start');
@@ -109,6 +111,7 @@ Route::middleware(['auth:customer', 'track.session.activity'])->group(function (
     // Stripe Elements Payments
     Route::post('payments/pay-for', [PaymentController::class, 'payFor'])->name('payments.pay-for');
     Route::delete('payments/pay-for/{customerId}', [PaymentController::class, 'releasePayFor'])->name('payments.pay-for.release');
+    Route::post('payments/request-cash', [PaymentController::class, 'requestCash'])->name('payments.request-cash');
     Route::post('payments/create-intent', [PaymentController::class, 'createIntent'])->name('payments.create-intent');
     Route::post('payments/update-intent', [PaymentController::class, 'updateIntent'])->name('payments.update-intent');
     Route::get('payments/verify', [PaymentController::class, 'verify'])->name('payments.verify');

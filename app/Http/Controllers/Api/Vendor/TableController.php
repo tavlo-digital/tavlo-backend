@@ -382,6 +382,14 @@ class TableController extends Controller
                 ];
             }
 
+            Order::whereIn('table_scan_session_id', $sessions->pluck('id'))
+                ->whereNotIn('status', Order::TERMINAL_STATUSES)
+                ->update([
+                    'status' => 'cancelled',
+                    'cancelled_at' => now(),
+                    'cancelled_reason' => 'Table session closed by staff.',
+                ]);
+
             TableScanSession::whereIn('id', $sessions->pluck('id'))->update([
                 'status' => 'closed',
                 'closed_at' => now(),

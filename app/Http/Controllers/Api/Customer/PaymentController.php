@@ -452,6 +452,145 @@ class PaymentController extends Controller
     }
 
     /**
+     * POST /api/customer/payments/request-cash
+     */
+    public function requestCash(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'order_id' => [
+                'required',
+                function (string $attribute, mixed $value, Closure $fail): void {
+                    if (! is_string($value) && ! is_int($value)) {
+                        $fail("The {$attribute} field must be a string or integer.");
+
+                        return;
+                    }
+
+                    if (mb_strlen((string) $value) > 255) {
+                        $fail("The {$attribute} field must not be greater than 255 characters.");
+                    }
+                },
+            ],
+            'customer_id' => ['required', 'integer'],
+            'notes' => ['nullable', 'string', 'max:500'],
+        ]);
+
+        $customer = $request->user();
+        $customerId = (int) $data['customer_id'];
+
+        if ($customerId !== (int) $customer->id) {
+            throw ValidationException::withMessages([
+                'customer_id' => ['The provided customer identifier does not match the authenticated customer.'],
+            ]);
+        }
+
+        $order = $this->customerOrder((string) $data['order_id'], $customer->id);
+        $ownerCustomerId = $this->orderOwnerCustomerId($order);
+
+        if ($order->payment_received) {
+            return response()->json(['message' => 'Order is already paid.'], 422);
+        }
+
+        if ($ownerCustomerId === (int) $customer->id
+            && $order->paid_by !== null
+            && (int) $order->paid_by !== (int) $customer->id) {
+            return response()->json([
+                'message' => 'This order is assigned to another payer.',
+            ], 409);
+        }
+
+        $orders = $this->groupedOrdersForPayment($order, (int) $customer->id);
+        $orderIds = $orders->pluck('id');
+
+        foreach ($orders->pluck('table_scan_session_id')->filter()->unique() as $sessionId) {
+            $unboundCount = CartItem::where('table_scan_session_id', $sessionId)
+                ->whereNull('order_id')
+                ->count();
+            if ($unboundCount > 0) {
+                return response()->json([
+                    'message'            => 'You have items in your cart that have not been submitted. Please confirm your full order before paying.',
+                    'unbound_item_count' => $unboundCount,
+                ], 422);
+            }
+        }
+
+        $amounts = $orders->mapWithKeys(fn (Order $coveredOrder) => [
+            $coveredOrder->id => $this->finalOrderAmount($coveredOrder),
+        ]);
+        $amount = round((float) $amounts->sum(), 2);
+
+        if ($amount <= 0 || $amounts->contains(fn (float $orderAmount) => $orderAmount <= 0)) {
+            return response()->json(['message' => 'Order amount must be greater than zero.'], 422);
+        }
+
+        $currency = $order->vendor?->currency ?? $order->currency ?? 'EUR';
+
+        DB::transaction(function () use ($order, $orderIds, $amounts, $customer, $amount, $currency, $data) {
+            $lockedOrders = Order::whereIn('id', $orderIds)->lockForUpdate()->get();
+
+            if ($lockedOrders->contains(fn (Order $locked) => $locked->payment_received)) {
+                abort(409, 'One or more orders are already paid.');
+            }
+
+            OrderPayment::create([
+                'order_id' => $order->id,
+                'vendor_id' => $order->vendor_id,
+                'customer_id' => $customer->id,
+                'table_scan_session_id' => $order->table_scan_session_id,
+                'stripe_account_id' => null,
+                'stripe_payment_intent_id' => null,
+                'amount' => $amount,
+                'currency' => strtoupper($currency),
+                'status' => 'cash_requested',
+                'payment_method' => 'cash',
+                'metadata' => [
+                    'notes' => $data['notes'] ?? null,
+                    'order_id' => (string) $order->id,
+                    'order_public_id' => (string) $order->order_public_id,
+                    'vendor_id' => (string) $order->vendor_id,
+                    'customer_id' => (string) $customer->id,
+                    'covered_order_count' => (string) $lockedOrders->count(),
+                ],
+            ]);
+
+            foreach ($lockedOrders as $lockedOrder) {
+                $lockedOrder->update([
+                    'amount' => $amounts[$lockedOrder->id],
+                    'service_fee' => $lockedOrder->service_fee ?? 0,
+                    'currency' => strtoupper($currency),
+                    'payment_method' => 'cash',
+                    'payment_pending' => true,
+                    'payment_received' => false,
+                ]);
+            }
+        });
+
+        $customerName = trim(($customer->first_name ?? '') . ' ' . ($customer->last_name ?? '')) ?: 'A guest';
+        $tableId = $order->tableScanSession?->restaurant_table_id;
+
+        if ($tableId) {
+            NotificationService::notifyTableCustomers(
+                $tableId,
+                'payment_updated',
+                "{$customerName} requested cash payment.",
+                [
+                    'template' => 'payment.cash_requested',
+                    'customer_id' => $customer->id,
+                    'customer_name' => $customerName,
+                    'order_id' => $order->id,
+                    'notes' => $data['notes'] ?? null,
+                ],
+            );
+        }
+
+        return response()->json([
+            'message' => 'Cash payment requested. A waiter will come to your table.',
+            'amount' => $amount,
+            'currency' => strtoupper($currency),
+        ]);
+    }
+
+    /**
      * POST /api/customer/payments/update-intent
      */
     public function updateIntent(Request $request): JsonResponse

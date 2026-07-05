@@ -36,6 +36,14 @@ class CloseStaleTableScanSessions extends Command
 
             $customerIds = $sessions->pluck('customer_id')->filter()->unique();
 
+            Order::whereIn('table_scan_session_id', $sessions->pluck('id'))
+                ->whereNotIn('status', Order::TERMINAL_STATUSES)
+                ->update([
+                    'status' => 'cancelled',
+                    'cancelled_at' => now(),
+                    'cancelled_reason' => 'Table session expired due to inactivity.',
+                ]);
+
             TableScanSession::query()
                 ->whereIn('id', $sessions->pluck('id'))
                 ->update([

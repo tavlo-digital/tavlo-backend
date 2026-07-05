@@ -305,6 +305,12 @@ class CartController extends Controller
             return response()->json(['message' => 'Item not found.'], 404);
         }
 
+        if ($item->received_at) {
+            return response()->json([
+                'message' => 'This item has already been submitted and cannot be modified. Please add a new item instead.',
+            ], 409);
+        }
+
         $updates = array_filter(
             array_intersect_key($data, array_flip(['quantity', 'notes'])),
             fn ($v) => $v !== null
@@ -367,6 +373,12 @@ class CartController extends Controller
 
         if (! $item) {
             return response()->json(['message' => 'Item not found.'], 404);
+        }
+
+        if ($item->received_at) {
+            return response()->json([
+                'message' => 'This item has already been submitted and cannot be removed.',
+            ], 409);
         }
 
         $itemName = $item->menuItem?->name ?? 'an item';

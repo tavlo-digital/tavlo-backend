@@ -29,8 +29,10 @@ use Illuminate\Support\Facades\Route;
 Route::post('billing/webhook', [SubscriptionWebhookController::class, 'handle'])->name('billing.webhook');
 
 // Auth (public)
-Route::post('register', [AuthController::class, 'register'])->name('register');
-Route::post('login', [AuthController::class, 'login'])->name('login');
+Route::middleware('throttle:auth')->group(function () {
+    Route::post('register', [AuthController::class, 'register'])->name('register');
+    Route::post('login', [AuthController::class, 'login'])->name('login');
+});
 Route::get('team/invitations/{token}', [TeamController::class, 'invitation'])->name('team.invitations.show');
 Route::post('team/invitations/{token}/accept', [TeamController::class, 'acceptInvitation'])->name('team.invitations.accept');
 Route::post('{vendorId}/tables/{tableId}/scan', [TableController::class, 'recordScan'])->name('tables.scan');

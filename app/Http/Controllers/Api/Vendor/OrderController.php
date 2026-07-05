@@ -671,7 +671,8 @@ class OrderController extends Controller
 
         $rawStatus = $order->status;
         $displayStatus = match ($rawStatus) {
-            'draft', 'confirmed' => 'received',
+            'draft' => 'draft',
+            'confirmed' => 'received',
             'picked_up' => 'picked-up',
             default => $rawStatus,
         };
@@ -704,7 +705,13 @@ class OrderController extends Controller
             $timeline[] = ['status' => 'cancelled', 'timestamp' => $order->cancelled_at->toISOString()];
         }
 
-        $items = $linkedItems->map(function (CartItem $ci) use ($vendorCountry, $vendor, $locale) {
+        $isDraftSession = $order->status === 'draft' && $order->table_scan_session_id;
+
+        $items = $linkedItems->map(function (CartItem $ci) use ($order, $isDraftSession, $vendorCountry, $vendor, $locale) {
+            $isOwner = $isDraftSession
+                ? ($ci->table_scan_session_id == $order->table_scan_session_id && $ci->order_id === null)
+                : ($ci->order_id == $order->id);
+
             $itemTaxCategory = $ci->menuItem?->tax_category ?? 'food';
             $unitPrice = $this->cartItemUnitPrice($ci, $vendorCountry);
             $lineTotal = round($unitPrice * $ci->quantity, 2);
@@ -751,6 +758,8 @@ class OrderController extends Controller
                 'status' => $itemStatus,
                 'sharedBetween' => $sharedBetween,
                 'sharedWithOrderIds' => $orderIds,
+                'isSharedCopy' => ! $isOwner,
+                'is_shared_copy' => ! $isOwner,
                 'receivedAt' => $ci->received_at?->toISOString(),
                 'received_at' => $ci->received_at?->toISOString(),
                 'preparingStartAt' => $ci->preparing_start_at?->toISOString(),

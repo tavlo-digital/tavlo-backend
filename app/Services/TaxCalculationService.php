@@ -118,7 +118,7 @@ class TaxCalculationService
         $addonsGross = self::cartItemPaidAddonsGross($item, $vendorCountry);
         $modifiersGross = self::cartItemModifiersGross($item, $vendorCountry);
 
-        return round($baseGross + $addonsGross + $modifiersGross, 2);
+        return max(0.0, round($baseGross + $addonsGross + $modifiersGross, 2));
     }
 
     public static function cartItemLineTotalGross(CartItem $item, string $vendorCountry): float
@@ -179,11 +179,14 @@ class TaxCalculationService
             $baseGross = self::itemBaseGross($menuItem, $vendorCountry) * $qty / $shareCount;
             self::addToBucket($buckets, $itemTaxCategory, $itemVatRate, $baseGross);
 
+            $itemRunningGross = $baseGross;
+
             foreach ($item->paid_addons ?? [] as $addon) {
                 $addonSlug = $addon['taxCategory'] ?? $addon['tax_category'] ?? $itemTaxCategory;
                 $addonVatRate = self::addonVatRate($addon, $itemTaxCategory, $vendorCountry);
                 $addonGross = self::gross((float) ($addon['price'] ?? 0), $addonVatRate) * $qty / $shareCount;
                 self::addToBucket($buckets, $addonSlug, $addonVatRate, $addonGross);
+                $itemRunningGross += $addonGross;
             }
 
             foreach ($item->selected_modifiers ?? [] as $group) {
@@ -192,7 +195,9 @@ class TaxCalculationService
 
                 foreach ($group['options'] ?? [] as $option) {
                     $optGross = self::gross((float) ($option['price_adjustment'] ?? 0), $groupVatRate) * $qty / $shareCount;
+                    $optGross = max($optGross, -$itemRunningGross);
                     self::addToBucket($buckets, $groupSlug, $groupVatRate, $optGross);
+                    $itemRunningGross += $optGross;
                 }
             }
         }

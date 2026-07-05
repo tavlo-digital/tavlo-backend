@@ -824,6 +824,10 @@ class OrderHistoryController extends Controller
             return null;
         }
 
+        if (in_array($order->status, Order::TERMINAL_STATUSES, true)) {
+            return null;
+        }
+
         $prepMinutes = (int) ($order->vendor?->vendorSetting?->estimated_prep_time ?? 20);
 
         return $this->dateTimes->formatDateTime(
