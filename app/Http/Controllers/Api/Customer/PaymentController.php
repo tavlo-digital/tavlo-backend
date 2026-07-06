@@ -120,7 +120,6 @@ class PaymentController extends Controller
             $orders = Order::where('table_scan_session_id', $targetSession->id)
                 ->whereNotIn('status', [Order::STATUS_DRAFT, Order::STATUS_CANCELLED])
                 ->where('payment_received', false)
-                ->where('payment_pending', false)
                 ->lockForUpdate()
                 ->get();
 
