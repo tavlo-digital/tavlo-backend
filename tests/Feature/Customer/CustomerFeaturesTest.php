@@ -846,6 +846,7 @@ class CustomerFeaturesTest extends TestCase
             ->assertJsonPath('reviewable', false);
 
         $cartItem->update(['served_at' => now()]);
+        $order->update(['status' => 'served', 'served_at' => now()]);
 
         $this->getJson("/api/customer/reviews/session/{$session->id}", $this->headers)
             ->assertOk()

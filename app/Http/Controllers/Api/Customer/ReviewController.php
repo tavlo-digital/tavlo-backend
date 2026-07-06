@@ -169,10 +169,11 @@ class ReviewController extends Controller
                 return null;
             }
 
+            $activeOrders = $orders->filter(fn (Order $order) => ! in_array($order->status, ['cancelled', 'draft']));
             $cartItems = $this->cartItemsForOrders($orders);
 
-            $allPaid = ! $orders->contains(fn (Order $order) => ! $order->payment_received);
-            $allServed = $cartItems->isNotEmpty() && ! $cartItems->contains(fn (CartItem $item) => $item->served_at === null);
+            $allPaid = $activeOrders->isNotEmpty() && ! $activeOrders->contains(fn (Order $order) => ! $order->payment_received);
+            $allServed = $activeOrders->isNotEmpty() && ! $activeOrders->contains(fn (Order $order) => ! in_array($order->status, ['served', 'picked_up']));
 
             $existingReview = $allReviews->get($session->id);
 
@@ -214,10 +215,11 @@ class ReviewController extends Controller
             ]);
         }
 
+        $activeOrders = $orders->filter(fn (Order $order) => ! in_array($order->status, ['cancelled', 'draft']));
         $cartItems = $this->cartItemsForOrders($orders);
 
-        $allPaid = ! $orders->contains(fn (Order $order) => ! $order->payment_received);
-        $allServed = $cartItems->isNotEmpty() && ! $cartItems->contains(fn (CartItem $item) => $item->served_at === null);
+        $allPaid = $activeOrders->isNotEmpty() && ! $activeOrders->contains(fn (Order $order) => ! $order->payment_received);
+        $allServed = $activeOrders->isNotEmpty() && ! $activeOrders->contains(fn (Order $order) => ! in_array($order->status, ['served', 'picked_up']));
 
         $existingReview = Review::with([
             'items.menuItem:id,name,image_url',
