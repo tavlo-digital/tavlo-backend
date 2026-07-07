@@ -8,17 +8,61 @@ class SupabaseRealtimeTokenService
 {
     public function issue(array $claims): array
     {
-        $privateKey = $this->privateKey();
-        $keyId = trim((string) config('services.supabase.realtime_signing_key_id'));
         $supabaseUrl = rtrim((string) config('services.supabase.url'), '/');
         $ttl = max(300, (int) config('services.supabase.realtime_token_ttl', 900));
 
-        if ($keyId === '' || $supabaseUrl === '') {
+        if ($supabaseUrl === '') {
+            throw new RuntimeException('Supabase URL is not configured.');
+        }
+
+        $jwtSecret = trim((string) config('services.supabase.jwt_secret'));
+
+        if ($jwtSecret !== '') {
+            return $this->issueHmac($claims, $jwtSecret, $supabaseUrl, $ttl);
+        }
+
+        return $this->issueEc($claims, $supabaseUrl, $ttl);
+    }
+
+    private function issueHmac(array $claims, string $secret, string $supabaseUrl, int $ttl): array
+    {
+        $issuedAt = now()->timestamp;
+        $expiresAt = $issuedAt + $ttl;
+
+        $header = ['alg' => 'HS256', 'typ' => 'JWT'];
+        $payload = [
+            'iss' => $supabaseUrl.'/auth/v1',
+            'aud' => 'authenticated',
+            'role' => 'authenticated',
+            'iat' => $issuedAt,
+            'exp' => $expiresAt,
+            ...$claims,
+        ];
+
+        $encodedHeader = $this->base64UrlEncode(json_encode($header, JSON_THROW_ON_ERROR));
+        $encodedPayload = $this->base64UrlEncode(json_encode($payload, JSON_THROW_ON_ERROR));
+        $unsignedToken = $encodedHeader.'.'.$encodedPayload;
+
+        $signature = hash_hmac('sha256', $unsignedToken, base64_decode($secret), true);
+
+        return [
+            'token' => $unsignedToken.'.'.$this->base64UrlEncode($signature),
+            'expires_at' => now()->setTimestamp($expiresAt)->toISOString(),
+        ];
+    }
+
+    private function issueEc(array $claims, string $supabaseUrl, int $ttl): array
+    {
+        $privateKey = $this->privateKey();
+        $keyId = trim((string) config('services.supabase.realtime_signing_key_id'));
+
+        if ($keyId === '') {
             throw new RuntimeException('Supabase Realtime signing is not configured.');
         }
 
         $issuedAt = now()->timestamp;
         $expiresAt = $issuedAt + $ttl;
+
         $header = ['alg' => 'ES256', 'kid' => $keyId, 'typ' => 'JWT'];
         $payload = [
             'iss' => $supabaseUrl.'/auth/v1',
@@ -28,6 +72,7 @@ class SupabaseRealtimeTokenService
             'exp' => $expiresAt,
             ...$claims,
         ];
+
         $encodedHeader = $this->base64UrlEncode(json_encode($header, JSON_THROW_ON_ERROR));
         $encodedPayload = $this->base64UrlEncode(json_encode($payload, JSON_THROW_ON_ERROR));
         $unsignedToken = $encodedHeader.'.'.$encodedPayload;

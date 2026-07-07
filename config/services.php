@@ -48,6 +48,7 @@ return [
 
     'supabase' => [
         'url' => env('SUPABASE_URL'),
+        'jwt_secret' => env('SUPABASE_JWT_SECRET'),
         'realtime_signing_key' => env('SUPABASE_REALTIME_SIGNING_KEY'),
         'realtime_signing_key_id' => env('SUPABASE_REALTIME_SIGNING_KEY_ID'),
         'realtime_token_ttl' => (int) env('SUPABASE_REALTIME_TOKEN_TTL', 900),
