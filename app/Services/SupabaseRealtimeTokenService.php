@@ -15,13 +15,17 @@ class SupabaseRealtimeTokenService
             throw new RuntimeException('Supabase URL is not configured.');
         }
 
-        $jwtSecret = trim((string) config('services.supabase.jwt_secret'));
+        $ecKey = trim((string) config('services.supabase.realtime_signing_key'));
+        if ($ecKey !== '') {
+            return $this->issueEc($claims, $supabaseUrl, $ttl);
+        }
 
+        $jwtSecret = trim((string) config('services.supabase.jwt_secret'));
         if ($jwtSecret !== '') {
             return $this->issueHmac($claims, $jwtSecret, $supabaseUrl, $ttl);
         }
 
-        return $this->issueEc($claims, $supabaseUrl, $ttl);
+        throw new RuntimeException('Supabase Realtime signing is not configured.');
     }
 
     private function issueHmac(array $claims, string $secret, string $supabaseUrl, int $ttl): array
