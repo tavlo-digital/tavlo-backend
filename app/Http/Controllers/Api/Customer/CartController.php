@@ -783,6 +783,12 @@ class CartController extends Controller
             ->with('menuItem:id,name,is_active,available')
             ->get();
 
+        if ($openItems->isEmpty()) {
+            return response()->json([
+                'message' => 'Your cart is empty. Add items before confirming your order.',
+            ], 422);
+        }
+
         $unavailableItems = $openItems->filter(
             fn (CartItem $item) => ! $item->menuItem
                 || $item->menuItem->trashed()

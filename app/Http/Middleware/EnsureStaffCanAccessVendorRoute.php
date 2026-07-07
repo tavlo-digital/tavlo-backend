@@ -48,7 +48,10 @@ class EnsureStaffCanAccessVendorRoute
                 'vendor.orders.confirm',
                 'vendor.orders.confirmCash',
                 'vendor.orders.served',
+                'vendor.tables.index',
                 'vendor.tables.closeSession',
+                'vendor.tables.dismissCall',
+                'vendor.tables.transfer',
             ],
         ];
 
