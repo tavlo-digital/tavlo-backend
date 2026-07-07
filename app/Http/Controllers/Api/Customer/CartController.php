@@ -827,6 +827,24 @@ class CartController extends Controller
                 'customer_name' => $customerName,
                 'order_id' => $order->id,
             ],
+            false,
+        );
+
+        NotificationService::notifyOperations(
+            $mySession->vendor_id,
+            'order_confirmed',
+            "{$customerName} confirmed their order.",
+            [NotificationService::VENDOR, NotificationService::WAITER, NotificationService::KITCHEN],
+            [
+                'resources' => ['orders', 'tables', 'dashboard', 'notifications'],
+                'template' => 'staff.order_confirmed',
+                'table_id' => $mySession->restaurant_table_id,
+                'order_id' => $order->id,
+                'severity' => 'urgent',
+                'sound' => 'new_order',
+                'source_actor_type' => 'customer',
+                'source_actor_id' => $request->user()->id,
+            ],
         );
 
         return response()->json($this->buildTableHistoryResponse($mySession, $request));
