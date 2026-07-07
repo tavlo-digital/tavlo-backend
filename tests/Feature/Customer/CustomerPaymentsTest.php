@@ -705,7 +705,7 @@ class CustomerPaymentsTest extends TestCase
             ->postJson('/api/customer/payments/pay-for', ['customer_id' => $tablemate->id])
             ->assertOk();
 
-        $assignedNotifications = Notification::where('event', 'payment_updated')
+        $assignedNotifications = Notification::where('event', 'order_updated')
             ->whereNotNull('customer_id')
             ->get()
             ->filter(fn (Notification $notification) => ($notification->metadata['template'] ?? null) === 'payment.assigned');
@@ -722,7 +722,7 @@ class CustomerPaymentsTest extends TestCase
 
         $this->assertNull($order->fresh()->paid_by);
 
-        $releasedNotifications = Notification::where('event', 'payment_updated')
+        $releasedNotifications = Notification::where('event', 'order_updated')
             ->whereNotNull('customer_id')
             ->get()
             ->filter(fn (Notification $notification) => ($notification->metadata['template'] ?? null) === 'payment.assignment_released');

@@ -149,7 +149,7 @@ class PaymentController extends Controller
         $targetIdentity = $this->customerIdentity($targetSession->customer);
         NotificationService::notifyTableCustomers(
             $payerSession->restaurant_table_id,
-            'payment_updated',
+            'order_updated',
             "{$payerIdentity['name']} is paying for {$targetIdentity['name']}'s orders.",
             [
                 'template' => 'payment.assigned',
@@ -232,7 +232,7 @@ class PaymentController extends Controller
             $targetIdentity = $this->customerIdentity($targetSession->customer);
             NotificationService::notifyTableCustomers(
                 $payerSession->restaurant_table_id,
-                'payment_updated',
+                'order_updated',
                 "{$payerIdentity['name']} is no longer paying for {$targetIdentity['name']}'s orders.",
                 [
                     'template' => 'payment.assignment_released',
