@@ -900,6 +900,78 @@ class TableCartTest extends TestCase
             ->assertJsonPath('people.0.personal_items.0.quantity', 1);
     }
 
+    public function test_confirm_order_merges_open_items_into_existing_unpaid_submitted_order(): void
+    {
+        $existingOrder = Order::create([
+            'order_public_id' => 'ord-existing-unpaid',
+            'customer_id' => $this->customer->id,
+            'vendor_id' => $this->vendor->id,
+            'table_scan_session_id' => $this->session->id,
+            'status' => Order::STATUS_IN_PROGRESS,
+            'amount' => 3.50,
+            'currency' => 'EUR',
+            'order_type' => 'dine-in',
+            'payment_pending' => true,
+            'payment_received' => false,
+        ]);
+
+        CartItem::create([
+            'table_scan_session_id' => $this->session->id,
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 1,
+            'order_id' => $existingOrder->id,
+            'received_at' => now(),
+        ]);
+
+        $draftOrder = Order::create([
+            'order_public_id' => 'ord-stray-draft',
+            'customer_id' => $this->customer->id,
+            'vendor_id' => $this->vendor->id,
+            'table_scan_session_id' => $this->session->id,
+            'status' => Order::STATUS_DRAFT,
+            'amount' => 3.50,
+            'currency' => 'EUR',
+            'order_type' => 'dine-in',
+            'payment_pending' => true,
+            'payment_received' => false,
+        ]);
+
+        $newItem = CartItem::create([
+            'table_scan_session_id' => $this->session->id,
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 1,
+        ]);
+
+        $other = Customer::factory()->create(['first_name' => 'Bob', 'last_name' => 'Jones']);
+        $otherSession = TableScanSession::create([
+            'vendor_id' => $this->vendor->id,
+            'restaurant_table_id' => $this->table->id,
+            'customer_id' => $other->id,
+            'pin' => '',
+            'status' => 'active',
+            'scanned_at' => now(),
+        ]);
+        $sharedItem = CartItem::create([
+            'table_scan_session_id' => $otherSession->id,
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 2,
+            'shared_order_ids' => [$draftOrder->id],
+        ]);
+
+        $response = $this->withHeaders($this->headers)
+            ->postJson('/api/customer/table/order/confirmed');
+
+        $response->assertOk()
+            ->assertJsonPath('people.0.orders_count', 1)
+            ->assertJsonPath('people.0.orders.0.id', $existingOrder->id)
+            ->assertJsonPath('people.0.orders.0.status', Order::STATUS_IN_PROGRESS);
+
+        $this->assertDatabaseMissing('orders', ['id' => $draftOrder->id]);
+        $this->assertSame($existingOrder->id, $newItem->fresh()->order_id);
+        $this->assertSame([$existingOrder->id], $sharedItem->fresh()->shared_order_ids);
+        $this->assertSame(11.55, (float) $existingOrder->fresh()->amount);
+    }
+
     public function test_confirm_order_does_not_confirm_draft_from_a_different_active_session(): void
     {
         $order = Order::create([
@@ -936,6 +1008,104 @@ class TableCartTest extends TestCase
             ->assertNotFound();
 
         $this->assertSame('draft', $order->fresh()->status);
+    }
+
+    public function test_update_order_rejects_duplicate_shared_item(): void
+    {
+        $other = Customer::factory()->create(['first_name' => 'Bob', 'last_name' => 'Jones']);
+        $otherSession = TableScanSession::create([
+            'vendor_id' => $this->vendor->id,
+            'restaurant_table_id' => $this->table->id,
+            'customer_id' => $other->id,
+            'pin' => '',
+            'status' => 'active',
+            'scanned_at' => now(),
+        ]);
+
+        $order = Order::create([
+            'order_public_id' => 'ord-share-caller',
+            'customer_id' => $this->customer->id,
+            'vendor_id' => $this->vendor->id,
+            'table_scan_session_id' => $this->session->id,
+            'status' => Order::STATUS_DRAFT,
+            'amount' => 0,
+            'currency' => 'EUR',
+            'order_type' => 'dine-in',
+            'payment_pending' => true,
+            'payment_received' => false,
+        ]);
+
+        $item = CartItem::create([
+            'table_scan_session_id' => $otherSession->id,
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 1,
+            'shared_order_ids' => [$order->id],
+        ]);
+
+        $this->withHeaders($this->headers)
+            ->putJson("/api/customer/table/order/update/{$order->id}", [
+                'shared_item' => $item->id,
+            ])
+            ->assertStatus(422)
+            ->assertJsonPath('message', 'This item is already shared with your order.');
+
+        $this->assertSame([$order->id], $item->fresh()->shared_order_ids);
+    }
+
+    public function test_update_order_rejects_shared_item_from_order_paid_by_current_customer(): void
+    {
+        $other = Customer::factory()->create(['first_name' => 'Bob', 'last_name' => 'Jones']);
+        $otherSession = TableScanSession::create([
+            'vendor_id' => $this->vendor->id,
+            'restaurant_table_id' => $this->table->id,
+            'customer_id' => $other->id,
+            'pin' => '',
+            'status' => 'active',
+            'scanned_at' => now(),
+        ]);
+
+        $order = Order::create([
+            'order_public_id' => 'ord-share-payer',
+            'customer_id' => $this->customer->id,
+            'vendor_id' => $this->vendor->id,
+            'table_scan_session_id' => $this->session->id,
+            'status' => Order::STATUS_DRAFT,
+            'amount' => 0,
+            'currency' => 'EUR',
+            'order_type' => 'dine-in',
+            'payment_pending' => true,
+            'payment_received' => false,
+        ]);
+
+        $otherOrder = Order::create([
+            'order_public_id' => 'ord-paid-by-caller',
+            'customer_id' => $other->id,
+            'paid_by' => $this->customer->id,
+            'vendor_id' => $this->vendor->id,
+            'table_scan_session_id' => $otherSession->id,
+            'status' => Order::STATUS_CONFIRMED,
+            'amount' => 3.50,
+            'currency' => 'EUR',
+            'order_type' => 'dine-in',
+            'payment_pending' => false,
+            'payment_received' => false,
+        ]);
+
+        $item = CartItem::create([
+            'table_scan_session_id' => $otherSession->id,
+            'menu_item_id' => $this->menuItem->id,
+            'order_id' => $otherOrder->id,
+            'quantity' => 1,
+        ]);
+
+        $this->withHeaders($this->headers)
+            ->putJson("/api/customer/table/order/update/{$order->id}", [
+                'shared_item' => $item->id,
+            ])
+            ->assertStatus(422)
+            ->assertJsonPath('message', 'You are already paying for this item.');
+
+        $this->assertSame([], $item->fresh()->shared_order_ids ?? []);
     }
 
     public function test_table_history_items_include_status_from_preparation_timestamps(): void

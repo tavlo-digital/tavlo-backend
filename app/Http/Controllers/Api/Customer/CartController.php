@@ -527,11 +527,13 @@ class CartController extends Controller
             return response()->json(['message' => 'No active table session found.'], 422);
         }
 
-        $existingOrder = $this->currentOpenOrder($request->user()->id, $mySession->id);
+        $existingSubmittedOrder = $this->currentUnpaidSubmittedOrder($request->user()->id, $mySession->id);
 
-        if ($existingOrder && $existingOrder->status === 'confirmed') {
+        if ($existingSubmittedOrder) {
             return response()->json($this->buildTableHistoryResponse($mySession, $request));
         }
+
+        $existingOrder = $this->currentOpenOrder($request->user()->id, $mySession->id);
 
         $myCartItems = CartItem::with('menuItem:id,name,price,has_discount,discounted_price,vat_rate,tax_category,paid_addons,free_addons,removable_items,translations')
             ->where('table_scan_session_id', $mySession->id)
@@ -654,9 +656,31 @@ class CartController extends Controller
                 ], 422);
             }
 
+            if ($cartItem->order_id) {
+                $ownerOrder = Order::where('id', $cartItem->order_id)->first();
+
+                if ($ownerOrder && (int) $ownerOrder->paid_by === (int) $customerId) {
+                    return response()->json([
+                        'message' => 'You are already paying for this item.',
+                    ], 422);
+                }
+            }
+
+            $existingSharedOrderIds = array_map('intval', is_array($cartItem->shared_order_ids) ? $cartItem->shared_order_ids : []);
+            if (in_array($order->id, $existingSharedOrderIds, true)) {
+                return response()->json([
+                    'message' => 'This item is already shared with your order.',
+                ], 422);
+            }
+
             DB::transaction(function () use ($cartItem, $order) {
                 $locked = CartItem::where('id', $cartItem->id)->lockForUpdate()->first();
                 $existing = is_array($locked->shared_order_ids) ? $locked->shared_order_ids : [];
+                if (in_array($order->id, array_map('intval', $existing), true)) {
+                    throw ValidationException::withMessages([
+                        'shared_item' => ['This item is already shared with your order.'],
+                    ]);
+                }
                 $updated = array_values(array_unique(array_map('intval', array_merge($existing, [$order->id]))));
                 $locked->update(['shared_order_ids' => $updated]);
             });
@@ -762,7 +786,9 @@ class CartController extends Controller
             return response()->json(['message' => 'No active table session found.'], 422);
         }
 
-        $order = $this->currentOpenOrder($customerId, $mySession->id);
+        $draftOrder = $this->currentDraftOrder($customerId, $mySession->id);
+        $submittedOrder = $this->currentUnpaidSubmittedOrder($customerId, $mySession->id);
+        $order = $submittedOrder ?? $draftOrder;
 
         if (! $order) {
             return response()->json(['message' => 'No open draft order found.'], 404);
@@ -772,11 +798,8 @@ class CartController extends Controller
             $mySession->load('vendor.vendorSetting');
         }
 
-        $vendorCountry = $this->vendorCountry($mySession);
-        $itemsTotal = $this->computeOrderAmount($order, $mySession->id, includeOpenOwnedItems: true, vendorCountry: $vendorCountry);
         $serviceFeeRate = $this->serviceFeeRate($mySession);
-        $serviceFee = round($itemsTotal * ($serviceFeeRate / 100), 2);
-        $total = round($itemsTotal + $serviceFee, 2);
+        $vendorCountry = $this->vendorCountry($mySession);
 
         $openItems = CartItem::where('table_scan_session_id', $mySession->id)
             ->whereNull('order_id')
@@ -807,19 +830,42 @@ class CartController extends Controller
             ], 422);
         }
 
-        DB::transaction(function () use ($order, $mySession, $total, $serviceFee, $openItems) {
+        $order = DB::transaction(function () use ($order, $draftOrder, $mySession, $vendorCountry, $serviceFeeRate, $openItems) {
+            $targetOrder = Order::whereKey($order->id)->lockForUpdate()->firstOrFail();
+            $draftToMerge = $draftOrder && (int) $draftOrder->id !== (int) $targetOrder->id
+                ? Order::whereKey($draftOrder->id)->lockForUpdate()->first()
+                : null;
+
             CartItem::whereIn('id', $openItems->pluck('id'))
                 ->update([
-                    'order_id' => $order->id,
+                    'order_id' => $targetOrder->id,
                     'received_at' => now(),
                 ]);
 
-            $order->update([
-                'status' => 'confirmed',
-                'confirmed_at' => now(),
+            if ($draftToMerge) {
+                $this->moveSharedOrderReferences($draftToMerge->id, $targetOrder->id);
+                $draftToMerge->delete();
+            }
+
+            $itemsTotal = $this->computeOrderAmount($targetOrder, $mySession->id, vendorCountry: $vendorCountry);
+            $serviceFee = round($itemsTotal * ($serviceFeeRate / 100), 2);
+            $total = round($itemsTotal + $serviceFee, 2);
+
+            $updates = [
                 'amount' => $total,
                 'service_fee' => $serviceFee,
-            ]);
+            ];
+
+            if ($targetOrder->status === Order::STATUS_DRAFT) {
+                $updates['status'] = Order::STATUS_CONFIRMED;
+                $updates['confirmed_at'] = now();
+            } elseif ($targetOrder->status === Order::STATUS_CONFIRMED && ! $targetOrder->confirmed_at) {
+                $updates['confirmed_at'] = now();
+            }
+
+            $targetOrder->update($updates);
+
+            return $targetOrder->fresh();
         });
 
         $customerName = $this->customerName($request->user());
@@ -1178,6 +1224,41 @@ class CartController extends Controller
             ->where('payment_received', false)
             ->latest('id')
             ->first();
+    }
+
+    private function currentDraftOrder(int $customerId, int $sessionId): ?Order
+    {
+        return Order::where('customer_id', $customerId)
+            ->where('table_scan_session_id', $sessionId)
+            ->where('status', Order::STATUS_DRAFT)
+            ->where('payment_received', false)
+            ->latest('id')
+            ->first();
+    }
+
+    private function currentUnpaidSubmittedOrder(int $customerId, int $sessionId): ?Order
+    {
+        return Order::where('customer_id', $customerId)
+            ->where('table_scan_session_id', $sessionId)
+            ->where('payment_received', false)
+            ->whereNotIn('status', [Order::STATUS_DRAFT, Order::STATUS_CANCELLED])
+            ->latest('id')
+            ->first();
+    }
+
+    private function moveSharedOrderReferences(int $fromOrderId, int $toOrderId): void
+    {
+        CartItem::whereJsonContains('shared_order_ids', $fromOrderId)
+            ->get()
+            ->each(function (CartItem $item) use ($fromOrderId, $toOrderId) {
+                $ids = array_map('intval', is_array($item->shared_order_ids) ? $item->shared_order_ids : []);
+                $ids = array_values(array_unique(array_merge(
+                    array_filter($ids, fn (int $id) => $id !== $fromOrderId),
+                    [$toOrderId]
+                )));
+
+                $item->update(['shared_order_ids' => $ids]);
+            });
     }
 
     private function normalizeCustomizations(MenuItem $menuItem, array $data, ?CartItem $existing = null): array
