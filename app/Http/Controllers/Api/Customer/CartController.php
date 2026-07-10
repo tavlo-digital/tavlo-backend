@@ -1416,10 +1416,40 @@ class CartController extends Controller
 
     private function cartCustomizationsMatch(CartItem $item, array $customizations): bool
     {
-        return ($item->paid_addons ?? []) === $customizations['paid_addons']
-            && ($item->free_addons ?? []) === $customizations['free_addons']
-            && ($item->removed_items ?? []) === $customizations['removed_items']
-            && ($item->selected_modifiers ?? []) === $customizations['selected_modifiers'];
+        return json_encode($item->paid_addons ?? []) === json_encode($customizations['paid_addons'])
+            && json_encode($item->free_addons ?? []) === json_encode($customizations['free_addons'])
+            && json_encode($item->removed_items ?? []) === json_encode($customizations['removed_items'])
+            && $this->modifiersMatchForDedup($item->selected_modifiers ?? [], $customizations['selected_modifiers']);
+    }
+
+    private function modifiersMatchForDedup(array $existing, array $incoming): bool
+    {
+        if (count($existing) !== count($incoming)) {
+            return false;
+        }
+
+        foreach ($existing as $i => $group) {
+            if (! isset($incoming[$i])) {
+                return false;
+            }
+            $inGroup = $incoming[$i];
+
+            if (($group['modifier_group_id'] ?? 0) !== ($inGroup['modifier_group_id'] ?? 0)) {
+                return false;
+            }
+
+            $existingOptionIds = array_column($group['options'] ?? [], 'id');
+            $incomingOptionIds = array_column($inGroup['options'] ?? [], 'id');
+
+            sort($existingOptionIds);
+            sort($incomingOptionIds);
+
+            if ($existingOptionIds !== $incomingOptionIds) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private function vendorCountry(TableScanSession $session): string
