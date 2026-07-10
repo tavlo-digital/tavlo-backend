@@ -436,7 +436,8 @@ class TableController extends Controller
 
     public function dismissCall(Request $request, string $vendorId, string $tableId): JsonResponse
     {
-        $vendor = Vendor::where('vendor_public_id', $vendorId)->firstOrFail();
+        $vendor = $this->resolveVendor($vendorId);
+        $this->authorizeVendor($request, $vendor);
         $table = $vendor->restaurantTables()->findOrFail($tableId);
 
         $table->update(['call_waiter_at' => null]);
@@ -446,38 +447,137 @@ class TableController extends Controller
 
     public function transfer(Request $request, string $vendorId, string $tableId): JsonResponse
     {
-        $vendor = Vendor::where('vendor_public_id', $vendorId)->firstOrFail();
-        $sourceTable = $vendor->restaurantTables()->findOrFail($tableId);
+        $vendor = $this->resolveVendor($vendorId);
+        $this->authorizeVendor($request, $vendor);
 
         $data = $request->validate([
             'target_table_id' => ['required', 'integer'],
         ]);
 
-        $targetTable = $vendor->restaurantTables()->findOrFail($data['target_table_id']);
+        if ((string) $tableId === (string) $data['target_table_id']) {
+            return response()->json([
+                'message' => 'Source and target tables must be different.',
+                'code' => 'same_table',
+            ], 422);
+        }
 
-        $sessions = TableScanSession::where('vendor_id', $vendor->id)
-            ->where('restaurant_table_id', $sourceTable->id)
-            ->where('status', 'active')
-            ->get();
+        $result = DB::transaction(function () use ($vendor, $tableId, $data) {
+            $tables = $vendor->restaurantTables()
+                ->whereIn('id', [$tableId, $data['target_table_id']])
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get()
+                ->keyBy(fn (RestaurantTable $table) => (string) $table->id);
 
-        if ($sessions->isEmpty()) {
+            $sourceTable = $tables->get((string) $tableId);
+            $targetTable = $tables->get((string) $data['target_table_id']);
+
+            if (! $sourceTable || ! $targetTable) {
+                return ['outcome' => 'table_not_found'];
+            }
+
+            if (! $targetTable->is_active) {
+                return ['outcome' => 'inactive_target'];
+            }
+
+            $targetHasActiveSessions = TableScanSession::where('vendor_id', $vendor->id)
+                ->where('restaurant_table_id', $targetTable->id)
+                ->where('status', 'active')
+                ->lockForUpdate()
+                ->first(['id']) !== null;
+
+            if ($targetHasActiveSessions) {
+                return [
+                    'outcome' => 'target_occupied',
+                    'targetTable' => $targetTable,
+                ];
+            }
+
+            $sessions = TableScanSession::where('vendor_id', $vendor->id)
+                ->where('restaurant_table_id', $sourceTable->id)
+                ->where('status', 'active')
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get();
+
+            if ($sessions->isEmpty()) {
+                return ['outcome' => 'no_active_session'];
+            }
+
+            $sessionIds = $sessions->pluck('id');
+            $ordersUpdated = Order::where('vendor_id', $vendor->id)
+                ->whereIn('table_scan_session_id', $sessionIds)
+                ->update(['table_number' => (string) $targetTable->number]);
+
+            TableScanSession::whereIn('id', $sessionIds)
+                ->update(['restaurant_table_id' => $targetTable->id]);
+
+            $sourceCallAt = $sourceTable->call_waiter_at;
+            $sourceTable->update(['call_waiter_at' => null]);
+
+            if ($sourceCallAt && ! $targetTable->call_waiter_at) {
+                $targetTable->update(['call_waiter_at' => $sourceCallAt]);
+            }
+
+            return [
+                'outcome' => 'transferred',
+                'sourceTable' => $sourceTable,
+                'targetTable' => $targetTable,
+                'sessionIds' => $sessionIds,
+                'ordersUpdated' => $ordersUpdated,
+            ];
+        });
+
+        if ($result['outcome'] === 'table_not_found') {
+            return response()->json(['message' => 'Source or target table was not found.'], 404);
+        }
+
+        if ($result['outcome'] === 'inactive_target') {
+            return response()->json([
+                'message' => 'The selected target table is inactive.',
+                'code' => 'inactive_target',
+            ], 409);
+        }
+
+        if ($result['outcome'] === 'target_occupied') {
+            $targetTable = $result['targetTable'];
+            $targetLabel = $targetTable->name ?? "Table #{$targetTable->number}";
+
+            return response()->json([
+                'message' => "{$targetLabel} is occupied. Select an empty table.",
+                'code' => 'target_table_occupied',
+                'target_table_id' => (string) $targetTable->id,
+            ], 409);
+        }
+
+        if ($result['outcome'] === 'no_active_session') {
             return response()->json(['message' => 'No active session on this table.'], 404);
         }
 
-        TableScanSession::whereIn('id', $sessions->pluck('id'))
-            ->update(['restaurant_table_id' => $targetTable->id]);
+        $sourceTable = $result['sourceTable'];
+        $targetTable = $result['targetTable'];
 
-        $sourceTable->update(['call_waiter_at' => null]);
+        $sourceLabel = $sourceTable->name ?? "Table #{$sourceTable->number}";
+        $targetLabel = $targetTable->name ?? "Table #{$targetTable->number}";
 
-        $sourceLabel = $sourceTable->name ?? "#{$sourceTable->number}";
-        $targetLabel = $targetTable->name ?? "#{$targetTable->number}";
-
-        $this->notifyTableChanged($request, $vendor, $targetTable, false);
+        NotificationService::notifyTableCustomers(
+            $targetTable->id,
+            'table_session_transferred',
+            "Your table was moved from {$sourceLabel} to {$targetLabel}.",
+            [
+                'template' => 'session.transferred',
+                'source_table_id' => $sourceTable->id,
+                'source_table_label' => $sourceLabel,
+                'table_id' => $targetTable->id,
+                'table_label' => $targetLabel,
+            ],
+            false,
+        );
 
         NotificationService::notifyOperations(
             $vendor->id,
             'table_session_changed',
-            "Table {$sourceLabel} transferred to Table {$targetLabel}.",
+            "{$sourceLabel} transferred to {$targetLabel}.",
             [NotificationService::VENDOR, NotificationService::WAITER, NotificationService::KITCHEN],
             [
                 'resources' => ['orders', 'tables', 'dashboard', 'notifications'],
@@ -492,10 +592,12 @@ class TableController extends Controller
         );
 
         return response()->json([
-            'message' => "Transferred to Table {$targetLabel}.",
+            'message' => "Transferred to {$targetLabel}.",
             'source_table_id' => (string) $sourceTable->id,
             'target_table_id' => (string) $targetTable->id,
-            'sessions_transferred' => $sessions->count(),
+            'session_ids' => $result['sessionIds']->map(fn ($id) => (string) $id)->values(),
+            'sessions_transferred' => $result['sessionIds']->count(),
+            'orders_updated' => $result['ordersUpdated'],
         ]);
     }
 

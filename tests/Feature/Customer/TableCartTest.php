@@ -1005,7 +1005,8 @@ class TableCartTest extends TestCase
 
         $this->withHeaders($this->headers)
             ->postJson('/api/customer/table/order/confirmed')
-            ->assertNotFound();
+            ->assertUnprocessable()
+            ->assertJsonPath('message', 'Your cart is empty. Add items before confirming your order.');
 
         $this->assertSame('draft', $order->fresh()->status);
     }

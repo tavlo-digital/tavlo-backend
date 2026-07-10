@@ -553,4 +553,192 @@ class OrderManagementTest extends TestCase
             ['Authorization' => "Bearer {$token}", 'Accept' => 'application/json']
         )->assertForbidden();
     }
+
+    public function test_waiter_can_transfer_all_active_sessions_and_orders_to_an_empty_table(): void
+    {
+        $secondCustomer = Customer::factory()->create();
+        $firstSession = $this->scanSession();
+        $secondSession = $this->scanSession($secondCustomer, ['pin' => '5678']);
+        $firstOrder = $this->order($firstSession, ['table_number' => '7']);
+        $secondOrder = $this->order($secondSession, ['table_number' => '7']);
+        $this->cartItem($firstSession, ['order_id' => $firstOrder->id]);
+        $this->cartItem($secondSession, ['order_id' => $secondOrder->id]);
+        $this->table->update(['call_waiter_at' => now()]);
+
+        $targetTable = RestaurantTable::create([
+            'vendor_id' => $this->vendor->id,
+            'number' => 12,
+            'name' => 'Table 12',
+            'qr_token' => 'qr-' . uniqid(),
+            'is_active' => true,
+            'qr_created_at' => now(),
+        ]);
+
+        $response = $this->postJson(
+            "/api/vendor/{$this->vendor->id}/tables/{$this->table->id}/transfer",
+            ['target_table_id' => $targetTable->id],
+            $this->staffHeaders('waiter')
+        );
+
+        $response->assertOk()
+            ->assertJsonPath('source_table_id', (string) $this->table->id)
+            ->assertJsonPath('target_table_id', (string) $targetTable->id)
+            ->assertJsonPath('sessions_transferred', 2)
+            ->assertJsonPath('orders_updated', 2);
+
+        foreach ([$firstSession, $secondSession] as $session) {
+            $this->assertDatabaseHas('table_scan_sessions', [
+                'id' => $session->id,
+                'restaurant_table_id' => $targetTable->id,
+                'status' => 'active',
+            ]);
+        }
+
+        foreach ([$firstOrder, $secondOrder] as $order) {
+            $this->assertDatabaseHas('orders', [
+                'id' => $order->id,
+                'table_number' => '12',
+                'table_scan_session_id' => $order->table_scan_session_id,
+            ]);
+        }
+
+        $this->assertNull($this->table->fresh()->call_waiter_at);
+        $this->assertNotNull($targetTable->fresh()->call_waiter_at);
+        $this->assertDatabaseHas('notifications', [
+            'customer_id' => $this->customer->id,
+            'event' => 'table_session_transferred',
+        ]);
+        $this->assertDatabaseHas('notifications', [
+            'customer_id' => $secondCustomer->id,
+            'event' => 'table_session_transferred',
+        ]);
+
+        $this->getJson(
+            "/api/vendor/{$this->vendor->id}/orders",
+            $this->staffHeaders('waiter')
+        )->assertOk()
+            ->assertJsonCount(1, 'sessions')
+            ->assertJsonPath('sessions.0.tableId', (string) $targetTable->id)
+            ->assertJsonPath('sessions.0.tableNumber', 12)
+            ->assertJsonPath('sessions.0.guestCount', 2);
+    }
+
+    public function test_transfer_rejects_an_occupied_target_without_changing_the_source(): void
+    {
+        $sourceSession = $this->scanSession();
+        $sourceOrder = $this->order($sourceSession, ['table_number' => '7']);
+        $targetTable = RestaurantTable::create([
+            'vendor_id' => $this->vendor->id,
+            'number' => 12,
+            'name' => 'Table 12',
+            'qr_token' => 'qr-' . uniqid(),
+            'is_active' => true,
+            'qr_created_at' => now(),
+        ]);
+        $this->scanSession(Customer::factory()->create(), [
+            'restaurant_table_id' => $targetTable->id,
+            'pin' => '5678',
+        ]);
+
+        $this->postJson(
+            "/api/vendor/{$this->vendor->id}/tables/{$this->table->id}/transfer",
+            ['target_table_id' => $targetTable->id],
+            $this->staffHeaders('waiter')
+        )->assertStatus(409)
+            ->assertJsonPath('code', 'target_table_occupied')
+            ->assertJsonPath('target_table_id', (string) $targetTable->id);
+
+        $this->assertDatabaseHas('table_scan_sessions', [
+            'id' => $sourceSession->id,
+            'restaurant_table_id' => $this->table->id,
+            'status' => 'active',
+        ]);
+        $this->assertDatabaseHas('orders', [
+            'id' => $sourceOrder->id,
+            'table_number' => '7',
+        ]);
+    }
+
+    public function test_transfer_rejects_the_source_table_as_its_own_target(): void
+    {
+        $this->scanSession();
+
+        $this->postJson(
+            "/api/vendor/{$this->vendor->id}/tables/{$this->table->id}/transfer",
+            ['target_table_id' => $this->table->id],
+            $this->staffHeaders('waiter')
+        )->assertStatus(422)
+            ->assertJsonPath('code', 'same_table');
+    }
+
+    public function test_transfer_rejects_an_inactive_target_table(): void
+    {
+        $sourceSession = $this->scanSession();
+        $targetTable = RestaurantTable::create([
+            'vendor_id' => $this->vendor->id,
+            'number' => 12,
+            'name' => 'Table 12',
+            'qr_token' => 'qr-' . uniqid(),
+            'is_active' => false,
+            'qr_created_at' => now(),
+        ]);
+
+        $this->postJson(
+            "/api/vendor/{$this->vendor->id}/tables/{$this->table->id}/transfer",
+            ['target_table_id' => $targetTable->id],
+            $this->staffHeaders('waiter')
+        )->assertStatus(409)
+            ->assertJsonPath('code', 'inactive_target');
+
+        $this->assertDatabaseHas('table_scan_sessions', [
+            'id' => $sourceSession->id,
+            'restaurant_table_id' => $this->table->id,
+        ]);
+    }
+
+    public function test_transfer_rejects_a_vendor_token_from_another_restaurant(): void
+    {
+        $this->scanSession();
+        $targetTable = RestaurantTable::create([
+            'vendor_id' => $this->vendor->id,
+            'number' => 12,
+            'name' => 'Table 12',
+            'qr_token' => 'qr-' . uniqid(),
+            'is_active' => true,
+            'qr_created_at' => now(),
+        ]);
+        $otherVendor = Vendor::factory()->create(['country' => 'Austria']);
+        $token = $otherVendor->createToken('test')->plainTextToken;
+
+        $this->postJson(
+            "/api/vendor/{$this->vendor->id}/tables/{$this->table->id}/transfer",
+            ['target_table_id' => $targetTable->id],
+            ['Authorization' => "Bearer {$token}", 'Accept' => 'application/json']
+        )->assertForbidden();
+    }
+
+    public function test_transfer_also_accepts_a_vendor_public_id(): void
+    {
+        $sourceSession = $this->scanSession();
+        $targetTable = RestaurantTable::create([
+            'vendor_id' => $this->vendor->id,
+            'number' => 12,
+            'name' => 'Table 12',
+            'qr_token' => 'qr-' . uniqid(),
+            'is_active' => true,
+            'qr_created_at' => now(),
+        ]);
+
+        $this->postJson(
+            "/api/vendor/{$this->vendor->vendor_public_id}/tables/{$this->table->id}/transfer",
+            ['target_table_id' => $targetTable->id],
+            $this->staffHeaders('waiter')
+        )->assertOk()
+            ->assertJsonPath('target_table_id', (string) $targetTable->id);
+
+        $this->assertDatabaseHas('table_scan_sessions', [
+            'id' => $sourceSession->id,
+            'restaurant_table_id' => $targetTable->id,
+        ]);
+    }
 }

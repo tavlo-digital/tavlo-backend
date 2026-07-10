@@ -790,10 +790,6 @@ class CartController extends Controller
         $submittedOrder = $this->currentUnpaidSubmittedOrder($customerId, $mySession->id);
         $order = $submittedOrder ?? $draftOrder;
 
-        if (! $order) {
-            return response()->json(['message' => 'No open draft order found.'], 404);
-        }
-
         if (! $mySession->relationLoaded('vendor')) {
             $mySession->load('vendor.vendorSetting');
         }
@@ -810,6 +806,32 @@ class CartController extends Controller
             return response()->json([
                 'message' => 'Your cart is empty. Add items before confirming your order.',
             ], 422);
+        }
+
+        if (! $order) {
+            $myTotal = 0.0;
+            foreach ($openItems as $item) {
+                $lineTotal = $this->cartItemLineTotal($item, $vendorCountry);
+                $shareCount = 1 + count($item->shared_order_ids ?? []);
+                $myTotal += $lineTotal / $shareCount;
+            }
+            $myTotal = round($myTotal, 2);
+            $currency = $mySession->vendor?->currency ?? 'EUR';
+
+            $order = Order::create([
+                'order_public_id' => 'ord-'.Str::random(12),
+                'customer_id' => $customerId,
+                'vendor_id' => $mySession->vendor_id,
+                'table_scan_session_id' => $mySession->id,
+                'status' => 'draft',
+                'draft_at' => now(),
+                'amount' => $myTotal,
+                'currency' => $currency,
+                'payment_pending' => true,
+                'payment_received' => false,
+                'order_type' => 'dine-in',
+            ]);
+            $draftOrder = $order;
         }
 
         $unavailableItems = $openItems->filter(
