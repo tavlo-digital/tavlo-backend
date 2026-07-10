@@ -562,14 +562,14 @@ class TableController extends Controller
 
         NotificationService::notifyTableCustomers(
             $targetTable->id,
-            'table_session_transferred',
+            'table_transfer',
             "Your table was moved from {$sourceLabel} to {$targetLabel}.",
             [
                 'template' => 'session.transferred',
                 'source_table_id' => $sourceTable->id,
                 'source_table_label' => $sourceLabel,
-                'table_id' => $targetTable->id,
-                'table_label' => $targetLabel,
+                'target_table_id' => $targetTable->id,
+                'target_table_label' => $targetLabel,
             ],
             false,
         );

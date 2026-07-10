@@ -606,11 +606,11 @@ class OrderManagementTest extends TestCase
         $this->assertNotNull($targetTable->fresh()->call_waiter_at);
         $this->assertDatabaseHas('notifications', [
             'customer_id' => $this->customer->id,
-            'event' => 'table_session_transferred',
+            'event' => 'table_transfer',
         ]);
         $this->assertDatabaseHas('notifications', [
             'customer_id' => $secondCustomer->id,
-            'event' => 'table_session_transferred',
+            'event' => 'table_transfer',
         ]);
 
         $this->getJson(
