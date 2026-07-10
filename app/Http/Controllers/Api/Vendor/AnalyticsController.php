@@ -204,7 +204,7 @@ class AnalyticsController extends Controller
     private function resolveVendor(string $vendorId): Vendor
     {
         return Vendor::where('vendor_public_id', $vendorId)
-            ->orWhere('id', $vendorId)
+            ->when(ctype_digit($vendorId), fn ($q) => $q->orWhere('id', $vendorId))
             ->firstOrFail();
     }
 

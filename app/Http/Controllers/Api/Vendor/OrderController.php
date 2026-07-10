@@ -1081,7 +1081,7 @@ class OrderController extends Controller
     {
         return Vendor::with('vendorSetting')
             ->where('vendor_public_id', $vendorId)
-            ->orWhere('id', $vendorId)
+            ->when(ctype_digit($vendorId), fn ($q) => $q->orWhere('id', $vendorId))
             ->firstOrFail();
     }
 

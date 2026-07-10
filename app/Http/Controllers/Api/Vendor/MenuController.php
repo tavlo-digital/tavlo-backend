@@ -26,7 +26,7 @@ class MenuController extends Controller
     public function show(string $vendorId): JsonResponse
     {
         $vendor = \App\Models\Vendor::where('vendor_public_id', $vendorId)
-            ->orWhere('id', $vendorId)
+            ->when(ctype_digit($vendorId), fn ($q) => $q->orWhere('id', $vendorId))
             ->firstOrFail();
 
         $categories = $vendor->menuCategories()
@@ -64,7 +64,7 @@ class MenuController extends Controller
     public function update(Request $request, string $vendorId): JsonResponse
     {
         $vendor = \App\Models\Vendor::where('vendor_public_id', $vendorId)
-            ->orWhere('id', $vendorId)
+            ->when(ctype_digit($vendorId), fn ($q) => $q->orWhere('id', $vendorId))
             ->firstOrFail();
 
         $this->authorizeVendor($request, $vendor);
@@ -200,7 +200,7 @@ class MenuController extends Controller
     public function updateItem(Request $request, string $vendorId, int $itemId): JsonResponse
     {
         $vendor = \App\Models\Vendor::where('vendor_public_id', $vendorId)
-            ->orWhere('id', $vendorId)
+            ->when(ctype_digit($vendorId), fn ($q) => $q->orWhere('id', $vendorId))
             ->firstOrFail();
 
         $this->authorizeVendor($request, $vendor);
