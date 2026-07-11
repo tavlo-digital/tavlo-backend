@@ -88,15 +88,44 @@ class StaffOrderController extends Controller
             $vendorCountry = $vendor->country ?? 'AT';
             $currency = $vendor->currency ?? 'EUR';
 
-            $cartItems = [];
+            // Mirror of the customer flow's currentUnpaidSubmittedOrder(): keep
+            // appending to the open waiter order until it is paid, then start fresh.
+            $order = Order::where('table_scan_session_id', $session->id)
+                ->whereNull('customer_id')
+                ->where('payment_received', false)
+                ->whereNotIn('status', [Order::STATUS_DRAFT, Order::STATUS_CANCELLED])
+                ->latest('id')
+                ->lockForUpdate()
+                ->first();
+
+            if (! $order) {
+                $order = Order::create([
+                    'order_public_id' => 'ord-' . Str::random(12),
+                    'customer_id' => null,
+                    'vendor_id' => $vendor->id,
+                    'table_scan_session_id' => $session->id,
+                    'status' => 'confirmed',
+                    'confirmed_at' => now(),
+                    'amount' => 0,
+                    'currency' => $currency,
+                    'payment_method' => 'cash',
+                    'payment_pending' => true,
+                    'payment_received' => false,
+                    'order_type' => 'dine-in',
+                    'placed_by' => 'waiter',
+                    'placed_by_team_member_id' => $actor instanceof TeamMember ? $actor->id : null,
+                ]);
+            }
+
+            $itemCount = 0;
             foreach ($data['items'] as $itemData) {
                 $menuItem = $menuItems->get($itemData['menu_item_id']);
                 $customizations = $this->normalizeCustomizations($menuItem, $itemData);
 
-                $cartItems[] = CartItem::create([
+                CartItem::create([
                     'table_scan_session_id' => $session->id,
                     'menu_item_id' => $itemData['menu_item_id'],
-                    'order_id' => null,
+                    'order_id' => $order->id,
                     'quantity' => $itemData['quantity'] ?? 1,
                     'notes' => $itemData['notes'] ?? null,
                     'paid_addons' => $customizations['paid_addons'],
@@ -105,41 +134,31 @@ class StaffOrderController extends Controller
                     'selected_modifiers' => $customizations['selected_modifiers'],
                     'received_at' => now(),
                 ]);
+                $itemCount++;
             }
 
+            // Reprice over every item on the order (existing + new) with the same
+            // formula as the customer order confirm (CartController::createOrderConfirmed).
+            $orderItems = CartItem::with('menuItem:id,name,price,has_discount,discounted_price,vat_rate,tax_category,paid_addons')
+                ->where('order_id', $order->id)
+                ->get();
+
             $itemsTotal = 0.0;
-            foreach ($cartItems as $ci) {
-                $ci->load('menuItem:id,name,price,has_discount,discounted_price,vat_rate,tax_category,paid_addons');
+            foreach ($orderItems as $ci) {
                 $itemsTotal += TaxCalculationService::cartItemLineTotalGross($ci, $vendorCountry);
             }
             $itemsTotal = round($itemsTotal, 2);
 
-            // Same formula as the customer order confirm (CartController::createOrderConfirmed).
             $serviceFeeRate = (float) ($vendor->vendorSetting?->service_fee_rate ?? 0);
             $serviceFee = round($itemsTotal * ($serviceFeeRate / 100), 2);
 
-            $order = Order::create([
-                'order_public_id' => 'ord-' . Str::random(12),
-                'customer_id' => null,
-                'vendor_id' => $vendor->id,
-                'table_scan_session_id' => $session->id,
-                'status' => 'confirmed',
-                'confirmed_at' => now(),
+            $order->update([
                 'amount' => round($itemsTotal + $serviceFee, 2),
                 'service_fee' => $serviceFee,
-                'currency' => $currency,
-                'payment_method' => 'cash',
                 'payment_pending' => true,
-                'payment_received' => false,
-                'order_type' => 'dine-in',
-                'placed_by' => 'waiter',
-                'placed_by_team_member_id' => $actor instanceof TeamMember ? $actor->id : null,
             ]);
 
-            CartItem::whereIn('id', collect($cartItems)->pluck('id'))
-                ->update(['order_id' => $order->id]);
-
-            return ['order' => $order, 'session' => $session, 'itemCount' => count($cartItems)];
+            return ['order' => $order, 'session' => $session, 'itemCount' => $itemCount];
         });
 
         $tableLabel = $table->name ?? "#{$table->number}";

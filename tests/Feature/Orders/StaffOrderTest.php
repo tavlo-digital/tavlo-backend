@@ -219,6 +219,35 @@ class StaffOrderTest extends TestCase
         $this->assertSame(2.00, (float) $cartItem->selected_modifiers[0]['options'][0]['price_adjustment']);
     }
 
+    public function test_staff_orders_merge_into_single_order_until_paid(): void
+    {
+        $headers = $this->staffHeaders('waiter');
+        $url = "/api/vendor/{$this->vendor->vendor_public_id}/tables/{$this->table->id}/staff-order";
+
+        $first = $this->withHeaders($headers)->postJson($url, $this->staffOrderItems(2));
+        $first->assertStatus(201);
+        $orderId = $first->json('order_id');
+
+        $second = $this->withHeaders($headers)->postJson($url, $this->staffOrderItems(1));
+        $second->assertStatus(201);
+        $this->assertSame($orderId, $second->json('order_id'));
+
+        $this->assertSame(1, Order::count());
+        $order = Order::firstOrFail();
+        // 3 units total: 3 × 13.20 gross = 39.60; 10% service fee = 3.96.
+        $this->assertSame(43.56, (float) $order->amount);
+        $this->assertSame(3.96, (float) $order->service_fee);
+        $this->assertSame(2, CartItem::where('order_id', $order->id)->count());
+
+        // Once the order is paid, the next staff order starts a fresh one.
+        $order->update(['payment_received' => true, 'payment_pending' => false]);
+
+        $third = $this->withHeaders($headers)->postJson($url, $this->staffOrderItems(1));
+        $third->assertStatus(201);
+        $this->assertNotSame($orderId, $third->json('order_id'));
+        $this->assertSame(2, Order::count());
+    }
+
     public function test_staff_order_accepts_numeric_vendor_id(): void
     {
         $this->withHeaders($this->staffHeaders('waiter'))
