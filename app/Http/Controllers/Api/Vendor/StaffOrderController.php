@@ -27,7 +27,11 @@ class StaffOrderController extends Controller
 
     public function store(Request $request, string $vendorId, string $tableId): JsonResponse
     {
-        $vendor = Vendor::where('vendor_public_id', $vendorId)->firstOrFail();
+        $vendor = Vendor::where('vendor_public_id', $vendorId)
+            ->when(ctype_digit($vendorId), fn ($q) => $q->orWhere('id', $vendorId))
+            ->firstOrFail();
+        $this->authorizeVendor($request, $vendor);
+
         $table = $vendor->restaurantTables()->findOrFail($tableId);
 
         $data = $request->validate([
@@ -183,6 +187,19 @@ class StaffOrderController extends Controller
                 $data['selected_modifiers'] ?? []
             ),
         ];
+    }
+
+    private function authorizeVendor(Request $request, Vendor $vendor): void
+    {
+        $user = $request->user();
+
+        if ($user instanceof Vendor && $user->id !== $vendor->id) {
+            abort(403, 'Unauthorized');
+        }
+
+        if ($user instanceof TeamMember && $user->vendor_id !== $vendor->id) {
+            abort(403, 'Unauthorized');
+        }
     }
 
     /**

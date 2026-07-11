@@ -219,6 +219,29 @@ class StaffOrderTest extends TestCase
         $this->assertSame(2.00, (float) $cartItem->selected_modifiers[0]['options'][0]['price_adjustment']);
     }
 
+    public function test_staff_order_accepts_numeric_vendor_id(): void
+    {
+        $this->withHeaders($this->staffHeaders('waiter'))
+            ->postJson(
+                "/api/vendor/{$this->vendor->id}/tables/{$this->table->id}/staff-order",
+                $this->staffOrderItems()
+            )
+            ->assertStatus(201);
+    }
+
+    public function test_staff_order_rejects_other_vendors(): void
+    {
+        $otherVendor = Vendor::factory()->create(['country' => 'Austria']);
+
+        $token = $otherVendor->createToken('test')->plainTextToken;
+        $this->withHeaders(['Authorization' => "Bearer {$token}", 'Accept' => 'application/json'])
+            ->postJson(
+                "/api/vendor/{$this->vendor->vendor_public_id}/tables/{$this->table->id}/staff-order",
+                $this->staffOrderItems()
+            )
+            ->assertStatus(403);
+    }
+
     public function test_owner_staff_order_has_no_team_member_attribution(): void
     {
         $response = $this->withHeaders($this->vendorHeaders())
