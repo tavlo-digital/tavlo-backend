@@ -59,6 +59,9 @@ class Order extends Model
         'table_scan_session_id',
         'waiter_confirmed',
         'waiter_confirmed_at',
+        // attribution
+        'placed_by',
+        'placed_by_team_member_id',
     ];
 
     protected function casts(): array

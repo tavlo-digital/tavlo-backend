@@ -159,6 +159,7 @@ Route::middleware(['auth:vendor,team_member', 'vendor.staff.access'])->group(fun
     Route::post('{vendorId}/tables/{tableId}/dismiss-call', [TableController::class, 'dismissCall'])->name('tables.dismissCall');
     Route::post('{vendorId}/tables/{tableId}/transfer', [TableController::class, 'transfer'])->name('tables.transfer');
     Route::post('{vendorId}/tables/{tableId}/staff-order', [StaffOrderController::class, 'store'])->name('tables.staffOrder');
+    Route::post('{vendorId}/tables/{tableId}/session', [TableController::class, 'createSession'])->name('tables.createSession');
 
     // Team
     Route::get('{vendorId}/team', [TeamController::class, 'index'])->name('team.index');

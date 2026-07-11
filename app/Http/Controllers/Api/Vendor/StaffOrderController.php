@@ -8,6 +8,7 @@ use App\Models\MenuItem;
 use App\Models\Order;
 use App\Models\RestaurantTable;
 use App\Models\TableScanSession;
+use App\Models\TeamMember;
 use App\Models\Vendor;
 use App\Services\MenuCustomizationService;
 use App\Services\NotificationService;
@@ -61,7 +62,9 @@ class StaffOrderController extends Controller
             ]);
         }
 
-        $result = DB::transaction(function () use ($vendor, $table, $data, $menuItems) {
+        $actor = $request->user();
+
+        $result = DB::transaction(function () use ($vendor, $table, $data, $menuItems, $actor) {
             $session = TableScanSession::where('vendor_id', $vendor->id)
                 ->where('restaurant_table_id', $table->id)
                 ->where('status', 'active')
@@ -100,12 +103,16 @@ class StaffOrderController extends Controller
                 ]);
             }
 
-            $total = 0.0;
+            $itemsTotal = 0.0;
             foreach ($cartItems as $ci) {
                 $ci->load('menuItem:id,name,price,has_discount,discounted_price,vat_rate,tax_category,paid_addons');
-                $total += TaxCalculationService::cartItemLineTotalGross($ci, $vendorCountry);
+                $itemsTotal += TaxCalculationService::cartItemLineTotalGross($ci, $vendorCountry);
             }
-            $total = round($total, 2);
+            $itemsTotal = round($itemsTotal, 2);
+
+            // Same formula as the customer order confirm (CartController::createOrderConfirmed).
+            $serviceFeeRate = (float) ($vendor->vendorSetting?->service_fee_rate ?? 0);
+            $serviceFee = round($itemsTotal * ($serviceFeeRate / 100), 2);
 
             $order = Order::create([
                 'order_public_id' => 'ord-' . Str::random(12),
@@ -114,12 +121,15 @@ class StaffOrderController extends Controller
                 'table_scan_session_id' => $session->id,
                 'status' => 'confirmed',
                 'confirmed_at' => now(),
-                'amount' => $total,
+                'amount' => round($itemsTotal + $serviceFee, 2),
+                'service_fee' => $serviceFee,
                 'currency' => $currency,
                 'payment_method' => 'cash',
                 'payment_pending' => true,
                 'payment_received' => false,
                 'order_type' => 'dine-in',
+                'placed_by' => 'waiter',
+                'placed_by_team_member_id' => $actor instanceof TeamMember ? $actor->id : null,
             ]);
 
             CartItem::whereIn('id', collect($cartItems)->pluck('id'))
@@ -129,7 +139,6 @@ class StaffOrderController extends Controller
         });
 
         $tableLabel = $table->name ?? "#{$table->number}";
-        $actor = $request->user();
 
         NotificationService::notifyOperations(
             $vendor->id,
@@ -144,7 +153,7 @@ class StaffOrderController extends Controller
                 'table_label' => $tableLabel,
                 'severity' => 'info',
                 'sound' => 'new_order',
-                'source_actor_type' => $actor instanceof \App\Models\TeamMember ? 'team_member' : 'vendor',
+                'source_actor_type' => $actor instanceof TeamMember ? 'team_member' : 'vendor',
                 'source_actor_id' => $actor?->id,
             ],
         );
@@ -176,6 +185,11 @@ class StaffOrderController extends Controller
         ];
     }
 
+    /**
+     * Mirrors the customer CartController normalizer: same strict validation
+     * (required / min / max / unknown groups and options) and the same stored
+     * shape, so TaxCalculationService prices staff modifiers identically.
+     */
     private function normalizeSelectedModifiers(MenuItem $menuItem, array $selected): array
     {
         if (! $menuItem->relationLoaded('modifierGroups')) {
@@ -205,28 +219,67 @@ class StaffOrderController extends Controller
                 ->unique()
                 ->values();
 
-            if ($rawOptionIds->isEmpty()) {
-                continue;
-            }
-
-            $validOptionIds = $group->options->pluck('id');
-            $validIds = $rawOptionIds->intersect($validOptionIds)->values();
-
-            if ($validIds->isEmpty()) {
-                continue;
-            }
-
+            $count = $rawOptionIds->count();
+            $minRequired = max((int) $group->min_selection, $group->is_required ? 1 : 0);
             $maxSelection = max(1, (int) $group->max_selection);
-            if ($group->type === 'single') {
-                $validIds = $validIds->take(1);
-            } else {
-                $validIds = $validIds->take($maxSelection);
+
+            if ($count < $minRequired) {
+                throw ValidationException::withMessages([
+                    'selected_modifiers' => ["Please choose at least {$minRequired} option(s) for {$group->name}."],
+                ]);
             }
+
+            if ($count === 0) {
+                continue;
+            }
+
+            if ($group->type === 'single' && $count > 1) {
+                throw ValidationException::withMessages([
+                    'selected_modifiers' => ["Only one option can be selected for {$group->name}."],
+                ]);
+            }
+
+            if ($count > $maxSelection) {
+                throw ValidationException::withMessages([
+                    'selected_modifiers' => ["You can choose at most {$maxSelection} option(s) for {$group->name}."],
+                ]);
+            }
+
+            $optionsById = $group->options->keyBy('id');
+            $options = $rawOptionIds->map(function (int $optionId) use ($optionsById, $group) {
+                $option = $optionsById->get($optionId);
+
+                if (! $option) {
+                    throw ValidationException::withMessages([
+                        'selected_modifiers' => ["The selected option is not available for {$group->name}."],
+                    ]);
+                }
+
+                return [
+                    'id' => $option->id,
+                    'price_adjustment' => round((float) $option->price_adjustment, 2),
+                ];
+            })->values()->all();
 
             $normalized[] = [
-                'modifier_group_id' => $groupId,
-                'option_ids' => $validIds->all(),
+                'modifier_group_id' => $group->id,
+                'type' => $group->type,
+                'is_required' => (bool) $group->is_required,
+                'min_selection' => (int) $group->min_selection,
+                'max_selection' => (int) $group->max_selection,
+                'tax_category' => $group->tax_category,
+                'options' => $options,
             ];
+        }
+
+        $unknownGroupIds = $submitted->keys()
+            ->map(fn ($id) => (int) $id)
+            ->diff($groups->keys()->map(fn ($id) => (int) $id));
+
+        if ($unknownGroupIds->isNotEmpty()) {
+            throw ValidationException::withMessages([
+                'selected_modifiers' => ['One or more selected modifier groups are not available for this menu item.'],
+            ]);
         }
 
         return $normalized;

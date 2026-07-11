@@ -7,6 +7,8 @@ use App\Models\MenuItem;
 use App\Models\ModifierGroup;
 use App\Models\ModifierOption;
 use App\Models\TaxCategory;
+use App\Models\TeamMember;
+use App\Models\Vendor;
 use App\Services\LocaleService;
 use App\Services\MediaService;
 use App\Services\MenuCustomizationService;
@@ -29,7 +31,7 @@ class MenuItemController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $vendor = $request->user();
+        $vendor = $this->actingVendor($request);
 
         $query = $vendor->menuItems()
             ->where('is_active', true)
@@ -72,6 +74,16 @@ class MenuItemController extends Controller
             )),
             'stats' => $stats,
         ]);
+    }
+
+    /**
+     * Staff tokens browse the menu on behalf of their vendor.
+     */
+    private function actingVendor(Request $request): Vendor
+    {
+        $user = $request->user();
+
+        return $user instanceof TeamMember ? $user->vendor : $user;
     }
 
     /**

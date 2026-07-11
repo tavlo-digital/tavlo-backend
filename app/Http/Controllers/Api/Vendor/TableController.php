@@ -434,6 +434,60 @@ class TableController extends Controller
         ]);
     }
 
+    /**
+     * POST /api/vendor/{vendorId}/tables/{tableId}/session
+     * Staff starts a table session (no customer scan). Idempotent: returns
+     * the existing active session's PIN when one is already open.
+     */
+    public function createSession(Request $request, string $vendorId, string $tableId): JsonResponse
+    {
+        $vendor = $this->resolveVendor($vendorId);
+        $this->authorizeVendor($request, $vendor);
+
+        $table = $vendor->restaurantTables()->findOrFail($tableId);
+
+        if (! $table->is_active) {
+            return response()->json([
+                'message' => 'This table is inactive.',
+                'code' => 'inactive_table',
+            ], 422);
+        }
+
+        $result = DB::transaction(function () use ($vendor, $table) {
+            $existing = TableScanSession::where('vendor_id', $vendor->id)
+                ->where('restaurant_table_id', $table->id)
+                ->where('status', 'active')
+                ->lockForUpdate()
+                ->first();
+
+            if ($existing) {
+                return ['session' => $existing, 'created' => false];
+            }
+
+            $session = TableScanSession::create([
+                'vendor_id' => $vendor->id,
+                'restaurant_table_id' => $table->id,
+                'customer_id' => null,
+                'pin' => TableScanSession::generateUniquePin(),
+                'status' => 'active',
+                'scanned_at' => now(),
+            ]);
+
+            return ['session' => $session, 'created' => true];
+        });
+
+        if ($result['created']) {
+            $this->notifyTableChanged($request, $vendor, $table);
+        }
+
+        return response()->json([
+            'message' => $result['created'] ? 'Session started.' : 'Table already has an active session.',
+            'session_id' => (string) $result['session']->id,
+            'pin' => $result['session']->pin,
+            'created' => $result['created'],
+        ], $result['created'] ? 201 : 200);
+    }
+
     public function dismissCall(Request $request, string $vendorId, string $tableId): JsonResponse
     {
         $vendor = $this->resolveVendor($vendorId);

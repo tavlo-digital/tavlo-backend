@@ -788,6 +788,7 @@ class OrderController extends Controller
             'tableId' => $table ? (string) $table->id : null,
             'tableScanSessionId' => $order->table_scan_session_id ? (string) $order->table_scan_session_id : null,
             'course' => $order->course,
+            'placedBy' => $order->placed_by ?? ($order->customer_id ? 'customer' : 'waiter'),
             'waiterConfirmed' => (bool) $order->waiter_confirmed,
             'waiterConfirmedAt' => $order->waiter_confirmed_at?->toISOString(),
             'customer' => $order->customer ? [

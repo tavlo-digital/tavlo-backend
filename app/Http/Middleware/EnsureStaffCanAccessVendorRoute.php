@@ -52,6 +52,9 @@ class EnsureStaffCanAccessVendorRoute
                 'vendor.tables.closeSession',
                 'vendor.tables.dismissCall',
                 'vendor.tables.transfer',
+                'vendor.tables.staffOrder',
+                'vendor.tables.createSession',
+                'vendor.menu.items.index',
             ],
         ];
 
