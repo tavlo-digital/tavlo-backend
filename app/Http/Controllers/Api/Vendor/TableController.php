@@ -454,11 +454,15 @@ class TableController extends Controller
         }
 
         $result = DB::transaction(function () use ($vendor, $table) {
-            $existing = TableScanSession::where('vendor_id', $vendor->id)
+            // The waiter's own session slot is the customer-less one; customer
+            // sessions at the table are other "people" and are never reused.
+            $activeSessions = TableScanSession::where('vendor_id', $vendor->id)
                 ->where('restaurant_table_id', $table->id)
                 ->where('status', 'active')
                 ->lockForUpdate()
-                ->first();
+                ->get();
+
+            $existing = $activeSessions->firstWhere('customer_id', null);
 
             if ($existing) {
                 return ['session' => $existing, 'created' => false];
@@ -468,7 +472,8 @@ class TableController extends Controller
                 'vendor_id' => $vendor->id,
                 'restaurant_table_id' => $table->id,
                 'customer_id' => null,
-                'pin' => TableScanSession::generateUniquePin(),
+                // Share the table's existing PIN, like customers joining via PIN.
+                'pin' => $activeSessions->first()?->pin ?? TableScanSession::generateUniquePin(),
                 'status' => 'active',
                 'scanned_at' => now(),
             ]);

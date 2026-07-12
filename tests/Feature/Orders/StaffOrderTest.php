@@ -395,6 +395,64 @@ class StaffOrderTest extends TestCase
         $this->assertSame(2, $ownerItem['sharedBetween']);
     }
 
+    public function test_waiter_order_is_a_separate_person_not_merged_into_customer(): void
+    {
+        $customer = Customer::factory()->create(['first_name' => 'Alice', 'last_name' => 'Smith']);
+        $customerSession = TableScanSession::create([
+            'vendor_id' => $this->vendor->id,
+            'restaurant_table_id' => $this->table->id,
+            'customer_id' => $customer->id,
+            'pin' => '1234',
+            'status' => 'active',
+            'scanned_at' => now(),
+        ]);
+
+        // Waiter places an order on the table the customer already occupies.
+        $response = $this->withHeaders($this->staffHeaders('waiter'))
+            ->postJson(
+                "/api/vendor/{$this->vendor->vendor_public_id}/tables/{$this->table->id}/staff-order",
+                $this->staffOrderItems()
+            );
+        $response->assertStatus(201);
+
+        // The waiter gets his own session row (customer_id null) sharing the table PIN.
+        $waiterSessionId = (int) $response->json('session_id');
+        $this->assertNotSame($customerSession->id, $waiterSessionId);
+        $waiterSession = TableScanSession::findOrFail($waiterSessionId);
+        $this->assertNull($waiterSession->customer_id);
+        $this->assertSame('1234', $waiterSession->pin);
+
+        // The waiter order is not attached to the customer's session.
+        $order = Order::where('order_public_id', $response->json('order_id'))->firstOrFail();
+        $this->assertSame($waiterSessionId, (int) $order->table_scan_session_id);
+
+        // Customer table history: waiter appears as a separate person named "Waiter".
+        $history = $this->withHeaders($this->customerHeaders($customer))
+            ->getJson('/api/customer/table/history');
+        $history->assertSuccessful();
+
+        $people = collect($history->json('people'));
+        $me = $people->firstWhere('session_id', $customerSession->id);
+        $waiter = $people->firstWhere('session_id', $waiterSessionId);
+
+        $this->assertNotNull($me);
+        $this->assertNotNull($waiter);
+        $this->assertSame(0, count($me['orders'] ?? []));
+        $this->assertSame('Waiter', $waiter['name']);
+        $this->assertNull($waiter['customer_id']);
+        $this->assertSame(1, count($waiter['orders'] ?? []));
+
+        // A second waiter order still merges into the unpaid waiter order.
+        $second = $this->withHeaders($this->staffHeaders('waiter'))
+            ->postJson(
+                "/api/vendor/{$this->vendor->vendor_public_id}/tables/{$this->table->id}/staff-order",
+                $this->staffOrderItems(1)
+            );
+        $second->assertStatus(201);
+        $this->assertSame($response->json('order_id'), $second->json('order_id'));
+        $this->assertSame($waiterSessionId, (int) $second->json('session_id'));
+    }
+
     public function test_waiter_can_collect_order_without_cash_request(): void
     {
         $customer = Customer::factory()->create();

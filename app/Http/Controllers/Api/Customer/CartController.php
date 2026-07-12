@@ -119,7 +119,7 @@ class CartController extends Controller
                 'is_me' => $s->id === $mySession->id,
                 'name' => $s->customer
                     ? trim($s->customer->first_name.' '.$s->customer->last_name)
-                    : 'Guest',
+                    : 'Waiter',
                 'personal_items' => $personItems
                     ->map(fn (CartItem $item) => $this->itemPayload($item, $vendorCountry, $vendor, $locale)),
                 'tax_groups' => $translateTaxGroups($personTaxGroups),
@@ -486,7 +486,7 @@ class CartController extends Controller
                 'is_me' => $isMe,
                 'name' => $s->customer
                     ? trim($s->customer->first_name.' '.$s->customer->last_name)
-                    : 'Guest',
+                    : 'Waiter',
                 'item_count' => $personalCount,
                 'total_price' => round($personalTotal, 2),
                 'items' => $items,
@@ -1026,7 +1026,7 @@ class CartController extends Controller
         $sessionCustomerNames = $sessions->mapWithKeys(fn (TableScanSession $s) => [
             $s->id => $s->customer
                 ? trim($s->customer->first_name.' '.$s->customer->last_name)
-                : 'Guest',
+                : 'Waiter',
         ]);
 
         $tableTotal = 0.0;
@@ -1088,7 +1088,7 @@ class CartController extends Controller
                 'is_me' => $s->id === $mySession->id,
                 'name' => $s->customer
                     ? trim($s->customer->first_name.' '.$s->customer->last_name)
-                    : 'Guest',
+                    : 'Waiter',
                 'scanned_at' => $this->dateTimes->formatDateTime($s->scanned_at, $vendor),
                 'status' => $s->status,
                 'orders_count' => $personOrders->count(),

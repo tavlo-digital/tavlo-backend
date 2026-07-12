@@ -69,17 +69,26 @@ class StaffOrderController extends Controller
         $actor = $request->user();
 
         $result = DB::transaction(function () use ($vendor, $table, $data, $menuItems, $actor) {
+            // The waiter is their own "person" at the table: a dedicated session
+            // row with customer_id = null, never a customer's session. Sibling
+            // sessions share the table's PIN, like customers joining via PIN.
             $session = TableScanSession::where('vendor_id', $vendor->id)
                 ->where('restaurant_table_id', $table->id)
                 ->where('status', 'active')
+                ->whereNull('customer_id')
                 ->first();
 
             if (! $session) {
+                $tablePin = TableScanSession::where('vendor_id', $vendor->id)
+                    ->where('restaurant_table_id', $table->id)
+                    ->where('status', 'active')
+                    ->value('pin');
+
                 $session = TableScanSession::create([
                     'vendor_id' => $vendor->id,
                     'restaurant_table_id' => $table->id,
                     'customer_id' => null,
-                    'pin' => TableScanSession::generateUniquePin(),
+                    'pin' => $tablePin ?? TableScanSession::generateUniquePin(),
                     'status' => 'active',
                     'scanned_at' => now(),
                 ]);

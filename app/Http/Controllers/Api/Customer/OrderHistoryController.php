@@ -813,7 +813,7 @@ class OrderHistoryController extends Controller
             return [
                 $order->table_scan_session_id => $customer
                     ? trim($customer->first_name.' '.$customer->last_name)
-                    : 'Guest',
+                    : 'Waiter',
             ];
         });
     }
