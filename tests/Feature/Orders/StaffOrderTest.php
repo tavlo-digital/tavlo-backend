@@ -31,7 +31,10 @@ class StaffOrderTest extends TestCase
         parent::setUp();
 
         $this->vendor = Vendor::factory()->create(['country' => 'Austria']);
-        $this->vendor->vendorSetting()->create(['service_fee_rate' => 10]);
+        $this->vendor->vendorSetting()->create([
+            'service_fee_rate' => 10,
+            'is_live_and_discoverable' => true,
+        ]);
 
         $this->table = $this->makeTable(7);
 
@@ -413,6 +416,30 @@ class StaffOrderTest extends TestCase
 
         $response->assertSuccessful();
         $this->assertNotEmpty($response->json('data'));
+        $this->assertSame(10.0, (float) $response->json('serviceFeeRate'));
+    }
+
+    public function test_vendor_menu_gross_prices_match_customer_menu(): void
+    {
+        $customer = $this->getJson(
+            "/api/customer/restaurants/{$this->vendor->vendor_public_id}/menu/{$this->menuItem->id}"
+        );
+        $customer->assertSuccessful();
+
+        $vendor = $this->withHeaders($this->staffHeaders('waiter'))->getJson('/api/vendor/menu/items');
+        $vendor->assertSuccessful();
+
+        $vendorItem = collect($vendor->json('data'))->firstWhere('id', $this->menuItem->id);
+        $this->assertNotNull($vendorItem);
+
+        $this->assertSame($customer->json('price'), $vendorItem['grossPrice']);
+
+        $customerOption = collect($customer->json('modifier_groups.0.options'))
+            ->firstWhere('id', $this->modifierOptionId);
+        $vendorOption = collect($vendorItem['modifierGroups'][0]['options'])
+            ->firstWhere('id', $this->modifierOptionId);
+
+        $this->assertSame($customerOption['price_adjustment'], $vendorOption['grossPriceAdjustment']);
     }
 
     public function test_kitchen_role_cannot_place_staff_order_or_create_session(): void

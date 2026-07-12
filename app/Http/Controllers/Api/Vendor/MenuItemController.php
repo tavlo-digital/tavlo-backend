@@ -10,6 +10,7 @@ use App\Models\TaxCategory;
 use App\Models\TeamMember;
 use App\Models\Vendor;
 use App\Services\LocaleService;
+use App\Services\TaxCalculationService;
 use App\Services\MediaService;
 use App\Services\MenuCustomizationService;
 use Illuminate\Http\JsonResponse;
@@ -73,6 +74,7 @@ class MenuItemController extends Controller
                 $this->locales->dashboardLanguage($vendor)
             )),
             'stats' => $stats,
+            'serviceFeeRate' => (float) ($vendor->vendorSetting?->service_fee_rate ?? 0),
         ]);
     }
 
@@ -544,6 +546,13 @@ class MenuItemController extends Controller
             ]);
         }
 
+        // Gross (VAT-inclusive) figures mirror the customer menu API so staff
+        // ordering shows the same prices customers see. Net values stay the
+        // canonical fields for menu management.
+        $vendorCountry = $vendor->country ?? 'AT';
+        $itemTaxCategory = $item->tax_category ?? 'food';
+        $itemVatRate = TaxCalculationService::itemVatRate($item, $vendorCountry);
+
         return [
             'id' => $item->id,
             'productUid' => $item->product_uid,
@@ -575,6 +584,7 @@ class MenuItemController extends Controller
                 $item->description
             ),
             'price' => (float) $item->price,
+            'grossPrice' => TaxCalculationService::gross((float) $item->price, $itemVatRate),
             'imageUrl' => $this->media->url($item->image_url),
             'available' => (bool) $item->available,
             'isActive' => (bool) $item->is_active,
@@ -590,7 +600,17 @@ class MenuItemController extends Controller
             'hasDiscount' => (bool) $item->has_discount,
             'discountPercent' => (float) $item->discount_percent,
             'discountedPrice' => $item->discounted_price !== null ? (float) $item->discounted_price : null,
-            'paidAddons' => $this->customizations->paidAddonDefinitions($item->paid_addons ?? [])->values()->all(),
+            'grossDiscountedPrice' => $item->discounted_price !== null
+                ? TaxCalculationService::gross((float) $item->discounted_price, $itemVatRate)
+                : null,
+            'paidAddons' => $this->customizations->paidAddonDefinitions($item->paid_addons ?? [])
+                ->map(fn (array $addon) => $addon + [
+                    'grossPrice' => TaxCalculationService::gross(
+                        (float) $addon['price'],
+                        TaxCalculationService::addonVatRate($addon, $itemTaxCategory, $vendorCountry)
+                    ),
+                ])
+                ->values()->all(),
             'freeAddons' => $this->customizations->namedDefinitions($item->free_addons ?? [])->values()->all(),
             'removableItems' => $this->customizations->namedDefinitions($item->removable_items ?? [])->values()->all(),
             'modifierGroupIds' => $item->modifierGroups->pluck('id')->values()->all(),
@@ -598,7 +618,9 @@ class MenuItemController extends Controller
                 ->map(fn (ModifierGroup $group) => $this->formatModifierGroup(
                     $group,
                     $vendor,
-                    $locale
+                    $locale,
+                    $itemTaxCategory,
+                    $vendorCountry
                 ))
                 ->values()
                 ->all(),
@@ -650,8 +672,19 @@ class MenuItemController extends Controller
         $item->modifierGroups()->sync($sync);
     }
 
-    private function formatModifierGroup(ModifierGroup $group, $vendor, string $locale): array
-    {
+    private function formatModifierGroup(
+        ModifierGroup $group,
+        $vendor,
+        string $locale,
+        string $itemTaxCategory = 'food',
+        string $vendorCountry = 'AT',
+    ): array {
+        $groupVatRate = TaxCalculationService::modifierGroupVatRate(
+            $group->tax_category ?? '',
+            $itemTaxCategory,
+            $vendorCountry
+        );
+
         return [
             'id' => $group->id,
             'name' => $this->locales->translated(
@@ -672,6 +705,7 @@ class MenuItemController extends Controller
             'minSelection' => (int) $group->min_selection,
             'maxSelection' => (int) $group->max_selection,
             'isRequired' => (bool) $group->is_required,
+            'vatRate' => $groupVatRate,
             'sortOrder' => (int) ($group->pivot?->sort_order ?? $group->sort_order),
             'isActive' => (bool) $group->is_active,
             'options' => $group->options
@@ -692,6 +726,7 @@ class MenuItemController extends Controller
                         ['name' => $option->name]
                     ),
                     'priceAdjustment' => (float) $option->price_adjustment,
+                    'grossPriceAdjustment' => TaxCalculationService::gross((float) $option->price_adjustment, $groupVatRate),
                     'sortOrder' => (int) $option->sort_order,
                     'isActive' => (bool) $option->is_active,
                 ])
