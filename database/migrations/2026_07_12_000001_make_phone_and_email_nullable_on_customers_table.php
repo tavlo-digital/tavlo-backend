@@ -11,13 +11,14 @@ return new class extends Migration
     {
         // Social registrations used to store '' for missing phone/email, which
         // collides with the unique indexes once a second such customer signs up.
-        DB::table('customers')->where('phone', '')->update(['phone' => null]);
-        DB::table('customers')->where('email', '')->update(['email' => null]);
-
+        // Columns must become nullable before the '' values can be backfilled.
         Schema::table('customers', function (Blueprint $table) {
             $table->string('phone')->nullable()->change();
             $table->string('email')->nullable()->change();
         });
+
+        DB::table('customers')->where('phone', '')->update(['phone' => null]);
+        DB::table('customers')->where('email', '')->update(['email' => null]);
     }
 
     public function down(): void
