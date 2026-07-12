@@ -108,7 +108,9 @@ class StaffOrderController extends Controller
                     'confirmed_at' => now(),
                     'amount' => 0,
                     'currency' => $currency,
-                    'payment_method' => 'cash',
+                    // No predefined payment method — like customer orders, so a
+                    // guest can still pay it (pay-for/Stripe) or the waiter collects.
+                    'payment_method' => null,
                     'payment_pending' => true,
                     'payment_received' => false,
                     'order_type' => 'dine-in',

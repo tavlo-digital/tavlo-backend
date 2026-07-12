@@ -216,6 +216,11 @@ class StaffOrderTest extends TestCase
         $this->assertNotNull($order->placed_by_team_member_id);
         $this->assertSame('confirmed', $order->status);
 
+        // No predefined payment method — the order stays payable by a customer
+        // (pay-for/Stripe) or collectable by the waiter.
+        $this->assertNull($order->payment_method);
+        $this->assertTrue((bool) $order->payment_pending);
+
         $cartItem = CartItem::where('order_id', $order->id)->firstOrFail();
         $this->assertNotNull($cartItem->received_at);
         $this->assertSame(2, $cartItem->quantity);
