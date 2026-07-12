@@ -267,6 +267,88 @@ class CustomerAuthTest extends TestCase
         ]);
     }
 
+    public function test_multiple_social_registrations_without_phone_do_not_collide(): void
+    {
+        $this->mockSocialAuthMany('google', [
+            'token-one' => [
+                'provider_id' => 'google-id-1',
+                'email'       => 'first@example.com',
+                'first_name'  => 'First',
+                'last_name'   => 'User',
+            ],
+            'token-two' => [
+                'provider_id' => 'google-id-2',
+                'email'       => 'second@example.com',
+                'first_name'  => 'Second',
+                'last_name'   => 'User',
+            ],
+        ]);
+
+        $this->postJson('/api/customer/social/register', [
+            'provider'     => 'google',
+            'access_token' => 'token-one',
+        ])->assertOk();
+
+        $this->postJson('/api/customer/social/register', [
+            'provider'     => 'google',
+            'access_token' => 'token-two',
+        ])->assertOk();
+
+        $this->assertEquals(2, Customer::count());
+        $this->assertNull(Customer::firstWhere('email', 'first@example.com')->phone);
+        $this->assertNull(Customer::firstWhere('email', 'second@example.com')->phone);
+    }
+
+    public function test_multiple_social_registrations_without_email_do_not_collide_or_link(): void
+    {
+        // Apple omits the email after the first authorization.
+        $this->mockSocialAuthMany('apple', [
+            'token-one' => [
+                'provider_id' => 'apple-id-1',
+                'email'       => '',
+                'first_name'  => '',
+                'last_name'   => '',
+            ],
+            'token-two' => [
+                'provider_id' => 'apple-id-2',
+                'email'       => '',
+                'first_name'  => '',
+                'last_name'   => '',
+            ],
+        ]);
+
+        $this->postJson('/api/customer/social/register', [
+            'provider'     => 'apple',
+            'access_token' => 'token-one',
+        ])->assertOk();
+
+        $this->postJson('/api/customer/social/register', [
+            'provider'     => 'apple',
+            'access_token' => 'token-two',
+        ])->assertOk();
+
+        $this->assertEquals(2, Customer::count());
+        $this->assertNull(Customer::firstWhere('social_provider_id', 'apple-id-1')->email);
+        $this->assertNull(Customer::firstWhere('social_provider_id', 'apple-id-2')->email);
+    }
+
+    public function test_social_register_marks_email_verified(): void
+    {
+        $this->mockSocialAuth('google', 'valid-token', [
+            'provider_id' => 'google-id-123',
+            'email'       => 'social@example.com',
+            'first_name'  => 'Social',
+            'last_name'   => 'User',
+        ]);
+
+        $this->postJson('/api/customer/social/register', [
+            'provider'     => 'google',
+            'access_token' => 'valid-token',
+        ])->assertOk();
+
+        $this->assertNotNull(Customer::firstWhere('email', 'social@example.com')->email_verified_at);
+    }
+
     // ----------------------------------------------------------------
     // POST /api/customer/social/login
     // ----------------------------------------------------------------
@@ -398,10 +480,23 @@ class CustomerAuthTest extends TestCase
 
     protected function mockSocialAuth(string $provider, string $token, array $returnData): void
     {
+        $this->mockSocialAuthMany($provider, [$token => $returnData]);
+    }
+
+    /**
+     * Mock several token → user-data pairs on a single service instance.
+     * The route caches the resolved controller within a test, so rebinding
+     * the service between requests has no effect — all expectations must be
+     * registered up front.
+     */
+    protected function mockSocialAuthMany(string $provider, array $tokenResults): void
+    {
         $mock = Mockery::mock(SocialAuthService::class);
-        $mock->shouldReceive('verify')
-            ->with($provider, $token)
-            ->andReturn($returnData);
+        foreach ($tokenResults as $token => $returnData) {
+            $mock->shouldReceive('verify')
+                ->with($provider, $token)
+                ->andReturn($returnData);
+        }
         $this->app->instance(SocialAuthService::class, $mock);
     }
 }

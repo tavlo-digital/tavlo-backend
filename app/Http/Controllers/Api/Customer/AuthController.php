@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\Customer;
 use App\Http\Controllers\Controller;
 use App\Models\Customer;
 use App\Services\SocialAuthService;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -74,12 +75,17 @@ class AuthController extends Controller
             ]);
         }
 
+        $email = ($socialUser['email'] ?? '') ?: null;
+        $phone = ($validated['phone'] ?? '') !== '' ? $validated['phone'] : null;
+
         $customer = Customer::where('social_provider', $validated['provider'])
             ->where('social_provider_id', $socialUser['provider_id'])
             ->first();
 
         if (! $customer) {
-            $customer = Customer::where('email', $socialUser['email'])->first();
+            // Only link by email when the provider actually returned one —
+            // Apple omits it after the first authorization.
+            $customer = $email ? Customer::where('email', $email)->first() : null;
 
             if ($customer) {
                 $customer->update([
@@ -90,19 +96,33 @@ class AuthController extends Controller
                 $firstName = $socialUser['first_name'] ?: ($validated['first_name'] ?? '');
                 $lastName = $socialUser['last_name'] ?: ($validated['last_name'] ?? '');
 
-                $customer = Customer::create([
-                    'customer_public_id'  => 'cust_' . Str::random(16),
-                    'first_name'          => $firstName,
-                    'last_name'           => $lastName,
-                    'email'               => $socialUser['email'],
-                    'phone'               => $validated['phone'] ?? '',
-                    'password'            => Hash::make(Str::random(32)),
-                    'social_provider'     => $validated['provider'],
-                    'social_provider_id'  => $socialUser['provider_id'],
-                    'account_type'        => 'registered',
-                    'registration_source' => $validated['provider'],
-                    'email_verified_at'   => now(),
-                ]);
+                try {
+                    $customer = Customer::create([
+                        'customer_public_id'  => 'cust_' . Str::random(16),
+                        'first_name'          => $firstName,
+                        'last_name'           => $lastName,
+                        'email'               => $email,
+                        'phone'               => $phone,
+                        'password'            => Hash::make(Str::random(32)),
+                        'social_provider'     => $validated['provider'],
+                        'social_provider_id'  => $socialUser['provider_id'],
+                        'account_type'        => 'registered',
+                        'registration_source' => $validated['provider'],
+                        'email_verified_at'   => $email ? now() : null,
+                    ]);
+                } catch (UniqueConstraintViolationException) {
+                    // Concurrent double-submit: the account was created by the
+                    // other request — reuse it instead of failing with a 500.
+                    $customer = Customer::where('social_provider', $validated['provider'])
+                        ->where('social_provider_id', $socialUser['provider_id'])
+                        ->first();
+
+                    if (! $customer) {
+                        throw ValidationException::withMessages([
+                            'email' => ['An account with this email or phone already exists.'],
+                        ]);
+                    }
+                }
             }
         }
 

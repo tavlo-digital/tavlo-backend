@@ -27,6 +27,7 @@ class Customer extends Authenticatable
         'social_provider',
         'social_provider_id',
         'phone_verified',
+        'email_verified_at',
         'account_type',
         'risk_level',
         'risk_tooltip',
