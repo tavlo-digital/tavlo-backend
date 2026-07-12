@@ -203,6 +203,9 @@ class OrderController extends Controller
             'payment_received' => true,
             'payment_confirmed_at' => now(),
             'payment_pending' => false,
+            // Waiters can collect unpaid orders even when the customer never
+            // requested cash — record the in-person payment as cash.
+            'payment_method' => $order->payment_method ?? 'cash',
         ]);
 
         $this->notifySessionCustomers($order, 'payment_updated', 'Your cash payment has been confirmed.', [

@@ -333,6 +333,100 @@ class StaffOrderTest extends TestCase
         $this->assertSame((float) $customerOrder->service_fee, (float) $staffOrder->service_fee);
     }
 
+    public function test_orders_index_reports_shared_between_on_items(): void
+    {
+        $customer = Customer::factory()->create();
+        $session = TableScanSession::create([
+            'vendor_id' => $this->vendor->id,
+            'restaurant_table_id' => $this->table->id,
+            'customer_id' => $customer->id,
+            'pin' => TableScanSession::generateUniquePin(),
+            'status' => 'active',
+            'scanned_at' => now(),
+        ]);
+
+        $owner = Order::create([
+            'order_public_id' => 'ord-' . uniqid(),
+            'customer_id' => $customer->id,
+            'vendor_id' => $this->vendor->id,
+            'table_scan_session_id' => $session->id,
+            'status' => 'confirmed',
+            'confirmed_at' => now(),
+            'amount' => 9.41,
+            'currency' => 'EUR',
+            'order_type' => 'dine-in',
+        ]);
+        $sharer = Order::create([
+            'order_public_id' => 'ord-' . uniqid(),
+            'customer_id' => $customer->id,
+            'vendor_id' => $this->vendor->id,
+            'table_scan_session_id' => $session->id,
+            'status' => 'confirmed',
+            'confirmed_at' => now(),
+            'amount' => 9.41,
+            'currency' => 'EUR',
+            'order_type' => 'dine-in',
+        ]);
+
+        CartItem::create([
+            'table_scan_session_id' => $session->id,
+            'menu_item_id' => $this->menuItem->id,
+            'order_id' => $owner->id,
+            'quantity' => 2,
+            'shared_order_ids' => [$sharer->id],
+            'selected_modifiers' => [],
+            'received_at' => now(),
+        ]);
+
+        $index = $this->withHeaders($this->vendorHeaders())
+            ->getJson("/api/vendor/{$this->vendor->vendor_public_id}/orders");
+        $index->assertSuccessful();
+
+        $orders = collect($index->json('sessions.0.orders'));
+        $ownerItem = collect($orders->firstWhere('id', (string) $owner->id)['items'] ?? [])
+            ->first(fn ($item) => ! ($item['isSharedCopy'] ?? false));
+
+        $this->assertNotNull($ownerItem);
+        $this->assertSame(2, $ownerItem['sharedBetween']);
+    }
+
+    public function test_waiter_can_collect_order_without_cash_request(): void
+    {
+        $customer = Customer::factory()->create();
+        $session = TableScanSession::create([
+            'vendor_id' => $this->vendor->id,
+            'restaurant_table_id' => $this->table->id,
+            'customer_id' => $customer->id,
+            'pin' => TableScanSession::generateUniquePin(),
+            'status' => 'active',
+            'scanned_at' => now(),
+        ]);
+
+        $order = Order::create([
+            'order_public_id' => 'ord-' . uniqid(),
+            'customer_id' => $customer->id,
+            'vendor_id' => $this->vendor->id,
+            'table_scan_session_id' => $session->id,
+            'status' => 'confirmed',
+            'confirmed_at' => now(),
+            'amount' => 30.91,
+            'currency' => 'EUR',
+            'order_type' => 'dine-in',
+            'payment_method' => null,
+            'payment_pending' => true,
+            'payment_received' => false,
+        ]);
+
+        $this->withHeaders($this->staffHeaders('waiter'))
+            ->patchJson("/api/vendor/orders/{$order->id}/confirm-cash")
+            ->assertSuccessful();
+
+        $order->refresh();
+        $this->assertTrue((bool) $order->payment_received);
+        $this->assertFalse((bool) $order->payment_pending);
+        $this->assertSame('cash', $order->payment_method);
+    }
+
     public function test_orders_index_flags_waiter_orders(): void
     {
         $this->withHeaders($this->staffHeaders('waiter'))
