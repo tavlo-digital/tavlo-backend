@@ -169,6 +169,11 @@ class PaymentController extends Controller
 
         $payerIdentity = $this->customerIdentity($payer);
         $targetIdentity = $this->customerIdentity($targetSession->customer);
+        $snapshots = Order::with('paidBy:id,first_name,last_name')
+            ->whereIn('id', $orders->pluck('id'))
+            ->get()
+            ->map(fn (Order $o) => NotificationService::orderSnapshot($o))
+            ->values()->all();
         NotificationService::notifyTableCustomers(
             $payerSession->restaurant_table_id,
             'order_updated',
@@ -181,6 +186,7 @@ class PaymentController extends Controller
                 'target_customer_id' => $targetCustomerId,
                 'customer_name' => $targetIdentity['name'],
                 'order_ids' => $orders->pluck('id')->values()->all(),
+                'order_snapshots' => $snapshots,
             ],
             false,
         );
@@ -252,6 +258,13 @@ class PaymentController extends Controller
         if ($releasedCount > 0) {
             $payerIdentity = $this->customerIdentity($payer);
             $targetIdentity = $this->customerIdentity($targetSession->customer);
+            $releasedSnapshots = Order::with('paidBy:id,first_name,last_name')
+                ->where('table_scan_session_id', $targetSession->id)
+                ->where('payment_received', false)
+                ->whereNull('paid_by')
+                ->get()
+                ->map(fn (Order $o) => NotificationService::orderSnapshot($o))
+                ->values()->all();
             NotificationService::notifyTableCustomers(
                 $payerSession->restaurant_table_id,
                 'order_updated',
@@ -264,6 +277,7 @@ class PaymentController extends Controller
                     'target_customer_id' => $customerId,
                     'customer_name' => $targetIdentity['name'],
                     'released_orders_count' => $releasedCount,
+                    'order_snapshots' => $releasedSnapshots,
                 ],
                 false,
             );
@@ -442,6 +456,10 @@ class PaymentController extends Controller
             $tableId = $order->tableScanSession?->restaurant_table_id;
             if ($tableId) {
                 $customerName = trim(($customer->first_name ?? '') . ' ' . ($customer->last_name ?? '')) ?: 'A guest';
+                $snapshots = Order::with('paidBy:id,first_name,last_name')
+                    ->whereIn('id', $orderIds)->get()
+                    ->map(fn (Order $o) => NotificationService::orderSnapshot($o))
+                    ->values()->all();
                 NotificationService::notifyTableCustomers(
                     $tableId,
                     'payment_updated',
@@ -451,6 +469,7 @@ class PaymentController extends Controller
                         'customer_id' => $customer->id,
                         'customer_name' => $customerName,
                         'order_id' => $order->id,
+                        'order_snapshots' => $snapshots,
                     ],
                 );
             }
@@ -580,6 +599,10 @@ class PaymentController extends Controller
         $tableId = $order->tableScanSession?->restaurant_table_id;
 
         if ($tableId) {
+            $snapshots = Order::with('paidBy:id,first_name,last_name')
+                ->whereIn('id', $orderIds)->get()
+                ->map(fn (Order $o) => NotificationService::orderSnapshot($o))
+                ->values()->all();
             NotificationService::notifyTableCustomers(
                 $tableId,
                 'payment_updated',
@@ -590,6 +613,7 @@ class PaymentController extends Controller
                     'customer_name' => $customerName,
                     'order_id' => $order->id,
                     'notes' => $data['notes'] ?? null,
+                    'order_snapshots' => $snapshots,
                 ],
             );
         }
@@ -719,6 +743,8 @@ class PaymentController extends Controller
             $tableId = $order->tableScanSession?->restaurant_table_id;
             if ($tableId) {
                 $customerName = trim(($customer->first_name ?? '') . ' ' . ($customer->last_name ?? '')) ?: 'A guest';
+                $snapshots = $coveredOrders->map(fn (Order $o) => NotificationService::orderSnapshot($o->fresh()->load('paidBy')))
+                    ->values()->all();
                 NotificationService::notifyTableCustomers(
                     $tableId,
                     'payment_updated',
@@ -729,6 +755,7 @@ class PaymentController extends Controller
                         'customer_name' => $customerName,
                         'order_id' => $order->id,
                         'payment_id' => $payment->id,
+                        'order_snapshots' => $snapshots,
                     ],
                 );
             }
@@ -824,6 +851,9 @@ class PaymentController extends Controller
         if ($type === 'payment_intent.succeeded' && $payment->table_scan_session_id) {
             $session = $payment->order?->tableScanSession;
             if ($session) {
+                $affectedOrders = $this->paymentOrders($payment);
+                $snapshots = $affectedOrders->map(fn (Order $o) => NotificationService::orderSnapshot($o->fresh()->load('paidBy')))
+                    ->values()->all();
                 NotificationService::notifyTableCustomers(
                     $session->restaurant_table_id,
                     'payment_updated',
@@ -832,6 +862,7 @@ class PaymentController extends Controller
                         'template' => 'payment.completed',
                         'order_id' => $payment->order_id,
                         'payment_id' => $payment->id,
+                        'order_snapshots' => $snapshots,
                     ],
                 );
             }

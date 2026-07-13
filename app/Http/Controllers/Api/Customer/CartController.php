@@ -601,6 +601,7 @@ class CartController extends Controller
                     'customer_id' => $request->user()->id,
                     'customer_name' => $customerName,
                     'order_id' => $existingOrder->id,
+                    'order_snapshots' => [NotificationService::orderSnapshot($existingOrder->fresh()->load('paidBy'))],
                 ],
             );
 
@@ -625,6 +626,12 @@ class CartController extends Controller
             ]);
         });
 
+        $freshDraft = Order::where('table_scan_session_id', $mySession->id)
+            ->where('customer_id', $request->user()->id)
+            ->where('status', 'draft')
+            ->latest()
+            ->first();
+
         NotificationService::notifyTableCustomers(
             $mySession->restaurant_table_id,
             'order_updated',
@@ -633,6 +640,9 @@ class CartController extends Controller
                 'template' => 'order.draft_created',
                 'customer_id' => $request->user()->id,
                 'customer_name' => $customerName,
+                'order_snapshots' => $freshDraft
+                    ? [NotificationService::orderSnapshot($freshDraft)]
+                    : [],
             ],
         );
 
@@ -793,6 +803,11 @@ class CartController extends Controller
         }
 
         $customerName = $this->customerName($request->user());
+        $snapshots = Order::with('paidBy:id,first_name,last_name')
+            ->whereIn('id', $affectedOrderIds->unique()->values()->all())
+            ->get()
+            ->map(fn (Order $o) => NotificationService::orderSnapshot($o))
+            ->values()->all();
         NotificationService::notifyTableCustomers(
             $mySession->restaurant_table_id,
             'order_updated',
@@ -802,6 +817,7 @@ class CartController extends Controller
                 'customer_id' => $request->user()->id,
                 'customer_name' => $customerName,
                 'order_id' => $order->id,
+                'order_snapshots' => $snapshots,
             ],
         );
 
@@ -938,6 +954,7 @@ class CartController extends Controller
                 'customer_id' => $request->user()->id,
                 'customer_name' => $customerName,
                 'order_id' => $order->id,
+                'order_snapshots' => [NotificationService::orderSnapshot($order->load('paidBy'), true)],
             ],
             false,
         );

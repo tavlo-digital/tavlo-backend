@@ -2,7 +2,9 @@
 
 namespace App\Services;
 
+use App\Models\CartItem;
 use App\Models\Notification;
+use App\Models\Order;
 use App\Models\RestaurantTable;
 use App\Models\TableScanSession;
 use App\Models\TeamMember;
@@ -138,6 +140,46 @@ class NotificationService
         if ($rows !== []) {
             Notification::insert($rows);
         }
+    }
+
+    public static function orderSnapshot(Order $order, bool $includeItems = false): array
+    {
+        $paidBy = $order->relationLoaded('paidBy') ? $order->paidBy : $order->paidBy()->first();
+
+        $snapshot = [
+            'order_id' => $order->id,
+            'order_public_id' => $order->order_public_id,
+            'table_scan_session_id' => $order->table_scan_session_id,
+            'status' => $order->status,
+            'amount' => (float) $order->amount,
+            'tip_amount' => (float) ($order->tip_amount ?? 0),
+            'service_fee' => (float) ($order->service_fee ?? 0),
+            'currency' => $order->currency,
+            'payment_method' => $order->payment_method,
+            'payment_pending' => (bool) $order->payment_pending,
+            'payment_received' => (bool) $order->payment_received,
+            'paid_by' => $paidBy ? [
+                'id' => $paidBy->id,
+                'name' => trim(($paidBy->first_name ?? '') . ' ' . ($paidBy->last_name ?? '')) ?: 'Guest',
+            ] : null,
+        ];
+
+        if ($includeItems) {
+            $columns = ['id', 'received_at', 'preparing_start_at', 'ready_at', 'served_at', 'picked_up_at'];
+            $items = CartItem::where('order_id', $order->id)->get($columns);
+            $shared = CartItem::whereJsonContains('shared_order_ids', $order->id)->get($columns);
+
+            $snapshot['items'] = $items->merge($shared)->unique('id')->map(fn (CartItem $ci) => [
+                'cart_item_id' => $ci->id,
+                'status' => $ci->status(),
+                'received_at' => $ci->received_at?->toISOString(),
+                'preparing_start_at' => $ci->preparing_start_at?->toISOString(),
+                'ready_at' => $ci->ready_at?->toISOString(),
+                'served_at' => $ci->served_at?->toISOString(),
+            ])->values()->all();
+        }
+
+        return $snapshot;
     }
 
     private static function notifyOperationsForTableEvent(

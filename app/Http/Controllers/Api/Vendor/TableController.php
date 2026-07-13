@@ -643,6 +643,11 @@ class TableController extends Controller
                 'source_table_label' => $sourceLabel,
                 'target_table_id' => $targetTable->id,
                 'target_table_label' => $targetLabel,
+                'table' => [
+                    'id' => (string) $targetTable->id,
+                    'number' => $targetTable->number,
+                    'name' => $targetTable->name,
+                ],
             ],
             false,
         );

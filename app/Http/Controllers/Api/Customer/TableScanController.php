@@ -258,6 +258,13 @@ class TableScanController extends Controller
                 'customer_name' => $customerName,
                 'table_id' => $table->id,
                 'table_label' => $table->name ?? '#'.$table->number,
+                'participant' => [
+                    'session_id' => $session->id,
+                    'customer_id' => $customer->id,
+                    'name' => $customerName,
+                    'scanned_at' => $this->dateTimes->formatDateTime($session->scanned_at, $vendor),
+                    'status' => $session->status,
+                ],
             ],
         );
 

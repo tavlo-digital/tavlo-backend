@@ -155,6 +155,7 @@ class OrderController extends Controller
         $this->notifySessionCustomers($order, 'order_updated', 'Your order status has been updated.', [
             'template' => 'order.status_updated',
             'order_id' => $order->id,
+            'order_snapshots' => [NotificationService::orderSnapshot($order->fresh()->load('paidBy'))],
         ]);
         $this->notifyOperations($request, $order, 'order_status_changed', 'Order status was updated.', silent: true);
 
@@ -178,6 +179,7 @@ class OrderController extends Controller
         $this->notifySessionCustomers($order, 'order_updated', 'Your order has been confirmed by the waiter.', [
             'template' => 'order.waiter_confirmed',
             'order_id' => $order->id,
+            'order_snapshots' => [NotificationService::orderSnapshot($order->fresh()->load('paidBy'))],
         ]);
         $this->notifyOperations(
             $request,
@@ -211,6 +213,7 @@ class OrderController extends Controller
         $this->notifySessionCustomers($order, 'payment_updated', 'Your cash payment has been confirmed.', [
             'template' => 'payment.cash_confirmed',
             'order_id' => $order->id,
+            'order_snapshots' => [NotificationService::orderSnapshot($order->fresh()->load('paidBy'))],
         ]);
         $this->notifyOperations(
             $request,
@@ -253,6 +256,7 @@ class OrderController extends Controller
         $this->notifySessionCustomers($order, 'order_updated', 'Your order is ready!', [
             'template' => 'order.ready',
             'order_id' => $order->id,
+            'order_snapshots' => [NotificationService::orderSnapshot($order->fresh()->load('paidBy'), true)],
         ]);
         $this->notifyOperations(
             $request,
@@ -367,12 +371,24 @@ class OrderController extends Controller
             default => 'has been updated',
         };
         $itemName = $item->menuItem?->name ?? 'An item';
+        // A shared item appears under every order in shared_order_ids — snapshot them all.
+        $affectedOrderIds = collect([$order->id, $item->order_id])
+            ->merge($item->shared_order_ids ?? [])
+            ->filter()
+            ->unique()
+            ->values();
+        $snapshots = Order::with('paidBy:id,first_name,last_name')
+            ->whereIn('id', $affectedOrderIds)
+            ->get()
+            ->map(fn (Order $o) => NotificationService::orderSnapshot($o, true))
+            ->values()->all();
         $this->notifySessionCustomers($order, 'cart_item_updated', "{$itemName} {$statusLabel}.", [
             'template' => $template,
             'order_id' => $order->id,
             'cart_item_id' => $item->id,
             'menu_item_id' => $item->menu_item_id,
             'item_name' => $itemName,
+            'order_snapshots' => $snapshots,
         ]);
         $this->notifyOperations(
             $request,
@@ -411,6 +427,7 @@ class OrderController extends Controller
         $this->notifySessionCustomers($order, 'order_updated', 'Your order has been picked up.', [
             'template' => 'order.picked_up',
             'order_id' => $order->id,
+            'order_snapshots' => [NotificationService::orderSnapshot($order->fresh()->load('paidBy'))],
         ]);
         $this->notifyOperations($request, $order, 'order_picked_up', 'An order was picked up.', silent: true);
 
@@ -442,6 +459,7 @@ class OrderController extends Controller
         $this->notifySessionCustomers($order, 'order_updated', 'Your order has been served. Enjoy!', [
             'template' => 'order.served',
             'order_id' => $order->id,
+            'order_snapshots' => [NotificationService::orderSnapshot($order->fresh()->load('paidBy'), true)],
         ]);
         $this->notifyOperations($request, $order, 'order_served', 'An order was served.', silent: true);
 
@@ -468,6 +486,7 @@ class OrderController extends Controller
         $this->notifySessionCustomers($order, 'order_updated', 'Your order has been cancelled.', [
             'template' => 'order.cancelled',
             'order_id' => $order->id,
+            'order_snapshots' => [NotificationService::orderSnapshot($order->fresh()->load('paidBy'))],
         ]);
         $this->notifyOperations(
             $request,
