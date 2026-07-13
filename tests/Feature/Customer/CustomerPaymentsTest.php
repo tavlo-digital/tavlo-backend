@@ -699,6 +699,136 @@ class CustomerPaymentsTest extends TestCase
         $this->assertSame($this->customer->id, $coveredOrder->fresh()->paid_by);
     }
 
+    public function test_receipts_list_returns_only_completed_payments(): void
+    {
+        $paidOrder = $this->order(['payment_pending' => false]);
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/payments/create-intent')
+            ->assertOk();
+
+        $this->stripe->events[] = [
+            'type' => 'payment_intent.succeeded',
+            'payment_intent' => [
+                'id' => 'pi_fake_1',
+                'client_secret' => null,
+                'status' => 'succeeded',
+                'metadata' => [
+                    'order_id' => (string) $paidOrder->id,
+                    'customer_id' => (string) $this->customer->id,
+                ],
+                'payment_method' => 'pm_card_visa',
+            ],
+        ];
+        $this->postJson('/api/customer/payments/webhook', [], [
+            'Stripe-Signature' => 'valid',
+        ])->assertOk();
+
+        $pendingOrder = $this->order(['payment_pending' => false]);
+        $this->payment($pendingOrder, 'pi_still_processing');
+
+        $response = $this->withHeaders($this->headers)
+            ->getJson('/api/customer/receipts')
+            ->assertOk()
+            ->assertJsonPath('receipts_count', 1)
+            ->assertJsonPath('receipts.0.payment_intent_id', 'pi_fake_1')
+            ->assertJsonPath('receipts.0.payment_method', 'stripe')
+            ->assertJsonPath('receipts.0.status', 'succeeded')
+            ->assertJsonPath('receipts.0.orders_count', 1)
+            ->assertJsonPath('receipts.0.orders.0.order_public_id', $paidOrder->order_public_id);
+
+        $this->assertNotNull($response->json('receipts.0.paid_at'));
+    }
+
+    public function test_receipt_show_returns_every_order_paid_by_the_intent(): void
+    {
+        [$tablemate, $tablemateSession] = $this->tablemate();
+        $ownOrder = $this->order(['amount' => 6, 'payment_pending' => false]);
+        $coveredOrder = $this->order([
+            'amount' => 7,
+            'table_scan_session_id' => $tablemateSession->id,
+            'payment_pending' => false,
+        ], $tablemate);
+
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/payments/pay-for', [
+                'customer_id' => $tablemate->id,
+                'order_id' => $coveredOrder->order_public_id,
+            ])
+            ->assertOk();
+
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/payments/create-intent')
+            ->assertOk();
+
+        $this->stripe->events[] = [
+            'type' => 'payment_intent.succeeded',
+            'payment_intent' => [
+                'id' => 'pi_fake_1',
+                'client_secret' => null,
+                'status' => 'succeeded',
+                'metadata' => [
+                    'order_id' => (string) $ownOrder->id,
+                    'customer_id' => (string) $this->customer->id,
+                ],
+                'payment_method' => 'pm_card_visa',
+            ],
+        ];
+        $this->postJson('/api/customer/payments/webhook', [], [
+            'Stripe-Signature' => 'valid',
+        ])->assertOk();
+
+        $payment = OrderPayment::where('stripe_payment_intent_id', 'pi_fake_1')->firstOrFail();
+
+        $response = $this->withHeaders($this->headers)
+            ->getJson("/api/customer/receipts/{$payment->id}")
+            ->assertOk()
+            ->assertJsonPath('data.receipt.receipt_id', $payment->id)
+            ->assertJsonPath('data.payment.status', 'CONFIRMED')
+            ->assertJsonPath('data.payment.transaction_id', 'pi_fake_1')
+            ->assertJsonPath('data.totals.amount_charged', 13)
+            ->assertJsonCount(2, 'data.orders');
+
+        $this->assertEqualsCanonicalizing(
+            [$ownOrder->order_public_id, $coveredOrder->order_public_id],
+            $response->json('data.receipt.order_ids'),
+        );
+        $this->assertSame(
+            $this->customer->id,
+            collect($response->json('data.orders'))
+                ->firstWhere('order_id', $coveredOrder->order_public_id)['paid_by']['id'],
+        );
+    }
+
+    public function test_receipt_show_rejects_incomplete_or_foreign_payments(): void
+    {
+        $order = $this->order(['payment_pending' => false]);
+        $processing = $this->payment($order, 'pi_incomplete');
+
+        $this->withHeaders($this->headers)
+            ->getJson("/api/customer/receipts/{$processing->id}")
+            ->assertStatus(422)
+            ->assertJsonPath('message', 'Receipt is only available for completed payments.');
+
+        $other = Customer::factory()->create();
+        $foreign = OrderPayment::create([
+            'order_id' => $order->id,
+            'vendor_id' => $order->vendor_id,
+            'customer_id' => $other->id,
+            'table_scan_session_id' => $order->table_scan_session_id,
+            'stripe_account_id' => 'acct_test_123',
+            'stripe_payment_intent_id' => 'pi_foreign_receipt',
+            'amount' => 6,
+            'currency' => 'EUR',
+            'status' => 'succeeded',
+            'paid_at' => now(),
+            'metadata' => [],
+        ]);
+
+        $this->withHeaders($this->headers)
+            ->getJson("/api/customer/receipts/{$foreign->id}")
+            ->assertNotFound();
+    }
+
     public function test_assigned_only_payment_allows_intent_but_rejects_positive_tip(): void
     {
         [$tablemate, $tablemateSession] = $this->tablemate();

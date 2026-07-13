@@ -256,37 +256,10 @@ class OrderHistoryController extends Controller
         $countryCode = TaxCalculationService::countryCode($vendorCountry);
         $receiptLocale = 'en-'.$countryCode;
 
-        $receiptItems = $items->map(function (CartItem $item) use ($order, $vendorCountry, $vendor, $contentLocale) {
-            $menuItem = $item->menuItem;
-            $unitPrice = $this->cartItemUnitPrice($item, $vendorCountry);
-            $lineGross = round($unitPrice * $item->quantity, 2);
-            $taxCategory = $menuItem?->tax_category ?? 'food';
-            $vatRate = TaxCalculationService::itemVatRate($menuItem, $vendorCountry);
-            $vatAmount = TaxCalculationService::vatFromGross($lineGross, $vatRate);
-
-            $sharedBetween = 1 + count(is_array($item->shared_order_ids) ? $item->shared_order_ids : []);
-            $myShare = round($lineGross / $sharedBetween, 2);
-
-            return [
-                'id' => $item->id,
-                'name' => $menuItem && $vendor
-                    ? $this->customizations->menuItemName($menuItem, $vendor, $contentLocale)
-                    : $menuItem?->name,
-                'quantity' => $item->quantity,
-                'unit_price_gross' => $unitPrice,
-                'line_gross' => $lineGross,
-                'paid_addons' => $this->formatPaidAddons($item, $taxCategory, $vendorCountry, $vendor, $contentLocale),
-                'free_addons' => $this->formatNamedSelections($item, 'free_addons', $vendor, $contentLocale),
-                'removed_items' => $this->formatNamedSelections($item, 'removed_items', $vendor, $contentLocale),
-                'selected_modifiers' => $this->formatSelectedModifiers($item, $taxCategory, $vendorCountry, $vendor, $contentLocale),
-                'tax_category' => strtoupper($taxCategory),
-                'vat_rate' => $vatRate,
-                'vat_amount' => $vatAmount,
-                'is_mine' => (int) $item->order_id === (int) $order->id,
-                'shared_between' => $sharedBetween,
-                'my_share' => $myShare,
-            ];
-        })->values()->all();
+        $receiptItems = $items
+            ->map(fn (CartItem $item) => $this->formatReceiptItem($item, $order, $vendorCountry, $vendor, $contentLocale))
+            ->values()
+            ->all();
 
         $taxGroupsFormatted = array_map(fn (array $group) => array_merge($group, [
             'tax_category' => strtoupper($group['tax_category']),
@@ -336,6 +309,211 @@ class OrderHistoryController extends Controller
                 'version' => '1.0',
             ],
         ]);
+    }
+
+    /**
+     * GET /api/customer/receipts
+     */
+    public function receipts(Request $request): JsonResponse
+    {
+        $customer = $request->user();
+
+        $payments = OrderPayment::with([
+            'vendor.vendorSetting:id,vendor_id,logo_url,date_format,time_format',
+            'order',
+            'orders',
+        ])
+            ->where('customer_id', $customer->id)
+            ->where(function (Builder $query) {
+                $query->where('status', 'succeeded')->orWhereNotNull('paid_at');
+            })
+            ->orderByDesc('id')
+            ->get();
+
+        $receipts = $payments->map(function (OrderPayment $payment) {
+            $vendor = $payment->vendor;
+            $orders = $this->paymentCoveredOrders($payment);
+
+            return [
+                'receipt_id' => $payment->id,
+                'payment_intent_id' => $payment->stripe_payment_intent_id,
+                'restaurant' => [
+                    'restaurant_public_id' => $vendor?->vendor_public_id,
+                    'restaurant_name' => $vendor?->restaurant_name,
+                    'logo_url' => $this->media->url($vendor?->vendorSetting?->logo_url),
+                ],
+                'amount' => round((float) $payment->amount, 2),
+                'currency' => $payment->currency,
+                'payment_method' => $payment->stripe_payment_intent_id ? 'stripe' : 'cash',
+                'status' => $payment->status,
+                'paid_at' => $this->dateTimes->formatDateTime($payment->paid_at, $vendor),
+                'orders_count' => $orders->count(),
+                'orders' => $orders->map(fn (Order $order) => [
+                    'id' => $order->id,
+                    'order_public_id' => $order->order_public_id,
+                    'amount' => round((float) ($order->pivot?->amount ?? $order->amount), 2),
+                ])->values()->all(),
+            ];
+        })->values();
+
+        return response()->json([
+            'receipts' => $receipts,
+            'receipts_count' => $receipts->count(),
+        ]);
+    }
+
+    /**
+     * GET /api/customer/receipts/{receiptId}
+     */
+    public function receiptShow(Request $request, int $receiptId): JsonResponse
+    {
+        $customer = $request->user();
+
+        $payment = OrderPayment::with([
+            'vendor.vendorSetting',
+            'order.tableScanSession.restaurantTable:id,number,name',
+            'order.paidBy:id,first_name,last_name',
+            'orders.tableScanSession.restaurantTable:id,number,name',
+            'orders.paidBy:id,first_name,last_name',
+        ])
+            ->where('customer_id', $customer->id)
+            ->where('id', $receiptId)
+            ->firstOrFail();
+
+        if ($payment->status !== 'succeeded' && ! $payment->paid_at) {
+            return response()->json(['message' => 'Receipt is only available for completed payments.'], 422);
+        }
+
+        $orders = $this->paymentCoveredOrders($payment);
+
+        if ($orders->isEmpty()) {
+            return response()->json(['message' => 'No orders are associated with this receipt.'], 422);
+        }
+
+        $anchor = $orders->first(fn (Order $order) => (int) $order->id === (int) $payment->order_id)
+            ?? $orders->first();
+        $vendor = $payment->vendor ?? $anchor->vendor;
+        $settings = $vendor?->vendorSetting;
+        $vendorCountry = $vendor?->country ?? 'AT';
+        $contentLocale = $vendor ? $this->locales->resolveCustomerLocaleFromHeader($request, $vendor) : 'en';
+        $countryCode = TaxCalculationService::countryCode($vendorCountry);
+        $receiptLocale = 'en-'.$countryCode;
+
+        $allItems = collect();
+        $orderBlocks = $orders->map(function (Order $order) use (&$allItems, $vendorCountry, $vendor, $contentLocale) {
+            $items = $this->linkedCartItems($order);
+            $allItems = $allItems->merge($items);
+
+            return [
+                'order_id' => $order->order_public_id,
+                'paid_by' => $this->paidByPayload($order),
+                'tip_amount' => round((float) ($order->tip_amount ?? 0), 2),
+                'items' => $items
+                    ->map(fn (CartItem $item) => $this->formatReceiptItem($item, $order, $vendorCountry, $vendor, $contentLocale))
+                    ->values()
+                    ->all(),
+            ];
+        })->values()->all();
+
+        $uniqueItems = $allItems->unique('id')->values();
+        $taxGroups = TaxCalculationService::computeTaxGroups($uniqueItems, $vendorCountry, true);
+        $totals = TaxCalculationService::computeTotals($taxGroups, 0);
+
+        $serviceFee = round((float) $orders->sum(fn (Order $order) => (float) ($order->service_fee ?? 0)), 2);
+        $tipTotal = round((float) $orders->sum(fn (Order $order) => (float) ($order->tip_amount ?? 0)), 2);
+        $totals['service_fee'] = $serviceFee;
+        $totals['total_tips'] = $tipTotal;
+        $totals['grand_total'] = round($totals['grand_total'] + $serviceFee + $tipTotal, 2);
+        $totals['amount_charged'] = round((float) $payment->amount, 2);
+
+        $table = $anchor->tableScanSession?->restaurantTable;
+        $tableName = $table ? ($table->name ?? 'Table '.$table->number) : null;
+
+        $taxGroupsFormatted = array_map(fn (array $group) => array_merge($group, [
+            'tax_category' => strtoupper($group['tax_category']),
+            'label' => $this->locales->translatedTaxCategoryName($group['tax_category'], $vendorCountry, $contentLocale),
+        ]), $taxGroups);
+
+        return response()->json([
+            'data' => [
+                'restaurant' => [
+                    'name' => $vendor?->restaurant_name,
+                    'logo_url' => $this->media->url($settings?->logo_url),
+                    'address' => $this->formatFullAddress($vendor),
+                    'vat_id' => $vendor?->vat_number,
+                    'phone' => $vendor?->phone,
+                    'email' => $vendor?->email,
+                    'company_register_number' => $vendor?->business_registration_number,
+                ],
+                'receipt' => [
+                    'receipt_id' => $payment->id,
+                    'invoice_number' => $this->resolveInvoiceNumber($anchor, $settings),
+                    'date' => $this->dateTimes->formatDate($payment->paid_at ?? $anchor->created_at, $vendor),
+                    'time' => $this->dateTimes->formatTime($payment->paid_at ?? $anchor->created_at, $vendor),
+                    'table' => $tableName,
+                    'order_ids' => $orders->pluck('order_public_id')->values()->all(),
+                    'currency' => $payment->currency ?? $anchor->currency ?? $vendor?->currency ?? 'EUR',
+                    'locale' => $receiptLocale,
+                ],
+                'orders' => $orderBlocks,
+                'tax_groups' => $taxGroupsFormatted,
+                'totals' => $totals,
+                'payment' => [
+                    'method' => $payment->stripe_payment_intent_id ? 'stripe' : 'cash',
+                    'status' => 'CONFIRMED',
+                    'transaction_id' => $payment->stripe_payment_intent_id,
+                    'paid_at' => $this->dateTimes->formatDateTime($payment->paid_at, $vendor),
+                ],
+                'legal' => $this->legalBlock($countryCode, $vendor),
+            ],
+            'meta' => [
+                'generated_at' => $this->dateTimes->formatDateTime(now(), $vendor),
+                'template' => 'tavlo-receipt-template',
+                'version' => '1.0',
+            ],
+        ]);
+    }
+
+    private function paymentCoveredOrders(OrderPayment $payment): Collection
+    {
+        if ($payment->orders->isNotEmpty()) {
+            return collect($payment->orders->all())->values();
+        }
+
+        return $payment->order ? collect([$payment->order]) : collect();
+    }
+
+    private function formatReceiptItem(CartItem $item, Order $order, string $vendorCountry, ?Vendor $vendor, string $contentLocale): array
+    {
+        $menuItem = $item->menuItem;
+        $unitPrice = $this->cartItemUnitPrice($item, $vendorCountry);
+        $lineGross = round($unitPrice * $item->quantity, 2);
+        $taxCategory = $menuItem?->tax_category ?? 'food';
+        $vatRate = TaxCalculationService::itemVatRate($menuItem, $vendorCountry);
+        $vatAmount = TaxCalculationService::vatFromGross($lineGross, $vatRate);
+
+        $sharedBetween = 1 + count(is_array($item->shared_order_ids) ? $item->shared_order_ids : []);
+        $myShare = round($lineGross / $sharedBetween, 2);
+
+        return [
+            'id' => $item->id,
+            'name' => $menuItem && $vendor
+                ? $this->customizations->menuItemName($menuItem, $vendor, $contentLocale)
+                : $menuItem?->name,
+            'quantity' => $item->quantity,
+            'unit_price_gross' => $unitPrice,
+            'line_gross' => $lineGross,
+            'paid_addons' => $this->formatPaidAddons($item, $taxCategory, $vendorCountry, $vendor, $contentLocale),
+            'free_addons' => $this->formatNamedSelections($item, 'free_addons', $vendor, $contentLocale),
+            'removed_items' => $this->formatNamedSelections($item, 'removed_items', $vendor, $contentLocale),
+            'selected_modifiers' => $this->formatSelectedModifiers($item, $taxCategory, $vendorCountry, $vendor, $contentLocale),
+            'tax_category' => strtoupper($taxCategory),
+            'vat_rate' => $vatRate,
+            'vat_amount' => $vatAmount,
+            'is_mine' => (int) $item->order_id === (int) $order->id,
+            'shared_between' => $sharedBetween,
+            'my_share' => $myShare,
+        ];
     }
 
     private function resolveInvoiceNumber(Order $order, $settings): string
