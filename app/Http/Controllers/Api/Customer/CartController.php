@@ -72,6 +72,22 @@ class CartController extends Controller
             return response()->json(['message' => 'No active table session found.'], 422);
         }
 
+        $payload = $this->buildCartPayload($mySession, $request);
+        $payload['people'] = collect($payload['people'])
+            ->map(fn (array $person) => [...$person, 'is_me' => $person['session_id'] === $mySession->id])
+            ->values()
+            ->all();
+
+        return response()->json($payload);
+    }
+
+    /**
+     * Build the table cart payload shared by GET /cart and realtime cart
+     * pushes. People entries carry no is_me flag — each consumer derives it
+     * from its own session or customer id.
+     */
+    private function buildCartPayload(TableScanSession $mySession, Request $request): array
+    {
         $sessionIds = $this->tableSessionIds($mySession);
 
         $sessions = TableScanSession::with([
@@ -104,7 +120,7 @@ class CartController extends Controller
             'label' => $this->locales->translatedTaxCategoryName($g['tax_category'], $vendorCountry, $locale),
         ]), $groups);
 
-        $people = $sessions->map(function (TableScanSession $s) use ($mySession, $orderedOrderIds, $vendorCountry, $serviceFeeRate, $vendor, $locale, $translateTaxGroups) {
+        $people = $sessions->map(function (TableScanSession $s) use ($orderedOrderIds, $vendorCountry, $serviceFeeRate, $vendor, $locale, $translateTaxGroups) {
             $personItems = $s->cartItems
                 ->filter(fn (CartItem $item) => $item->order_id === null
                     && ! $this->cartItemBelongsToOrderedOrder($item, $orderedOrderIds))
@@ -116,12 +132,12 @@ class CartController extends Controller
             return [
                 'session_id' => $s->id,
                 'customer_id' => $s->customer_id,
-                'is_me' => $s->id === $mySession->id,
                 'name' => $s->customer
                     ? trim($s->customer->first_name.' '.$s->customer->last_name)
                     : 'Waiter',
                 'personal_items' => $personItems
-                    ->map(fn (CartItem $item) => $this->itemPayload($item, $vendorCountry, $vendor, $locale)),
+                    ->map(fn (CartItem $item) => $this->itemPayload($item, $vendorCountry, $vendor, $locale))
+                    ->all(),
                 'tax_groups' => $translateTaxGroups($personTaxGroups),
                 'totals' => $personTotals,
             ];
@@ -129,7 +145,7 @@ class CartController extends Controller
 
         $table = $mySession->restaurantTable;
 
-        return response()->json([
+        return [
             'table' => $table ? [
                 'id' => $table->id,
                 'number' => $table->number ?? null,
@@ -139,8 +155,27 @@ class CartController extends Controller
                 'vendor_public_id' => $vendor->vendor_public_id ?? null,
                 'restaurant_name' => $vendor->restaurant_name ?? null,
             ] : null,
-            'people' => $people->values(),
-        ]);
+            'people' => $people->values()->all(),
+        ];
+    }
+
+    /**
+     * Realtime metadata for cart_updated events: the fresh cart payload so
+     * customer clients can apply it directly instead of refetching. Omitted
+     * when too large for a realtime message — clients fall back to refetching.
+     */
+    private function realtimeCartMetadata(TableScanSession $mySession, Request $request): array
+    {
+        $cart = $this->buildCartPayload($mySession, $request);
+
+        if (strlen(json_encode($cart)) > 8000) {
+            return [];
+        }
+
+        return [
+            'cart' => $cart,
+            'payload_version' => now()->getTimestampMs(),
+        ];
     }
 
     private function cartItemBelongsToOrderedOrder(CartItem $item, array $orderedOrderIds): bool
@@ -253,6 +288,7 @@ class CartController extends Controller
                 'customer_name' => $customerName,
                 'menu_item_id' => $item->menu_item_id,
                 'item_name' => $itemName,
+                ...$this->realtimeCartMetadata($mySession, $request),
             ],
         );
 
@@ -349,6 +385,7 @@ class CartController extends Controller
                 'customer_name' => $customerName,
                 'menu_item_id' => $item->menu_item_id,
                 'item_name' => $itemName,
+                ...$this->realtimeCartMetadata($mySession, $request),
             ],
         );
 
@@ -396,6 +433,7 @@ class CartController extends Controller
                 'customer_name' => $customerName,
                 'menu_item_id' => $menuItemId,
                 'item_name' => $itemName,
+                ...$this->realtimeCartMetadata($mySession, $request),
             ],
         );
 

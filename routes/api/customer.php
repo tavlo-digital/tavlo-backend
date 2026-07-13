@@ -9,6 +9,7 @@ use App\Http\Controllers\Api\Customer\OrderHistoryController;
 use App\Http\Controllers\Api\Customer\PaymentController;
 use App\Http\Controllers\Api\Customer\PrivacyController;
 use App\Http\Controllers\Api\Customer\ProfileController;
+use App\Http\Controllers\Api\Customer\RealtimeTokenController;
 use App\Http\Controllers\Api\Customer\ReservationController;
 use App\Http\Controllers\Api\Customer\RestaurantController;
 use App\Http\Controllers\Api\Customer\ReviewController;
@@ -73,6 +74,9 @@ Route::middleware(['auth:customer', 'track.session.activity'])->group(function (
     Route::get('me',           [AuthController::class, 'me'])->name('me');
     Route::post('logout',      [AuthController::class, 'logout'])->name('logout');
     Route::post('logout-all',  [AuthController::class, 'logoutAll'])->name('logout.all');
+
+    // Realtime (Supabase channel auth)
+    Route::get('realtime/token', RealtimeTokenController::class)->name('realtime.token');
 
     // Profile
     Route::get('profile',              [ProfileController::class, 'show'])->name('profile.show');
