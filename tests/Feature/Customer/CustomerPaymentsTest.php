@@ -83,10 +83,7 @@ class CustomerPaymentsTest extends TestCase
 
     public function test_create_intent_requires_authentication(): void
     {
-        $this->postJson('/api/customer/payments/create-intent', [
-            'order_id' => 'ord-test',
-            'customer_id' => '1',
-        ])
+        $this->postJson('/api/customer/payments/create-intent')
             ->assertUnauthorized();
     }
 
@@ -178,55 +175,45 @@ class CustomerPaymentsTest extends TestCase
             ->assertJsonPath('message', 'Restaurant not found.');
     }
 
-    public function test_create_intent_rejects_another_customers_order(): void
+    public function test_create_intent_rejects_when_customer_has_no_unpaid_orders(): void
     {
         $other = Customer::factory()->create();
-        $order = $this->order(customer: $other);
+        $this->order(customer: $other);
 
         $this->withHeaders($this->headers)
-            ->postJson('/api/customer/payments/create-intent', [
-                'order_id' => $order->order_public_id,
-                'customer_id' => (string) $this->customer->id,
-            ])
-            ->assertNotFound();
+            ->postJson('/api/customer/payments/create-intent')
+            ->assertStatus(422)
+            ->assertJsonPath('message', 'You have no unpaid orders to pay for.');
     }
 
-    public function test_create_intent_rejects_mismatched_customer_id(): void
+    public function test_create_intent_requires_active_table_session(): void
     {
-        $order = $this->order();
+        $this->order();
+        $this->session->update(['status' => 'closed']);
 
         $this->withHeaders($this->headers)
-            ->postJson('/api/customer/payments/create-intent', [
-                'order_id' => $order->order_public_id,
-                'customer_id' => '9999',
-            ])
+            ->postJson('/api/customer/payments/create-intent')
             ->assertStatus(422)
-            ->assertJsonValidationErrors('customer_id');
+            ->assertJsonPath('message', 'No active table session found.');
     }
 
     public function test_create_intent_rejects_already_paid_order(): void
     {
-        $order = $this->order(['payment_received' => true, 'payment_pending' => false]);
+        $this->order(['payment_received' => true, 'payment_pending' => false]);
 
         $this->withHeaders($this->headers)
-            ->postJson('/api/customer/payments/create-intent', [
-                'order_id' => $order->order_public_id,
-                'customer_id' => (string) $this->customer->id,
-            ])
+            ->postJson('/api/customer/payments/create-intent')
             ->assertStatus(422)
-            ->assertJsonPath('message', 'Order is already paid.');
+            ->assertJsonPath('message', 'You have no unpaid orders to pay for.');
     }
 
     public function test_create_intent_rejects_vendor_without_stripe_account(): void
     {
         $this->settings->update(['stripe_account_id' => null]);
-        $order = $this->order();
+        $this->order();
 
         $this->withHeaders($this->headers)
-            ->postJson('/api/customer/payments/create-intent', [
-                'order_id' => $order->order_public_id,
-                'customer_id' => (string) $this->customer->id,
-            ])
+            ->postJson('/api/customer/payments/create-intent')
             ->assertStatus(422)
             ->assertJsonPath('message', 'Stripe payments are not enabled for this restaurant.');
     }
@@ -255,10 +242,7 @@ class CustomerPaymentsTest extends TestCase
         ]);
 
         $response = $this->withHeaders($this->headers)
-            ->postJson('/api/customer/payments/create-intent', [
-                'order_id' => $order->order_public_id,
-                'customer_id' => (string) $this->customer->id,
-            ]);
+            ->postJson('/api/customer/payments/create-intent');
 
         $response->assertOk()
             ->assertJsonPath('clientSecret', 'pi_fake_1_secret_test')
@@ -288,17 +272,22 @@ class CustomerPaymentsTest extends TestCase
         ]);
     }
 
-    public function test_create_intent_accepts_numeric_order_id(): void
+    public function test_create_intent_covers_all_unpaid_session_orders(): void
     {
-        $order = $this->order();
+        $first = $this->order();
+        $second = $this->order();
 
         $this->withHeaders($this->headers)
-            ->postJson('/api/customer/payments/create-intent', [
-                'order_id' => $order->id,
-                'customer_id' => $this->customer->id,
-            ])
+            ->postJson('/api/customer/payments/create-intent')
             ->assertOk()
             ->assertJsonPath('paymentIntentId', 'pi_fake_1');
+
+        $this->assertSame(1200, $this->stripe->created[0]['amountMinor']);
+        $payment = OrderPayment::where('stripe_payment_intent_id', 'pi_fake_1')->firstOrFail();
+        $this->assertEqualsCanonicalizing(
+            [$first->id, $second->id],
+            $payment->orders->pluck('id')->all(),
+        );
     }
 
     public function test_update_intent_adds_tip_and_updates_payable_amount(): void
@@ -312,18 +301,13 @@ class CustomerPaymentsTest extends TestCase
         ]);
 
         $this->withHeaders($this->headers)
-            ->postJson('/api/customer/payments/create-intent', [
-                'order_id' => $order->order_public_id,
-                'customer_id' => $this->customer->id,
-            ])
+            ->postJson('/api/customer/payments/create-intent')
             ->assertOk()
             ->assertJsonPath('clientSecret', 'pi_fake_1_secret_test');
 
         $response = $this->withHeaders($this->headers)
             ->postJson('/api/customer/payments/update-intent', [
                 'payment_intent_id' => 'pi_fake_1_secret_test',
-                'order_id' => $order->order_public_id,
-                'customer_id' => $this->customer->id,
                 'tip_amount' => 5.00,
             ]);
 
@@ -353,20 +337,29 @@ class CustomerPaymentsTest extends TestCase
         ]);
     }
 
-    public function test_update_intent_rejects_mismatched_customer_id(): void
+    public function test_update_intent_rejects_another_customers_payment_intent(): void
     {
+        $other = Customer::factory()->create();
         $order = $this->order();
-        $this->payment($order, 'pi_existing');
+        OrderPayment::create([
+            'order_id' => $order->id,
+            'vendor_id' => $order->vendor_id,
+            'customer_id' => $other->id,
+            'table_scan_session_id' => $order->table_scan_session_id,
+            'stripe_account_id' => 'acct_test_123',
+            'stripe_payment_intent_id' => 'pi_foreign',
+            'amount' => 6,
+            'currency' => 'EUR',
+            'status' => 'processing',
+            'metadata' => [],
+        ]);
 
         $this->withHeaders($this->headers)
             ->postJson('/api/customer/payments/update-intent', [
-                'payment_intent_id' => 'pi_existing',
-                'order_id' => $order->order_public_id,
-                'customer_id' => 9999,
+                'payment_intent_id' => 'pi_foreign',
                 'tip_amount' => 5.00,
             ])
-            ->assertStatus(422)
-            ->assertJsonValidationErrors('customer_id');
+            ->assertNotFound();
     }
 
     public function test_verify_marks_order_paid_when_payment_intent_succeeded(): void
@@ -523,7 +516,7 @@ class CustomerPaymentsTest extends TestCase
         $this->assertFalse($order->fresh()->payment_received);
     }
 
-    public function test_customer_can_idempotently_assign_all_eligible_tablemate_orders(): void
+    public function test_customer_can_idempotently_assign_a_tablemate_order(): void
     {
         [$tablemate, $tablemateSession] = $this->tablemate();
         $first = $this->order([
@@ -538,14 +531,17 @@ class CustomerPaymentsTest extends TestCase
 
         foreach (range(1, 2) as $attempt) {
             $this->withHeaders($this->headers)
-                ->postJson('/api/customer/payments/pay-for', ['customer_id' => $tablemate->id])
+                ->postJson('/api/customer/payments/pay-for', [
+                    'customer_id' => $tablemate->id,
+                    'order_id' => $first->order_public_id,
+                ])
                 ->assertOk()
                 ->assertJsonPath('paid_by.id', $this->customer->id)
-                ->assertJsonPath('orders_count', 2);
+                ->assertJsonPath('orders_count', 1);
         }
 
         $this->assertSame($this->customer->id, $first->fresh()->paid_by);
-        $this->assertSame($this->customer->id, $second->fresh()->paid_by);
+        $this->assertNull($second->fresh()->paid_by);
 
         $history = $this->withHeaders($this->headers)
             ->getJson('/api/customer/table/history')
@@ -553,7 +549,66 @@ class CustomerPaymentsTest extends TestCase
 
         $tablematePayload = collect($history->json('people'))
             ->firstWhere('customer_id', $tablemate->id);
-        $this->assertSame($this->customer->id, $tablematePayload['orders'][0]['paid_by']['id']);
+        $assignedOrder = collect($tablematePayload['orders'])->firstWhere('id', $first->id);
+        $this->assertSame($this->customer->id, $assignedOrder['paid_by']['id']);
+    }
+
+    public function test_customer_can_assign_a_single_tablemate_order(): void
+    {
+        [$tablemate, $tablemateSession] = $this->tablemate();
+        $first = $this->order([
+            'table_scan_session_id' => $tablemateSession->id,
+            'payment_pending' => false,
+        ], $tablemate);
+        $second = $this->order([
+            'table_scan_session_id' => $tablemateSession->id,
+            'status' => Order::STATUS_IN_PROGRESS,
+            'payment_pending' => false,
+        ], $tablemate);
+
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/payments/pay-for', [
+                'customer_id' => $tablemate->id,
+                'order_id' => $first->order_public_id,
+            ])
+            ->assertOk()
+            ->assertJsonPath('paid_by.id', $this->customer->id)
+            ->assertJsonPath('orders_count', 1)
+            ->assertJsonPath('orders.0.id', $first->id);
+
+        $this->assertSame($this->customer->id, $first->fresh()->paid_by);
+        $this->assertNull($second->fresh()->paid_by);
+
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/payments/pay-for', [
+                'customer_id' => $tablemate->id,
+                'order_id' => $second->id,
+            ])
+            ->assertOk()
+            ->assertJsonPath('orders_count', 1)
+            ->assertJsonPath('orders.0.id', $second->id);
+
+        $this->assertSame($this->customer->id, $second->fresh()->paid_by);
+    }
+
+    public function test_single_order_assignment_rejects_ineligible_order(): void
+    {
+        [$tablemate, $tablemateSession] = $this->tablemate();
+        $this->order([
+            'table_scan_session_id' => $tablemateSession->id,
+            'payment_pending' => false,
+        ], $tablemate);
+        $ownOrder = $this->order(['payment_pending' => false]);
+
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/payments/pay-for', [
+                'customer_id' => $tablemate->id,
+                'order_id' => $ownOrder->order_public_id,
+            ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('order_id');
+
+        $this->assertNull($ownOrder->fresh()->paid_by);
     }
 
     public function test_assignment_rejects_another_payer_and_release_is_atomic_while_payment_is_active(): void
@@ -567,17 +622,17 @@ class CustomerPaymentsTest extends TestCase
         ], $tablemate);
 
         $this->withHeaders($this->headers)
-            ->postJson('/api/customer/payments/pay-for', ['customer_id' => $tablemate->id])
+            ->postJson('/api/customer/payments/pay-for', [
+                'customer_id' => $tablemate->id,
+                'order_id' => $targetOrder->order_public_id,
+            ])
             ->assertStatus(409);
 
         $targetOrder->update(['paid_by' => $this->customer->id]);
         $ownOrder = $this->order(['payment_pending' => false]);
 
         $this->withHeaders($this->headers)
-            ->postJson('/api/customer/payments/create-intent', [
-                'order_id' => $ownOrder->order_public_id,
-                'customer_id' => $this->customer->id,
-            ])
+            ->postJson('/api/customer/payments/create-intent')
             ->assertOk();
 
         $this->withHeaders($this->headers)
@@ -599,22 +654,19 @@ class CustomerPaymentsTest extends TestCase
         ], $tablemate);
 
         $this->withHeaders($this->headers)
-            ->postJson('/api/customer/payments/pay-for', ['customer_id' => $tablemate->id])
+            ->postJson('/api/customer/payments/pay-for', [
+                'customer_id' => $tablemate->id,
+                'order_id' => $coveredOrder->order_public_id,
+            ])
             ->assertOk();
 
         $this->withHeaders($this->headers)
-            ->postJson('/api/customer/payments/create-intent', [
-                'order_id' => $ownOrder->order_public_id,
-                'customer_id' => $this->customer->id,
-            ])
+            ->postJson('/api/customer/payments/create-intent')
             ->assertOk()
             ->assertJsonPath('paymentIntentId', 'pi_fake_1');
 
         $this->withHeaders($this->headers)
-            ->postJson('/api/customer/payments/create-intent', [
-                'order_id' => $ownOrder->order_public_id,
-                'customer_id' => $this->customer->id,
-            ])
+            ->postJson('/api/customer/payments/create-intent')
             ->assertOk()
             ->assertJsonPath('paymentIntentId', 'pi_fake_1');
 
@@ -657,7 +709,10 @@ class CustomerPaymentsTest extends TestCase
         ], $tablemate);
 
         $this->withHeaders($this->headers)
-            ->postJson('/api/customer/payments/pay-for', ['customer_id' => $tablemate->id])
+            ->postJson('/api/customer/payments/pay-for', [
+                'customer_id' => $tablemate->id,
+                'order_id' => $coveredOrder->order_public_id,
+            ])
             ->assertOk();
 
         $this->withHeaders($this->headers)
@@ -676,17 +731,12 @@ class CustomerPaymentsTest extends TestCase
 
         $this->app['auth']->forgetGuards();
         $this->withHeaders($this->headers)
-            ->postJson('/api/customer/payments/create-intent', [
-                'order_id' => $coveredOrder->order_public_id,
-                'customer_id' => $this->customer->id,
-            ])
+            ->postJson('/api/customer/payments/create-intent')
             ->assertOk();
 
         $this->withHeaders($this->headers)
             ->postJson('/api/customer/payments/update-intent', [
                 'payment_intent_id' => 'pi_fake_1',
-                'order_id' => $coveredOrder->order_public_id,
-                'customer_id' => $this->customer->id,
                 'tip_amount' => 2,
             ])
             ->assertStatus(422)
@@ -702,7 +752,10 @@ class CustomerPaymentsTest extends TestCase
         ], $tablemate);
 
         $this->withHeaders($this->headers)
-            ->postJson('/api/customer/payments/pay-for', ['customer_id' => $tablemate->id])
+            ->postJson('/api/customer/payments/pay-for', [
+                'customer_id' => $tablemate->id,
+                'order_id' => $order->order_public_id,
+            ])
             ->assertOk();
 
         $assignedNotifications = Notification::where('event', 'order_updated')
@@ -738,19 +791,33 @@ class CustomerPaymentsTest extends TestCase
         $this->withHeaders($this->headers)
             ->postJson('/api/customer/payments/pay-for', ['customer_id' => $this->customer->id])
             ->assertStatus(422)
+            ->assertJsonValidationErrors('order_id');
+
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/payments/pay-for', [
+                'customer_id' => $this->customer->id,
+                'order_id' => 'ord-any',
+            ])
+            ->assertStatus(422)
             ->assertJsonValidationErrors('customer_id');
 
         $outsideCustomer = Customer::factory()->create();
         $this->withHeaders($this->headers)
-            ->postJson('/api/customer/payments/pay-for', ['customer_id' => $outsideCustomer->id])
+            ->postJson('/api/customer/payments/pay-for', [
+                'customer_id' => $outsideCustomer->id,
+                'order_id' => 'ord-any',
+            ])
             ->assertStatus(422)
             ->assertJsonPath('message', 'The selected customer is not active at your table.');
 
         [$tablemate] = $this->tablemate();
         $this->withHeaders($this->headers)
-            ->postJson('/api/customer/payments/pay-for', ['customer_id' => $tablemate->id])
+            ->postJson('/api/customer/payments/pay-for', [
+                'customer_id' => $tablemate->id,
+                'order_id' => 'ord-any',
+            ])
             ->assertStatus(422)
-            ->assertJsonValidationErrors('customer_id');
+            ->assertJsonValidationErrors('order_id');
     }
 
     public function test_owner_cannot_create_intent_after_order_is_assigned(): void
@@ -766,10 +833,7 @@ class CustomerPaymentsTest extends TestCase
         $this->withHeaders([
             'Authorization' => "Bearer {$token}",
             'Accept' => 'application/json',
-        ])->postJson('/api/customer/payments/create-intent', [
-            'order_id' => $order->order_public_id,
-            'customer_id' => $tablemate->id,
-        ])
+        ])->postJson('/api/customer/payments/create-intent')
             ->assertStatus(409)
             ->assertJsonPath('message', 'This order is assigned to another payer.');
     }

@@ -424,6 +424,20 @@ class TableController extends Controller
         }
 
         $table->update(['call_waiter_at' => null]);
+
+        // Same customer-facing event as the customer-close and stale-expiry
+        // paths, so guests learn their session ended when staff closes the table.
+        NotificationService::notifyCustomers(
+            $result['sessions']->pluck('customer_id')->filter()->unique()->values(),
+            'session_expire',
+            'Your table session has been closed.',
+            $vendor->id,
+            [
+                'template' => 'session.closed',
+                'table_id' => $table->id,
+            ],
+        );
+
         $this->notifyTableChanged($request, $vendor, $table, false);
 
         return response()->json([

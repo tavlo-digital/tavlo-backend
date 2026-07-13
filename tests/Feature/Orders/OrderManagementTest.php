@@ -452,6 +452,47 @@ class OrderManagementTest extends TestCase
             ->assertJsonPath('sessions.0.orders.0.id', (string) $order->id);
     }
 
+    public function test_staff_close_table_notifies_session_customers_and_staff(): void
+    {
+        $secondCustomer = Customer::factory()->create();
+        $session = $this->scanSession();
+        $this->scanSession($secondCustomer);
+        $order = $this->order($session, [
+            'payment_pending' => false,
+            'payment_received' => true,
+        ]);
+        $this->cartItem($session, [
+            'order_id' => $order->id,
+            'served_at' => now(),
+        ]);
+
+        $waiterHeaders = $this->staffHeaders('waiter');
+        $this->staffHeaders('kitchen');
+
+        $this->postJson(
+            "/api/vendor/{$this->vendor->id}/tables/{$this->table->id}/close-session",
+            [],
+            $waiterHeaders
+        )->assertOk();
+
+        foreach ([$this->customer->id, $secondCustomer->id] as $customerId) {
+            $this->assertDatabaseHas('notifications', [
+                'customer_id' => $customerId,
+                'event' => 'session_expire',
+                'read' => false,
+            ]);
+        }
+
+        $staffRows = Notification::where('event', 'table_session_changed')
+            ->where('read', false)
+            ->get();
+        $this->assertTrue($staffRows->contains(fn (Notification $n) => $n->waiter_id !== null));
+        $this->assertTrue($staffRows->contains(fn (Notification $n) => $n->kitchen_id !== null));
+        $this->assertTrue($staffRows->contains(
+            fn (Notification $n) => $n->waiter_id === null && $n->kitchen_id === null && $n->customer_id === null
+        ));
+    }
+
     public function test_close_table_session_allows_fully_served_paid_orders(): void
     {
         $session = $this->scanSession();
