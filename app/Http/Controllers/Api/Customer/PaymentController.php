@@ -85,7 +85,6 @@ class PaymentController extends Controller
     public function payFor(Request $request): JsonResponse
     {
         $data = $request->validate([
-            'customer_id' => ['required', 'integer'],
             'order_id' => [
                 'required',
                 function (string $attribute, mixed $value, Closure $fail): void {
@@ -103,36 +102,20 @@ class PaymentController extends Controller
         ]);
 
         $payer = $request->user();
-        $targetCustomerId = (int) $data['customer_id'];
         $targetOrderId = (string) $data['order_id'];
-
-        if ($targetCustomerId === (int) $payer->id) {
-            throw ValidationException::withMessages([
-                'customer_id' => ['You cannot assign your own orders to yourself.'],
-            ]);
-        }
 
         $payerSession = $this->activeSession((int) $payer->id);
         if (! $payerSession) {
             return response()->json(['message' => 'No active table session found.'], 422);
         }
 
-        $targetSession = TableScanSession::with('customer:id,first_name,last_name')
-            ->where('customer_id', $targetCustomerId)
-            ->where('vendor_id', $payerSession->vendor_id)
+        $tableSessionIds = TableScanSession::where('vendor_id', $payerSession->vendor_id)
             ->where('restaurant_table_id', $payerSession->restaurant_table_id)
             ->where('status', 'active')
-            ->latest('scanned_at')
-            ->first();
+            ->pluck('id');
 
-        if (! $targetSession) {
-            return response()->json([
-                'message' => 'The selected customer is not active at your table.',
-            ], 422);
-        }
-
-        $orders = DB::transaction(function () use ($targetSession, $payer, $targetOrderId) {
-            $orders = Order::where('table_scan_session_id', $targetSession->id)
+        $orders = DB::transaction(function () use ($tableSessionIds, $payer, $payerSession, $targetOrderId) {
+            $orders = Order::whereIn('table_scan_session_id', $tableSessionIds)
                 ->whereNotIn('status', [Order::STATUS_DRAFT, Order::STATUS_CANCELLED])
                 ->where('payment_received', false)
                 ->where(function (Builder $match) use ($targetOrderId) {
@@ -147,7 +130,13 @@ class PaymentController extends Controller
 
             if ($orders->isEmpty()) {
                 throw ValidationException::withMessages([
-                    'order_id' => ['The selected order is not an eligible unpaid order for this customer.'],
+                    'order_id' => ['The selected order is not an eligible unpaid order at this table.'],
+                ]);
+            }
+
+            if ($orders->contains(fn (Order $o) => $o->table_scan_session_id === $payerSession->id)) {
+                throw ValidationException::withMessages([
+                    'order_id' => ['You cannot pay for your own order.'],
                 ]);
             }
 
@@ -167,8 +156,13 @@ class PaymentController extends Controller
             });
         });
 
+        $targetSession = TableScanSession::with('customer:id,first_name,last_name')
+            ->find($orders->first()->table_scan_session_id);
         $payerIdentity = $this->customerIdentity($payer);
-        $targetIdentity = $this->customerIdentity($targetSession->customer);
+        $targetName = $targetSession?->customer
+            ? $this->customerIdentity($targetSession->customer)['name']
+            : 'Waiter';
+
         $snapshots = Order::with('paidBy:id,first_name,last_name')
             ->whereIn('id', $orders->pluck('id'))
             ->get()
@@ -177,14 +171,13 @@ class PaymentController extends Controller
         NotificationService::notifyTableCustomers(
             $payerSession->restaurant_table_id,
             'order_updated',
-            "{$payerIdentity['name']} is paying for {$targetIdentity['name']}'s orders.",
+            "{$payerIdentity['name']} is paying for {$targetName}'s orders.",
             [
                 'template' => 'payment.assigned',
                 'customer_id' => $payer->id,
                 'payer_id' => $payer->id,
                 'payer_name' => $payerIdentity['name'],
-                'target_customer_id' => $targetCustomerId,
-                'customer_name' => $targetIdentity['name'],
+                'customer_name' => $targetName,
                 'order_ids' => $orders->pluck('id')->values()->all(),
                 'order_snapshots' => $snapshots,
             ],
@@ -203,9 +196,9 @@ class PaymentController extends Controller
     }
 
     /**
-     * DELETE /api/customer/payments/pay-for/{customerId}
+     * DELETE /api/customer/payments/pay-for/{orderId}
      */
-    public function releasePayFor(Request $request, int $customerId): JsonResponse
+    public function releasePayFor(Request $request, string $orderId): JsonResponse
     {
         $payer = $request->user();
         $payerSession = $this->activeSession((int) $payer->id);
@@ -214,35 +207,34 @@ class PaymentController extends Controller
             return response()->json(['message' => 'No active table session found.'], 422);
         }
 
-        $targetSession = TableScanSession::with('customer:id,first_name,last_name')
-            ->where('customer_id', $customerId)
-            ->where('vendor_id', $payerSession->vendor_id)
+        $tableSessionIds = TableScanSession::where('vendor_id', $payerSession->vendor_id)
             ->where('restaurant_table_id', $payerSession->restaurant_table_id)
             ->where('status', 'active')
-            ->latest('scanned_at')
-            ->first();
+            ->pluck('id');
 
-        if (! $targetSession) {
-            return response()->json([
-                'message' => 'The selected customer is not active at your table.',
-            ], 422);
-        }
-
-        $releasedCount = DB::transaction(function () use ($targetSession, $payer) {
-            $orders = Order::where('table_scan_session_id', $targetSession->id)
+        $result = DB::transaction(function () use ($tableSessionIds, $payer, $orderId) {
+            $query = Order::whereIn('table_scan_session_id', $tableSessionIds)
                 ->where('paid_by', $payer->id)
-                ->where('payment_received', false)
-                ->lockForUpdate()
-                ->get();
+                ->where('payment_received', false);
+
+            $query->where(function (Builder $match) use ($orderId) {
+                $match->where('order_public_id', $orderId);
+
+                if (ctype_digit($orderId)) {
+                    $match->orWhere('id', (int) $orderId);
+                }
+            });
+
+            $orders = $query->lockForUpdate()->get();
 
             if ($orders->isEmpty()) {
-                return 0;
+                return null;
             }
 
             $hasActivePayment = OrderPayment::whereNotIn('status', self::TERMINAL_PAYMENT_STATUSES)
-                ->where(function (Builder $query) use ($orders) {
+                ->where(function (Builder $q) use ($orders) {
                     $orderIds = $orders->pluck('id');
-                    $query->whereIn('order_id', $orderIds)
+                    $q->whereIn('order_id', $orderIds)
                         ->orWhereHas('orders', fn (Builder $covered) => $covered->whereIn('orders.id', $orderIds));
                 })
                 ->exists();
@@ -251,32 +243,36 @@ class PaymentController extends Controller
                 abort(409, 'Orders with an active payment cannot be released.');
             }
 
-            return Order::whereIn('id', $orders->pluck('id'))
+            Order::whereIn('id', $orders->pluck('id'))
                 ->update(['paid_by' => null]);
+
+            return $orders;
         });
 
-        if ($releasedCount > 0) {
+        if ($result && $result->isNotEmpty()) {
+            $targetSession = TableScanSession::with('customer:id,first_name,last_name')
+                ->find($result->first()->table_scan_session_id);
             $payerIdentity = $this->customerIdentity($payer);
-            $targetIdentity = $this->customerIdentity($targetSession->customer);
+            $targetName = $targetSession?->customer
+                ? $this->customerIdentity($targetSession->customer)['name']
+                : 'Waiter';
+
             $releasedSnapshots = Order::with('paidBy:id,first_name,last_name')
-                ->where('table_scan_session_id', $targetSession->id)
-                ->where('payment_received', false)
-                ->whereNull('paid_by')
+                ->whereIn('id', $result->pluck('id'))
                 ->get()
                 ->map(fn (Order $o) => NotificationService::orderSnapshot($o))
                 ->values()->all();
             NotificationService::notifyTableCustomers(
                 $payerSession->restaurant_table_id,
                 'order_updated',
-                "{$payerIdentity['name']} is no longer paying for {$targetIdentity['name']}'s orders.",
+                "{$payerIdentity['name']} is no longer paying for {$targetName}'s orders.",
                 [
                     'template' => 'payment.assignment_released',
                     'customer_id' => $payer->id,
                     'payer_id' => $payer->id,
                     'payer_name' => $payerIdentity['name'],
-                    'target_customer_id' => $customerId,
-                    'customer_name' => $targetIdentity['name'],
-                    'released_orders_count' => $releasedCount,
+                    'customer_name' => $targetName,
+                    'released_orders_count' => $result->count(),
                     'order_snapshots' => $releasedSnapshots,
                 ],
                 false,
@@ -285,7 +281,7 @@ class PaymentController extends Controller
 
         return response()->json([
             'message' => 'Payment assignment released.',
-            'released_orders_count' => $releasedCount,
+            'released_orders_count' => $result ? $result->count() : 0,
         ]);
     }
 

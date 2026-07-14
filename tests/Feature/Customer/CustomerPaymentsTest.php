@@ -532,7 +532,6 @@ class CustomerPaymentsTest extends TestCase
         foreach (range(1, 2) as $attempt) {
             $this->withHeaders($this->headers)
                 ->postJson('/api/customer/payments/pay-for', [
-                    'customer_id' => $tablemate->id,
                     'order_id' => $first->order_public_id,
                 ])
                 ->assertOk()
@@ -568,7 +567,6 @@ class CustomerPaymentsTest extends TestCase
 
         $this->withHeaders($this->headers)
             ->postJson('/api/customer/payments/pay-for', [
-                'customer_id' => $tablemate->id,
                 'order_id' => $first->order_public_id,
             ])
             ->assertOk()
@@ -581,7 +579,6 @@ class CustomerPaymentsTest extends TestCase
 
         $this->withHeaders($this->headers)
             ->postJson('/api/customer/payments/pay-for', [
-                'customer_id' => $tablemate->id,
                 'order_id' => $second->id,
             ])
             ->assertOk()
@@ -602,7 +599,6 @@ class CustomerPaymentsTest extends TestCase
 
         $this->withHeaders($this->headers)
             ->postJson('/api/customer/payments/pay-for', [
-                'customer_id' => $tablemate->id,
                 'order_id' => $ownOrder->order_public_id,
             ])
             ->assertStatus(422)
@@ -623,7 +619,6 @@ class CustomerPaymentsTest extends TestCase
 
         $this->withHeaders($this->headers)
             ->postJson('/api/customer/payments/pay-for', [
-                'customer_id' => $tablemate->id,
                 'order_id' => $targetOrder->order_public_id,
             ])
             ->assertStatus(409);
@@ -636,7 +631,7 @@ class CustomerPaymentsTest extends TestCase
             ->assertOk();
 
         $this->withHeaders($this->headers)
-            ->deleteJson("/api/customer/payments/pay-for/{$tablemate->id}")
+            ->deleteJson("/api/customer/payments/pay-for/{$targetOrder->order_public_id}")
             ->assertStatus(409);
 
         $this->assertSame($this->customer->id, $targetOrder->fresh()->paid_by);
@@ -655,7 +650,6 @@ class CustomerPaymentsTest extends TestCase
 
         $this->withHeaders($this->headers)
             ->postJson('/api/customer/payments/pay-for', [
-                'customer_id' => $tablemate->id,
                 'order_id' => $coveredOrder->order_public_id,
             ])
             ->assertOk();
@@ -751,7 +745,6 @@ class CustomerPaymentsTest extends TestCase
 
         $this->withHeaders($this->headers)
             ->postJson('/api/customer/payments/pay-for', [
-                'customer_id' => $tablemate->id,
                 'order_id' => $coveredOrder->order_public_id,
             ])
             ->assertOk();
@@ -840,7 +833,6 @@ class CustomerPaymentsTest extends TestCase
 
         $this->withHeaders($this->headers)
             ->postJson('/api/customer/payments/pay-for', [
-                'customer_id' => $tablemate->id,
                 'order_id' => $coveredOrder->order_public_id,
             ])
             ->assertOk();
@@ -883,7 +875,6 @@ class CustomerPaymentsTest extends TestCase
 
         $this->withHeaders($this->headers)
             ->postJson('/api/customer/payments/pay-for', [
-                'customer_id' => $tablemate->id,
                 'order_id' => $order->order_public_id,
             ])
             ->assertOk();
@@ -899,7 +890,7 @@ class CustomerPaymentsTest extends TestCase
         );
 
         $this->withHeaders($this->headers)
-            ->deleteJson("/api/customer/payments/pay-for/{$tablemate->id}")
+            ->deleteJson("/api/customer/payments/pay-for/{$order->order_public_id}")
             ->assertOk()
             ->assertJsonPath('released_orders_count', 1);
 
@@ -916,35 +907,24 @@ class CustomerPaymentsTest extends TestCase
         );
     }
 
-    public function test_assignment_rejects_self_customer_outside_table_and_no_eligible_orders(): void
+    public function test_assignment_rejects_own_order_and_nonexistent_order(): void
     {
         $this->withHeaders($this->headers)
-            ->postJson('/api/customer/payments/pay-for', ['customer_id' => $this->customer->id])
+            ->postJson('/api/customer/payments/pay-for', [])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('order_id');
+
+        $ownOrder = $this->order(['payment_pending' => false]);
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/payments/pay-for', [
+                'order_id' => $ownOrder->order_public_id,
+            ])
             ->assertStatus(422)
             ->assertJsonValidationErrors('order_id');
 
         $this->withHeaders($this->headers)
             ->postJson('/api/customer/payments/pay-for', [
-                'customer_id' => $this->customer->id,
-                'order_id' => 'ord-any',
-            ])
-            ->assertStatus(422)
-            ->assertJsonValidationErrors('customer_id');
-
-        $outsideCustomer = Customer::factory()->create();
-        $this->withHeaders($this->headers)
-            ->postJson('/api/customer/payments/pay-for', [
-                'customer_id' => $outsideCustomer->id,
-                'order_id' => 'ord-any',
-            ])
-            ->assertStatus(422)
-            ->assertJsonPath('message', 'The selected customer is not active at your table.');
-
-        [$tablemate] = $this->tablemate();
-        $this->withHeaders($this->headers)
-            ->postJson('/api/customer/payments/pay-for', [
-                'customer_id' => $tablemate->id,
-                'order_id' => 'ord-any',
+                'order_id' => 'ord-nonexistent',
             ])
             ->assertStatus(422)
             ->assertJsonValidationErrors('order_id');

@@ -116,7 +116,7 @@ Route::middleware(['auth:customer', 'track.session.activity'])->group(function (
 
     // Stripe Elements Payments
     Route::post('payments/pay-for', [PaymentController::class, 'payFor'])->name('payments.pay-for');
-    Route::delete('payments/pay-for/{customerId}', [PaymentController::class, 'releasePayFor'])->name('payments.pay-for.release');
+    Route::delete('payments/pay-for/{orderId}', [PaymentController::class, 'releasePayFor'])->name('payments.pay-for.release');
     Route::post('payments/request-cash', [PaymentController::class, 'requestCash'])->name('payments.request-cash');
     Route::post('payments/create-intent', [PaymentController::class, 'createIntent'])->name('payments.create-intent');
     Route::post('payments/update-intent', [PaymentController::class, 'updateIntent'])->name('payments.update-intent');
