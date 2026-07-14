@@ -687,6 +687,258 @@ class CustomerPaymentsTest extends TestCase
         $this->assertNotContains('pi_fake_1', $this->stripe->canceled);
     }
 
+    public function test_share_while_covered_creates_side_order_payable_by_sharer(): void
+    {
+        [$tablemate, $tablemateSession] = $this->tablemate();
+
+        // My order (own burger, €6) is covered by the tablemate.
+        $myOrder = $this->order([
+            'paid_by' => $tablemate->id,
+            'payment_pending' => false,
+        ]);
+        CartItem::create([
+            'table_scan_session_id' => $this->session->id,
+            'menu_item_id' => $this->menuItem->id,
+            'order_id' => $myOrder->id,
+            'quantity' => 1,
+        ]);
+
+        // The tablemate's order with their own burger (€6) that I opt into.
+        $mateOrder = $this->order([
+            'table_scan_session_id' => $tablemateSession->id,
+            'payment_pending' => false,
+        ], $tablemate);
+        $sharedItem = CartItem::create([
+            'table_scan_session_id' => $tablemateSession->id,
+            'menu_item_id' => $this->menuItem->id,
+            'order_id' => $mateOrder->id,
+            'quantity' => 1,
+        ]);
+
+        $this->withHeaders($this->headers)
+            ->putJson("/api/customer/table/order/update/{$myOrder->id}", [
+                'shared_item' => $sharedItem->id,
+            ])
+            ->assertOk();
+
+        $sideOrder = Order::where('parent_order_id', $myOrder->id)->first();
+        $this->assertNotNull($sideOrder);
+        $this->assertSame($this->customer->id, $sideOrder->customer_id);
+        $this->assertNull($sideOrder->paid_by);
+        // My share attaches to the side order, not to the covered order.
+        $this->assertSame([$sideOrder->id], array_map('intval', $sharedItem->fresh()->shared_order_ids));
+        $this->assertSame(3.3, (float) $sideOrder->fresh()->amount);
+        // The covered order keeps only my own items — the payer's total is untouched.
+        $this->assertSame(6.6, (float) $myOrder->fresh()->amount);
+        $this->assertSame(3.3, (float) $mateOrder->fresh()->amount);
+    }
+
+    public function test_pay_for_moves_existing_opt_in_shares_to_side_order(): void
+    {
+        [$tablemate, $tablemateSession] = $this->tablemate();
+
+        $myOrder = $this->order(['payment_pending' => false]);
+        CartItem::create([
+            'table_scan_session_id' => $this->session->id,
+            'menu_item_id' => $this->menuItem->id,
+            'order_id' => $myOrder->id,
+            'quantity' => 1,
+        ]);
+
+        // Before any coverage, my opt-in share of the tablemate's burger is
+        // folded into my own order.
+        $mateOrder = $this->order([
+            'table_scan_session_id' => $tablemateSession->id,
+            'amount' => 3,
+            'payment_pending' => false,
+        ], $tablemate);
+        $sharedItem = CartItem::create([
+            'table_scan_session_id' => $tablemateSession->id,
+            'menu_item_id' => $this->menuItem->id,
+            'order_id' => $mateOrder->id,
+            'quantity' => 1,
+            'shared_order_ids' => [$myOrder->id],
+        ]);
+        $myOrder->update(['amount' => 9]);
+
+        $mateToken = $tablemate->createToken('test', ['role:customer'])->plainTextToken;
+        $mateHeaders = ['Authorization' => "Bearer {$mateToken}", 'Accept' => 'application/json'];
+
+        $this->withHeaders($mateHeaders)
+            ->postJson('/api/customer/payments/pay-for', [
+                'order_id' => $myOrder->order_public_id,
+            ])
+            ->assertOk();
+
+        $sideOrder = Order::where('parent_order_id', $myOrder->id)->first();
+        $this->assertNotNull($sideOrder);
+        $this->assertSame([$sideOrder->id], array_map('intval', $sharedItem->fresh()->shared_order_ids));
+        // Covered order drops back to my own items; my share stays mine.
+        $this->assertSame(6.6, (float) $myOrder->fresh()->amount);
+        $this->assertSame(3.3, (float) $sideOrder->fresh()->amount);
+        $this->assertSame($tablemate->id, $myOrder->fresh()->paid_by);
+        $this->assertNull($sideOrder->fresh()->paid_by);
+
+        // The payer is charged for their own share + my own items only
+        // (3.30 + 6.60 gross, incl. 10% AT food VAT).
+        $this->withHeaders($mateHeaders)
+            ->postJson('/api/customer/payments/create-intent')
+            ->assertOk();
+        $this->assertSame(990, $this->stripe->created[0]['amountMinor']);
+    }
+
+    public function test_release_merges_unpaid_side_order_back_into_main_order(): void
+    {
+        [$tablemate] = $this->tablemate();
+
+        $myOrder = $this->order([
+            'paid_by' => $tablemate->id,
+            'payment_pending' => false,
+        ]);
+        CartItem::create([
+            'table_scan_session_id' => $this->session->id,
+            'menu_item_id' => $this->menuItem->id,
+            'order_id' => $myOrder->id,
+            'quantity' => 1,
+        ]);
+
+        $sideOrder = $this->order([
+            'parent_order_id' => $myOrder->id,
+            'amount' => 3,
+            'payment_pending' => false,
+        ]);
+        $sharedItem = CartItem::create([
+            'table_scan_session_id' => TableScanSession::where('customer_id', $tablemate->id)->value('id'),
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 1,
+            'shared_order_ids' => [$sideOrder->id],
+        ]);
+
+        $mateToken = $tablemate->createToken('test', ['role:customer'])->plainTextToken;
+
+        $this->withHeaders(['Authorization' => "Bearer {$mateToken}", 'Accept' => 'application/json'])
+            ->deleteJson("/api/customer/payments/pay-for/{$myOrder->order_public_id}")
+            ->assertOk()
+            ->assertJsonPath('released_orders_count', 1);
+
+        $this->assertNull($myOrder->fresh()->paid_by);
+        $this->assertDatabaseMissing('orders', ['id' => $sideOrder->id]);
+        $this->assertSame([$myOrder->id], array_map('intval', $sharedItem->fresh()->shared_order_ids));
+        // Own burger (6.60 gross) + merged-back share (3.30).
+        $this->assertSame(9.9, (float) $myOrder->fresh()->amount);
+    }
+
+    public function test_side_orders_cannot_be_covered_by_pay_for(): void
+    {
+        [$tablemate] = $this->tablemate();
+
+        $myOrder = $this->order([
+            'paid_by' => $tablemate->id,
+            'payment_pending' => false,
+        ]);
+        $sideOrder = $this->order([
+            'parent_order_id' => $myOrder->id,
+            'amount' => 3,
+            'payment_pending' => false,
+        ]);
+
+        $mateToken = $tablemate->createToken('test', ['role:customer'])->plainTextToken;
+
+        $this->withHeaders(['Authorization' => "Bearer {$mateToken}", 'Accept' => 'application/json'])
+            ->postJson('/api/customer/payments/pay-for', [
+                'order_id' => $sideOrder->order_public_id,
+            ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('order_id');
+
+        $this->assertNull($sideOrder->fresh()->paid_by);
+    }
+
+    public function test_covered_customer_create_intent_pays_only_their_side_order(): void
+    {
+        [$tablemate, $tablemateSession] = $this->tablemate();
+
+        $myOrder = $this->order([
+            'paid_by' => $tablemate->id,
+            'payment_pending' => false,
+        ]);
+        CartItem::create([
+            'table_scan_session_id' => $this->session->id,
+            'menu_item_id' => $this->menuItem->id,
+            'order_id' => $myOrder->id,
+            'quantity' => 1,
+        ]);
+
+        $mateOrder = $this->order([
+            'table_scan_session_id' => $tablemateSession->id,
+            'amount' => 3,
+            'payment_pending' => false,
+        ], $tablemate);
+        $sideOrder = $this->order([
+            'parent_order_id' => $myOrder->id,
+            'amount' => 3,
+            'payment_pending' => false,
+        ]);
+        CartItem::create([
+            'table_scan_session_id' => $tablemateSession->id,
+            'menu_item_id' => $this->menuItem->id,
+            'order_id' => $mateOrder->id,
+            'quantity' => 1,
+            'shared_order_ids' => [$sideOrder->id],
+        ]);
+
+        $response = $this->withHeaders($this->headers)
+            ->postJson('/api/customer/payments/create-intent')
+            ->assertOk();
+
+        // Only the side order (my €3.30 gross share) is payable by me — not
+        // the covered main order.
+        $this->assertSame(330, $this->stripe->created[0]['amountMinor']);
+        $coveredIds = OrderPayment::where('stripe_payment_intent_id', $response->json('paymentIntentId'))
+            ->first()
+            ->orders()
+            ->pluck('orders.id')
+            ->all();
+        $this->assertSame([$sideOrder->id], $coveredIds);
+    }
+
+    public function test_unshare_deletes_empty_side_order(): void
+    {
+        [$tablemate, $tablemateSession] = $this->tablemate();
+
+        $myOrder = $this->order([
+            'paid_by' => $tablemate->id,
+            'payment_pending' => false,
+        ]);
+        $mateOrder = $this->order([
+            'table_scan_session_id' => $tablemateSession->id,
+            'amount' => 3,
+            'payment_pending' => false,
+        ], $tablemate);
+        $sideOrder = $this->order([
+            'parent_order_id' => $myOrder->id,
+            'amount' => 3,
+            'payment_pending' => false,
+        ]);
+        $sharedItem = CartItem::create([
+            'table_scan_session_id' => $tablemateSession->id,
+            'menu_item_id' => $this->menuItem->id,
+            'order_id' => $mateOrder->id,
+            'quantity' => 1,
+            'shared_order_ids' => [$sideOrder->id],
+        ]);
+
+        $this->withHeaders($this->headers)
+            ->putJson("/api/customer/table/order/update/{$sideOrder->id}", [
+                'unshared_item' => $sharedItem->id,
+            ])
+            ->assertOk();
+
+        $this->assertSame([], array_map('intval', $sharedItem->fresh()->shared_order_ids ?? []));
+        $this->assertDatabaseMissing('orders', ['id' => $sideOrder->id]);
+        $this->assertSame(6.6, (float) $mateOrder->fresh()->amount);
+    }
+
     public function test_create_intent_replaces_stale_intent_when_payable_set_changes(): void
     {
         [$tablemate, $tablemateSession] = $this->tablemate();

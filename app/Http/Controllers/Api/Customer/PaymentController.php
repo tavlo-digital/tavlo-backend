@@ -10,6 +10,7 @@ use App\Models\StripeWebhookLog;
 use App\Models\TableScanSession;
 use App\Models\Vendor;
 use App\Services\NotificationService;
+use App\Services\ShareOrderService;
 use App\Services\StripePaymentService;
 use App\Services\TaxCalculationService;
 use Closure;
@@ -114,7 +115,7 @@ class PaymentController extends Controller
             ->where('status', 'active')
             ->pluck('id');
 
-        $orders = DB::transaction(function () use ($tableSessionIds, $payer, $payerSession, $targetOrderId) {
+        $result = DB::transaction(function () use ($tableSessionIds, $payer, $payerSession, $targetOrderId) {
             $orders = Order::whereIn('table_scan_session_id', $tableSessionIds)
                 ->whereNotIn('status', [Order::STATUS_DRAFT, Order::STATUS_CANCELLED])
                 ->where('payment_received', false)
@@ -134,6 +135,12 @@ class PaymentController extends Controller
                 ]);
             }
 
+            if ($orders->contains(fn (Order $o) => $o->parent_order_id !== null)) {
+                throw ValidationException::withMessages([
+                    'order_id' => ['Personal share orders cannot be covered.'],
+                ]);
+            }
+
             if ($orders->contains(fn (Order $o) => $o->table_scan_session_id === $payerSession->id)) {
                 throw ValidationException::withMessages([
                     'order_id' => ['You cannot pay for your own order.'],
@@ -149,12 +156,26 @@ class PaymentController extends Controller
                 ->whereNull('paid_by')
                 ->update(['paid_by' => $payer->id]);
 
-            return $orders->map(function (Order $order) use ($payer) {
-                $order->paid_by = $payer->id;
+            // The owner's personal opt-in shares move to their side order so
+            // the payer covers only the owner's own items.
+            $affectedOrderIds = $orders->pluck('id');
+            foreach ($orders as $order) {
+                $side = ShareOrderService::moveOptInShares($order);
+                if ($side) {
+                    $affectedOrderIds->push($side->id);
+                }
+            }
 
-                return $order;
-            });
+            return [
+                'orders' => $orders->map(function (Order $order) use ($payer) {
+                    $order->paid_by = $payer->id;
+
+                    return $order;
+                }),
+                'affected_order_ids' => $affectedOrderIds->unique()->values(),
+            ];
         });
+        $orders = $result['orders'];
 
         $targetSession = TableScanSession::with('customer:id,first_name,last_name')
             ->find($orders->first()->table_scan_session_id);
@@ -164,7 +185,7 @@ class PaymentController extends Controller
             : 'Waiter';
 
         $snapshots = Order::with('paidBy:id,first_name,last_name')
-            ->whereIn('id', $orders->pluck('id'))
+            ->whereIn('id', $result['affected_order_ids'])
             ->get()
             ->map(fn (Order $o) => NotificationService::orderSnapshot($o))
             ->values()->all();
@@ -283,12 +304,23 @@ class PaymentController extends Controller
             Order::whereIn('id', $orders->pluck('id'))
                 ->update(['paid_by' => null]);
 
+            // Shares the owner opted into while covered live on a side order;
+            // with the coverage gone they fold back into the main order.
+            $removedOrderIds = collect();
+            foreach ($orders as $order) {
+                $mergedSideId = ShareOrderService::mergeBack($order);
+                if ($mergedSideId) {
+                    $removedOrderIds->push($mergedSideId);
+                }
+            }
+
             return [
                 'released' => $orders,
                 'affected_order_ids' => $orders->pluck('id')
                     ->merge($pendingResetOrderIds)
                     ->unique()
                     ->values(),
+                'removed_order_ids' => $removedOrderIds->values(),
             ];
         });
 
@@ -318,6 +350,7 @@ class PaymentController extends Controller
                     'customer_name' => $targetName,
                     'released_orders_count' => $released->count(),
                     'order_snapshots' => $releasedSnapshots,
+                    'removed_order_ids' => $result['removed_order_ids']->all(),
                 ],
                 false,
             );

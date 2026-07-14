@@ -11,6 +11,7 @@ use App\Models\Vendor;
 use App\Services\LocaleService;
 use App\Services\MenuCustomizationService;
 use App\Services\NotificationService;
+use App\Services\ShareOrderService;
 use App\Services\TaxCalculationService;
 use App\Services\VendorDateTimeService;
 use Illuminate\Http\JsonResponse;
@@ -721,24 +722,37 @@ class CartController extends Controller
                 }
             }
 
+            // When my order is covered by another payer, my opt-in share must
+            // stay payable by me: it attaches to my side order instead of the
+            // covered order, so the payer keeps covering only my own items.
+            $isCoveredByOther = $order->paid_by !== null && (int) $order->paid_by !== (int) $customerId;
+            $existingSideOrderId = $isCoveredByOther
+                ? Order::where('parent_order_id', $order->id)->where('payment_received', false)->value('id')
+                : null;
+            $myShareOrderIds = array_values(array_filter([$order->id, $existingSideOrderId]));
+
             $existingSharedOrderIds = array_map('intval', is_array($cartItem->shared_order_ids) ? $cartItem->shared_order_ids : []);
-            if (in_array($order->id, $existingSharedOrderIds, true)) {
+            if (array_intersect($myShareOrderIds, $existingSharedOrderIds) !== []) {
                 return response()->json([
                     'message' => 'This item is already shared with your order.',
                 ], 422);
             }
 
-            DB::transaction(function () use ($cartItem, $order) {
+            $targetOrderId = DB::transaction(function () use ($cartItem, $order, $isCoveredByOther, $myShareOrderIds) {
+                $target = $isCoveredByOther ? ShareOrderService::sideOrderFor($order) : $order;
                 $locked = CartItem::where('id', $cartItem->id)->lockForUpdate()->first();
-                $existing = is_array($locked->shared_order_ids) ? $locked->shared_order_ids : [];
-                if (in_array($order->id, array_map('intval', $existing), true)) {
+                $existing = array_map('intval', is_array($locked->shared_order_ids) ? $locked->shared_order_ids : []);
+                if (array_intersect([...$myShareOrderIds, $target->id], $existing) !== []) {
                     throw ValidationException::withMessages([
                         'shared_item' => ['This item is already shared with your order.'],
                     ]);
                 }
-                $updated = array_values(array_unique(array_map('intval', array_merge($existing, [$order->id]))));
+                $updated = array_values(array_unique(array_merge($existing, [$target->id])));
                 $locked->update(['shared_order_ids' => $updated]);
+
+                return $target->id;
             });
+            $affectedOrderIds->push($targetOrderId);
 
             $cartItem->refresh();
             $freshIds = array_map('intval', is_array($cartItem->shared_order_ids) ? $cartItem->shared_order_ids : []);
@@ -807,6 +821,14 @@ class CartController extends Controller
                 'amount' => round($itemsTotal + $serviceFee, 2),
                 'service_fee' => $serviceFee,
             ]);
+        }
+
+        // A side order that lost its last share reference has no reason to
+        // exist anymore.
+        foreach ($ordersToRecalc as $affectedOrder) {
+            if ($affectedOrder->parent_order_id) {
+                ShareOrderService::deleteIfEmpty($affectedOrder);
+            }
         }
 
         $customerName = $this->customerName($request->user());
@@ -1286,6 +1308,7 @@ class CartController extends Controller
         return [
             'id' => $o->id,
             'order_public_id' => $o->order_public_id,
+            'parent_order_id' => $o->parent_order_id,
             'customer_id' => $o->customer_id,
             'paid_by' => $o->paidBy ? [
                 'id' => $o->paidBy->id,

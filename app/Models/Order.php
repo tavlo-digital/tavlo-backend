@@ -62,6 +62,8 @@ class Order extends Model
         // attribution
         'placed_by',
         'placed_by_team_member_id',
+        // side order holding a covered customer's personal opt-in shares
+        'parent_order_id',
     ];
 
     protected function casts(): array
@@ -136,5 +138,15 @@ class Order extends Model
     public function review(): HasOne
     {
         return $this->hasOne(Review::class);
+    }
+
+    public function parentOrder(): BelongsTo
+    {
+        return $this->belongsTo(self::class, 'parent_order_id');
+    }
+
+    public function shareOrder(): HasOne
+    {
+        return $this->hasOne(self::class, 'parent_order_id');
     }
 }
