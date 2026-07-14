@@ -592,6 +592,11 @@ class CartController extends Controller
         if ($existingOrder) {
             $existingOrder->update(['amount' => $myTotal]);
 
+            $history = $this->buildTableHistoryResponse($mySession, $request);
+
+            $personSnapshot = collect($history['people'])
+                ->first(fn (array $p) => $p['session_id'] === $mySession->id);
+
             NotificationService::notifyTableCustomers(
                 $mySession->restaurant_table_id,
                 'order_updated',
@@ -602,10 +607,11 @@ class CartController extends Controller
                     'customer_name' => $customerName,
                     'order_id' => $existingOrder->id,
                     'order_snapshots' => [NotificationService::orderSnapshot($existingOrder->fresh()->load('paidBy'))],
+                    'person_snapshot' => $personSnapshot,
                 ],
             );
 
-            return response()->json($this->buildTableHistoryResponse($mySession, $request));
+            return response()->json($history);
         }
 
         DB::transaction(function () use ($request, $mySession, $myTotal) {
@@ -632,6 +638,11 @@ class CartController extends Controller
             ->latest()
             ->first();
 
+        $history = $this->buildTableHistoryResponse($mySession, $request);
+
+        $personSnapshot = collect($history['people'])
+            ->first(fn (array $p) => $p['session_id'] === $mySession->id);
+
         NotificationService::notifyTableCustomers(
             $mySession->restaurant_table_id,
             'order_updated',
@@ -643,10 +654,11 @@ class CartController extends Controller
                 'order_snapshots' => $freshDraft
                     ? [NotificationService::orderSnapshot($freshDraft)]
                     : [],
+                'person_snapshot' => $personSnapshot,
             ],
         );
 
-        return response()->json($this->buildTableHistoryResponse($mySession, $request), 201);
+        return response()->json($history, 201);
     }
 
     /**
@@ -944,6 +956,11 @@ class CartController extends Controller
             return $targetOrder->fresh();
         });
 
+        $history = $this->buildTableHistoryResponse($mySession, $request);
+
+        $personSnapshot = collect($history['people'])
+            ->first(fn (array $p) => $p['session_id'] === $mySession->id);
+
         $customerName = $this->customerName($request->user());
         NotificationService::notifyTableCustomers(
             $mySession->restaurant_table_id,
@@ -955,6 +972,7 @@ class CartController extends Controller
                 'customer_name' => $customerName,
                 'order_id' => $order->id,
                 'order_snapshots' => [NotificationService::orderSnapshot($order->load('paidBy'), true)],
+                'person_snapshot' => $personSnapshot,
             ],
             false,
         );
@@ -976,7 +994,7 @@ class CartController extends Controller
             ],
         );
 
-        return response()->json($this->buildTableHistoryResponse($mySession, $request));
+        return response()->json($history);
     }
 
     /**
