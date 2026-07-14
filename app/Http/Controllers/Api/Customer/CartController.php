@@ -160,17 +160,12 @@ class CartController extends Controller
     }
 
     /**
-     * Realtime metadata for cart_updated events: the fresh cart payload so
-     * customer clients can apply it directly instead of refetching. Omitted
-     * when too large for a realtime message — clients fall back to refetching.
+     * Realtime metadata containing the fresh cart payload so customer clients
+     * can apply it directly without another network request.
      */
     private function realtimeCartMetadata(TableScanSession $mySession, Request $request): array
     {
         $cart = $this->buildCartPayload($mySession, $request);
-
-        if (strlen(json_encode($cart)) > 8000) {
-            return [];
-        }
 
         return [
             'cart' => $cart,
@@ -820,6 +815,18 @@ class CartController extends Controller
             ->get()
             ->map(fn (Order $o) => NotificationService::orderSnapshot($o))
             ->values()->all();
+        $history = $this->buildTableHistoryResponse($mySession, $request);
+        $affectedSessionIds = $ordersToRecalc
+            ->pluck('table_scan_session_id')
+            ->filter()
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+        $personSnapshots = collect($history['people'])
+            ->filter(fn (array $person) => in_array((int) $person['session_id'], $affectedSessionIds, true))
+            ->values()
+            ->all();
         NotificationService::notifyTableCustomers(
             $mySession->restaurant_table_id,
             'order_updated',
@@ -830,10 +837,11 @@ class CartController extends Controller
                 'customer_name' => $customerName,
                 'order_id' => $order->id,
                 'order_snapshots' => $snapshots,
+                'person_snapshots' => $personSnapshots,
             ],
         );
 
-        return response()->json($this->buildTableHistoryResponse($mySession, $request));
+        return response()->json($history);
     }
 
     /**
@@ -973,6 +981,7 @@ class CartController extends Controller
                 'order_id' => $order->id,
                 'order_snapshots' => [NotificationService::orderSnapshot($order->load('paidBy'), true)],
                 'person_snapshot' => $personSnapshot,
+                ...$this->realtimeCartMetadata($mySession, $request),
             ],
             false,
         );
