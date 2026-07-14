@@ -120,6 +120,8 @@ Route::middleware(['auth:customer', 'track.session.activity'])->group(function (
     Route::post('payments/request-cash', [PaymentController::class, 'requestCash'])->name('payments.request-cash');
     Route::post('payments/create-intent', [PaymentController::class, 'createIntent'])->name('payments.create-intent');
     Route::post('payments/update-intent', [PaymentController::class, 'updateIntent'])->name('payments.update-intent');
+    Route::get('payments/intent', [PaymentController::class, 'activeIntent'])->name('payments.intent.active');
+    Route::delete('payments/intent', [PaymentController::class, 'cancelIntent'])->name('payments.intent.cancel');
     Route::get('payments/verify', [PaymentController::class, 'verify'])->name('payments.verify');
 
     // Reservations

@@ -10,6 +10,7 @@ use App\Models\StripeWebhookLog;
 use App\Models\TableScanSession;
 use App\Models\Vendor;
 use App\Services\NotificationService;
+use App\Services\PaymentGuardService;
 use App\Services\ShareOrderService;
 use App\Services\StripePaymentService;
 use App\Services\TaxCalculationService;
@@ -152,6 +153,16 @@ class PaymentController extends Controller
                 abort(409, 'One or more orders are already assigned to another payer.');
             }
 
+            // A checkout someone else already opened for these orders (e.g.
+            // the owner paying themselves) locks them until that intent is
+            // completed or canceled. The payer's own intents don't block the
+            // idempotent re-claim.
+            $lockedByOther = PaymentGuardService::activePaymentsCovering($orders->pluck('id'))
+                ->contains(fn (OrderPayment $payment) => (int) $payment->customer_id !== (int) $payer->id);
+            if ($lockedByOther) {
+                abort(409, 'This order is locked while a payment is in progress.');
+            }
+
             Order::whereIn('id', $orders->pluck('id'))
                 ->whereNull('paid_by')
                 ->update(['paid_by' => $payer->id]);
@@ -252,14 +263,7 @@ class PaymentController extends Controller
                 return null;
             }
 
-            $activePayments = OrderPayment::with('orders:id')
-                ->whereNotIn('status', self::TERMINAL_PAYMENT_STATUSES)
-                ->where(function (Builder $q) use ($orders) {
-                    $orderIds = $orders->pluck('id');
-                    $q->whereIn('order_id', $orderIds)
-                        ->orWhereHas('orders', fn (Builder $covered) => $covered->whereIn('orders.id', $orderIds));
-                })
-                ->get();
+            $activePayments = PaymentGuardService::activePaymentsCovering($orders->pluck('id'));
 
             // A payment someone else started, or one of the payer's own that is
             // already processing a charge, still blocks the release. The payer's
@@ -275,30 +279,8 @@ class PaymentController extends Controller
             $pendingResetOrderIds = collect();
 
             foreach ($activePayments as $payment) {
-                if ($payment->stripe_payment_intent_id) {
-                    try {
-                        $this->stripe->cancelPaymentIntent($payment->stripe_payment_intent_id);
-                    } catch (StripeInvalidRequestException $e) {
-                        $intent = $this->stripe->retrievePaymentIntent($payment->stripe_payment_intent_id);
-                        if (($intent['status'] ?? null) !== 'canceled') {
-                            abort(409, 'Orders with an active payment cannot be released.');
-                        }
-                    }
-                }
-
-                $payment->update([
-                    'status' => 'canceled',
-                    'failed_at' => $payment->failed_at ?? now(),
-                ]);
-
                 $pendingResetOrderIds = $pendingResetOrderIds
-                    ->merge($this->paymentOrders($payment)->pluck('id'));
-            }
-
-            if ($pendingResetOrderIds->isNotEmpty()) {
-                Order::whereIn('id', $pendingResetOrderIds->unique())
-                    ->where('payment_received', false)
-                    ->update(['payment_pending' => false]);
+                    ->merge($this->cancelAbandonedPayment($payment));
             }
 
             Order::whereIn('id', $orders->pluck('id'))
@@ -360,6 +342,124 @@ class PaymentController extends Controller
             'message' => 'Payment assignment released.',
             'released_orders_count' => $result ? $result['released']->count() : 0,
         ]);
+    }
+
+    /**
+     * GET /api/customer/payments/intent
+     *
+     * Read-only probe: does the customer have an active (non-terminal) Stripe
+     * intent at their current table? Used to resume the checkout after a page
+     * reload. Never creates or cancels anything.
+     */
+    public function activeIntent(Request $request): JsonResponse
+    {
+        $customer = $request->user();
+        $payerSession = $this->activeSession((int) $customer->id);
+
+        if (! $payerSession) {
+            return response()->json(['active' => false]);
+        }
+
+        $tableSessionIds = TableScanSession::where('vendor_id', $payerSession->vendor_id)
+            ->where('restaurant_table_id', $payerSession->restaurant_table_id)
+            ->where('status', 'active')
+            ->pluck('id');
+
+        $payment = OrderPayment::where('customer_id', $customer->id)
+            ->whereIn('table_scan_session_id', $tableSessionIds)
+            ->whereNotIn('status', self::TERMINAL_PAYMENT_STATUSES)
+            ->whereNotNull('stripe_payment_intent_id')
+            ->latest()
+            ->first();
+
+        if (! $payment) {
+            return response()->json(['active' => false]);
+        }
+
+        $intent = $this->stripe->retrievePaymentIntent($payment->stripe_payment_intent_id);
+        $this->syncPaymentIntentStatus($payment, $intent);
+
+        if (in_array($payment->refresh()->status, self::TERMINAL_PAYMENT_STATUSES, true)) {
+            return response()->json(['active' => false]);
+        }
+
+        return response()->json([
+            'active' => true,
+            'paymentIntentId' => $intent['id'],
+            'clientSecret' => $intent['client_secret'] ?? null,
+            'status' => $intent['status'] ?? null,
+            'amount' => (float) $payment->amount,
+            'currency' => $payment->currency,
+        ]);
+    }
+
+    /**
+     * DELETE /api/customer/payments/intent
+     *
+     * Cancels the customer's own active Stripe intent at the current table
+     * (the checkout "back" action), resets payment_pending on every covered
+     * order, and broadcasts the unlock to the table. A payment already
+     * processing a charge cannot be canceled.
+     */
+    public function cancelIntent(Request $request): JsonResponse
+    {
+        $customer = $request->user();
+        $payerSession = $this->activeSession((int) $customer->id);
+
+        if (! $payerSession) {
+            return response()->json(['message' => 'No active table session found.'], 422);
+        }
+
+        $tableSessionIds = TableScanSession::where('vendor_id', $payerSession->vendor_id)
+            ->where('restaurant_table_id', $payerSession->restaurant_table_id)
+            ->where('status', 'active')
+            ->pluck('id');
+
+        $affectedOrderIds = DB::transaction(function () use ($customer, $tableSessionIds) {
+            $payments = OrderPayment::where('customer_id', $customer->id)
+                ->whereIn('table_scan_session_id', $tableSessionIds)
+                ->whereNotIn('status', self::TERMINAL_PAYMENT_STATUSES)
+                ->whereNotNull('stripe_payment_intent_id')
+                ->lockForUpdate()
+                ->get();
+
+            if ($payments->isEmpty()) {
+                return null;
+            }
+
+            if ($payments->contains(fn (OrderPayment $payment) => $payment->status === 'processing')) {
+                abort(409, 'A payment is currently processing and cannot be canceled.');
+            }
+
+            $affected = collect();
+            foreach ($payments as $payment) {
+                $affected = $affected->merge($this->cancelAbandonedPayment($payment));
+            }
+
+            return $affected->unique()->values();
+        });
+
+        if ($affectedOrderIds !== null && $affectedOrderIds->isNotEmpty()) {
+            $customerName = trim(($customer->first_name ?? '') . ' ' . ($customer->last_name ?? '')) ?: 'A guest';
+            $snapshots = Order::with('paidBy:id,first_name,last_name')
+                ->whereIn('id', $affectedOrderIds)
+                ->get()
+                ->map(fn (Order $o) => NotificationService::orderSnapshot($o))
+                ->values()->all();
+            NotificationService::notifyTableCustomers(
+                $payerSession->restaurant_table_id,
+                'payment_updated',
+                "{$customerName} canceled the payment.",
+                [
+                    'template' => 'payment.canceled',
+                    'customer_id' => $customer->id,
+                    'customer_name' => $customerName,
+                    'order_snapshots' => $snapshots,
+                ],
+            );
+        }
+
+        return response()->json(['canceled' => $affectedOrderIds !== null]);
     }
 
     /**
@@ -1095,6 +1195,45 @@ class PaymentController extends Controller
             ->get();
 
         return $orders->merge($assignedOrders)->unique('id')->values();
+    }
+
+    /**
+     * Cancel the customer's own abandoned intent, mark the payment canceled,
+     * and reset payment_pending on the unpaid orders it covered. Returns the
+     * covered order ids. Aborts with 409 when the intent turns out to be
+     * completed (or otherwise uncancelable) on Stripe's side.
+     */
+    private function cancelAbandonedPayment(OrderPayment $payment): \Illuminate\Support\Collection
+    {
+        if ($payment->stripe_payment_intent_id) {
+            try {
+                $this->stripe->cancelPaymentIntent($payment->stripe_payment_intent_id);
+            } catch (StripeInvalidRequestException $e) {
+                $intent = $this->stripe->retrievePaymentIntent($payment->stripe_payment_intent_id);
+                if (($intent['status'] ?? null) === 'succeeded') {
+                    $this->syncPaymentIntentStatus($payment, $intent);
+                    abort(409, 'The payment has already completed.');
+                }
+                if (($intent['status'] ?? null) !== 'canceled') {
+                    abort(409, 'Orders with an active payment cannot be released.');
+                }
+            }
+        }
+
+        $payment->update([
+            'status' => 'canceled',
+            'failed_at' => $payment->failed_at ?? now(),
+        ]);
+
+        $coveredOrderIds = $this->paymentOrders($payment)->pluck('id');
+
+        if ($coveredOrderIds->isNotEmpty()) {
+            Order::whereIn('id', $coveredOrderIds)
+                ->where('payment_received', false)
+                ->update(['payment_pending' => false]);
+        }
+
+        return $coveredOrderIds;
     }
 
     private function paymentOrders(OrderPayment $payment): EloquentCollection

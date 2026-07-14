@@ -11,6 +11,7 @@ use App\Models\Vendor;
 use App\Services\LocaleService;
 use App\Services\MenuCustomizationService;
 use App\Services\NotificationService;
+use App\Services\PaymentGuardService;
 use App\Services\ShareOrderService;
 use App\Services\TaxCalculationService;
 use App\Services\VendorDateTimeService;
@@ -58,6 +59,22 @@ class CartController extends Controller
     private function customerName($customer): string
     {
         return trim(($customer->first_name ?? '').' '.($customer->last_name ?? '')) ?: 'A guest';
+    }
+
+    /**
+     * Sharing or unsharing changes the amounts of every order the cart item
+     * touches. While any of them is covered by an active payment (an open
+     * checkout), the item is locked.
+     */
+    private function itemLockedByActivePayment(Order $targetOrder, CartItem $cartItem): bool
+    {
+        $relatedOrderIds = collect([$targetOrder->id, $cartItem->order_id])
+            ->merge(is_array($cartItem->shared_order_ids) ? $cartItem->shared_order_ids : [])
+            ->merge(Order::where('parent_order_id', $targetOrder->id)->pluck('id'))
+            ->filter()
+            ->unique();
+
+        return PaymentGuardService::activePaymentsCovering($relatedOrderIds)->isNotEmpty();
     }
 
     /**
@@ -706,6 +723,12 @@ class CartController extends Controller
                 ], 422);
             }
 
+            if ($this->itemLockedByActivePayment($order, $cartItem)) {
+                return response()->json([
+                    'message' => 'These items are locked while a payment is in progress.',
+                ], 409);
+            }
+
             if ((int) $cartItem->table_scan_session_id === (int) $mySession->id) {
                 return response()->json([
                     'message' => 'You cannot share your own cart item with yourself.',
@@ -772,6 +795,12 @@ class CartController extends Controller
                 return response()->json([
                     'message' => 'Unshared cart item does not belong to this table.',
                 ], 422);
+            }
+
+            if ($this->itemLockedByActivePayment($order, $cartItem)) {
+                return response()->json([
+                    'message' => 'These items are locked while a payment is in progress.',
+                ], 409);
             }
 
             if ($cartItem->order_id) {

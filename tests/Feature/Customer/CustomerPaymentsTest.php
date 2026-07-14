@@ -939,6 +939,204 @@ class CustomerPaymentsTest extends TestCase
         $this->assertSame(6.6, (float) $mateOrder->fresh()->amount);
     }
 
+    public function test_active_intent_probe_reflects_intent_lifecycle(): void
+    {
+        $this->order(['payment_pending' => false]);
+
+        // No intent yet.
+        $this->withHeaders($this->headers)
+            ->getJson('/api/customer/payments/intent')
+            ->assertOk()
+            ->assertJsonPath('active', false);
+
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/payments/create-intent')
+            ->assertOk();
+
+        $this->withHeaders($this->headers)
+            ->getJson('/api/customer/payments/intent')
+            ->assertOk()
+            ->assertJsonPath('active', true)
+            ->assertJsonPath('paymentIntentId', 'pi_fake_1')
+            ->assertJsonPath('clientSecret', 'pi_fake_1_secret_test');
+
+        $this->withHeaders($this->headers)
+            ->deleteJson('/api/customer/payments/intent')
+            ->assertOk()
+            ->assertJsonPath('canceled', true);
+
+        $this->withHeaders($this->headers)
+            ->getJson('/api/customer/payments/intent')
+            ->assertOk()
+            ->assertJsonPath('active', false);
+    }
+
+    public function test_cancel_intent_cancels_own_intent_resets_pending_and_notifies(): void
+    {
+        [$tablemate] = $this->tablemate();
+        $order = $this->order(['payment_pending' => false]);
+
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/payments/create-intent')
+            ->assertOk();
+
+        $this->assertTrue($order->fresh()->payment_pending);
+
+        $this->withHeaders($this->headers)
+            ->deleteJson('/api/customer/payments/intent')
+            ->assertOk()
+            ->assertJsonPath('canceled', true);
+
+        $this->assertContains('pi_fake_1', $this->stripe->canceled);
+        $this->assertDatabaseHas('order_payments', [
+            'stripe_payment_intent_id' => 'pi_fake_1',
+            'status' => 'canceled',
+        ]);
+        $this->assertFalse($order->fresh()->payment_pending);
+
+        // The unlock is broadcast to the table.
+        $canceledNotification = Notification::where('customer_id', $tablemate->id)
+            ->where('event', 'payment_updated')
+            ->get()
+            ->first(fn (Notification $n) => str_contains((string) $n->getRawOriginal('metadata'), 'payment.canceled'));
+        $this->assertNotNull($canceledNotification);
+
+        // Idempotent when nothing remains to cancel.
+        $this->withHeaders($this->headers)
+            ->deleteJson('/api/customer/payments/intent')
+            ->assertOk()
+            ->assertJsonPath('canceled', false);
+    }
+
+    public function test_cancel_intent_is_blocked_while_a_charge_is_processing(): void
+    {
+        $order = $this->order(['payment_pending' => false]);
+
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/payments/create-intent')
+            ->assertOk();
+
+        OrderPayment::where('stripe_payment_intent_id', 'pi_fake_1')
+            ->update(['status' => 'processing']);
+
+        $this->withHeaders($this->headers)
+            ->deleteJson('/api/customer/payments/intent')
+            ->assertStatus(409);
+
+        $this->assertNotContains('pi_fake_1', $this->stripe->canceled);
+        $this->assertDatabaseHas('order_payments', [
+            'stripe_payment_intent_id' => 'pi_fake_1',
+            'status' => 'processing',
+        ]);
+        $this->assertTrue($order->fresh()->payment_pending);
+    }
+
+    public function test_pay_for_is_locked_while_the_owner_checkout_is_open(): void
+    {
+        [$tablemate] = $this->tablemate();
+        $myOrder = $this->order(['payment_pending' => false]);
+
+        // I open the checkout for my own order.
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/payments/create-intent')
+            ->assertOk();
+
+        $mateToken = $tablemate->createToken('test', ['role:customer'])->plainTextToken;
+        $mateHeaders = ['Authorization' => "Bearer {$mateToken}", 'Accept' => 'application/json'];
+
+        $this->app['auth']->forgetGuards();
+
+        $this->withHeaders($mateHeaders)
+            ->postJson('/api/customer/payments/pay-for', [
+                'order_id' => $myOrder->order_public_id,
+            ])
+            ->assertStatus(409);
+
+        $this->assertNull($myOrder->fresh()->paid_by);
+
+        // Once I cancel (checkout "back"), the order unlocks.
+        $this->app['auth']->forgetGuards();
+        $this->withHeaders($this->headers)
+            ->deleteJson('/api/customer/payments/intent')
+            ->assertOk();
+
+        $this->app['auth']->forgetGuards();
+        $this->withHeaders($mateHeaders)
+            ->postJson('/api/customer/payments/pay-for', [
+                'order_id' => $myOrder->order_public_id,
+            ])
+            ->assertOk();
+
+        $this->assertSame($tablemate->id, $myOrder->fresh()->paid_by);
+    }
+
+    public function test_share_and_unshare_are_locked_while_a_checkout_covers_the_order(): void
+    {
+        [$tablemate, $tablemateSession] = $this->tablemate();
+
+        $myOrder = $this->order(['payment_pending' => false]);
+        $mateOrder = $this->order([
+            'table_scan_session_id' => $tablemateSession->id,
+            'payment_pending' => false,
+        ], $tablemate);
+
+        // The tablemate already shares my first item; my second is unshared.
+        $sharedItem = CartItem::create([
+            'table_scan_session_id' => $this->session->id,
+            'menu_item_id' => $this->menuItem->id,
+            'order_id' => $myOrder->id,
+            'quantity' => 1,
+            'shared_order_ids' => [$mateOrder->id],
+        ]);
+        $unsharedItem = CartItem::create([
+            'table_scan_session_id' => $this->session->id,
+            'menu_item_id' => $this->menuItem->id,
+            'order_id' => $myOrder->id,
+            'quantity' => 1,
+        ]);
+
+        // I open the checkout — my order (and its amounts) are now locked.
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/payments/create-intent')
+            ->assertOk();
+
+        $mateToken = $tablemate->createToken('test', ['role:customer'])->plainTextToken;
+        $mateHeaders = ['Authorization' => "Bearer {$mateToken}", 'Accept' => 'application/json'];
+
+        $this->app['auth']->forgetGuards();
+
+        $this->withHeaders($mateHeaders)
+            ->putJson("/api/customer/table/order/update/{$mateOrder->id}", [
+                'unshared_item' => $sharedItem->id,
+            ])
+            ->assertStatus(409)
+            ->assertJsonPath('message', 'These items are locked while a payment is in progress.');
+
+        $this->withHeaders($mateHeaders)
+            ->putJson("/api/customer/table/order/update/{$mateOrder->id}", [
+                'shared_item' => $unsharedItem->id,
+            ])
+            ->assertStatus(409);
+
+        $this->assertSame([$mateOrder->id], array_map('intval', $sharedItem->fresh()->shared_order_ids));
+        $this->assertSame([], array_map('intval', $unsharedItem->fresh()->shared_order_ids ?? []));
+
+        // Cancel (back from checkout) → sharing is possible again.
+        $this->app['auth']->forgetGuards();
+        $this->withHeaders($this->headers)
+            ->deleteJson('/api/customer/payments/intent')
+            ->assertOk();
+
+        $this->app['auth']->forgetGuards();
+        $this->withHeaders($mateHeaders)
+            ->putJson("/api/customer/table/order/update/{$mateOrder->id}", [
+                'unshared_item' => $sharedItem->id,
+            ])
+            ->assertOk();
+
+        $this->assertSame([], array_map('intval', $sharedItem->fresh()->shared_order_ids ?? []));
+    }
+
     public function test_create_intent_replaces_stale_intent_when_payable_set_changes(): void
     {
         [$tablemate, $tablemateSession] = $this->tablemate();
