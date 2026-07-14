@@ -61,6 +61,16 @@ class StripePaymentService
     }
 
     /**
+     * @return array{id: string, client_secret: string|null, status: string|null, metadata: array<string, mixed>, payment_method: string|null}
+     */
+    public function cancelPaymentIntent(string $paymentIntentId): array
+    {
+        return $this->paymentIntentPayload(
+            $this->stripe()->paymentIntents->cancel($paymentIntentId)
+        );
+    }
+
+    /**
      * @return array{type: string, payment_intent: array{id: string, client_secret: string|null, status: string|null, metadata: array<string, mixed>, payment_method: string|null}}
      */
     public function parseWebhookEvent(string $payload, ?string $signature): array

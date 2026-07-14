@@ -231,34 +231,78 @@ class PaymentController extends Controller
                 return null;
             }
 
-            $hasActivePayment = OrderPayment::whereNotIn('status', self::TERMINAL_PAYMENT_STATUSES)
+            $activePayments = OrderPayment::with('orders:id')
+                ->whereNotIn('status', self::TERMINAL_PAYMENT_STATUSES)
                 ->where(function (Builder $q) use ($orders) {
                     $orderIds = $orders->pluck('id');
                     $q->whereIn('order_id', $orderIds)
                         ->orWhereHas('orders', fn (Builder $covered) => $covered->whereIn('orders.id', $orderIds));
                 })
-                ->exists();
+                ->get();
 
-            if ($hasActivePayment) {
+            // A payment someone else started, or one of the payer's own that is
+            // already processing a charge, still blocks the release. The payer's
+            // own abandoned intents (e.g. they opened the payment step and went
+            // back) are canceled so unchecking is always possible.
+            $blocked = $activePayments->contains(fn (OrderPayment $payment) => (int) $payment->customer_id !== (int) $payer->id
+                || $payment->status === 'processing');
+
+            if ($blocked) {
                 abort(409, 'Orders with an active payment cannot be released.');
+            }
+
+            $pendingResetOrderIds = collect();
+
+            foreach ($activePayments as $payment) {
+                if ($payment->stripe_payment_intent_id) {
+                    try {
+                        $this->stripe->cancelPaymentIntent($payment->stripe_payment_intent_id);
+                    } catch (StripeInvalidRequestException $e) {
+                        $intent = $this->stripe->retrievePaymentIntent($payment->stripe_payment_intent_id);
+                        if (($intent['status'] ?? null) !== 'canceled') {
+                            abort(409, 'Orders with an active payment cannot be released.');
+                        }
+                    }
+                }
+
+                $payment->update([
+                    'status' => 'canceled',
+                    'failed_at' => $payment->failed_at ?? now(),
+                ]);
+
+                $pendingResetOrderIds = $pendingResetOrderIds
+                    ->merge($this->paymentOrders($payment)->pluck('id'));
+            }
+
+            if ($pendingResetOrderIds->isNotEmpty()) {
+                Order::whereIn('id', $pendingResetOrderIds->unique())
+                    ->where('payment_received', false)
+                    ->update(['payment_pending' => false]);
             }
 
             Order::whereIn('id', $orders->pluck('id'))
                 ->update(['paid_by' => null]);
 
-            return $orders;
+            return [
+                'released' => $orders,
+                'affected_order_ids' => $orders->pluck('id')
+                    ->merge($pendingResetOrderIds)
+                    ->unique()
+                    ->values(),
+            ];
         });
 
-        if ($result && $result->isNotEmpty()) {
+        if ($result && $result['released']->isNotEmpty()) {
+            $released = $result['released'];
             $targetSession = TableScanSession::with('customer:id,first_name,last_name')
-                ->find($result->first()->table_scan_session_id);
+                ->find($released->first()->table_scan_session_id);
             $payerIdentity = $this->customerIdentity($payer);
             $targetName = $targetSession?->customer
                 ? $this->customerIdentity($targetSession->customer)['name']
                 : 'Waiter';
 
             $releasedSnapshots = Order::with('paidBy:id,first_name,last_name')
-                ->whereIn('id', $result->pluck('id'))
+                ->whereIn('id', $result['affected_order_ids'])
                 ->get()
                 ->map(fn (Order $o) => NotificationService::orderSnapshot($o))
                 ->values()->all();
@@ -272,7 +316,7 @@ class PaymentController extends Controller
                     'payer_id' => $payer->id,
                     'payer_name' => $payerIdentity['name'],
                     'customer_name' => $targetName,
-                    'released_orders_count' => $result->count(),
+                    'released_orders_count' => $released->count(),
                     'order_snapshots' => $releasedSnapshots,
                 ],
                 false,
@@ -281,7 +325,7 @@ class PaymentController extends Controller
 
         return response()->json([
             'message' => 'Payment assignment released.',
-            'released_orders_count' => $result ? $result->count() : 0,
+            'released_orders_count' => $result ? $result['released']->count() : 0,
         ]);
     }
 
@@ -381,11 +425,40 @@ class PaymentController extends Controller
                         return $existingIntent;
                     }
 
-                    if (($existingIntent['status'] ?? null) !== 'canceled') {
+                    if (($existingIntent['status'] ?? null) === 'processing') {
                         return $existingIntent;
                     }
 
-                    $this->syncPaymentIntentStatus($existingPayment, $existingIntent);
+                    if (($existingIntent['status'] ?? null) !== 'canceled') {
+                        $coveredIds = $this->paymentOrders($existingPayment)
+                            ->pluck('id')->map(fn ($id) => (int) $id)->sort()->values()->all();
+                        $expectedIds = $orderIds->map(fn ($id) => (int) $id)->sort()->values()->all();
+
+                        if ($coveredIds === $expectedIds) {
+                            return $existingIntent;
+                        }
+
+                        // The payable set changed since this intent was created
+                        // (orders were covered or released) — cancel it and
+                        // start a fresh intent for the current set.
+                        try {
+                            $this->stripe->cancelPaymentIntent($existingPayment->stripe_payment_intent_id);
+                        } catch (StripeInvalidRequestException $e) {
+                            $refreshed = $this->stripe->retrievePaymentIntent($existingPayment->stripe_payment_intent_id);
+                            if (($refreshed['status'] ?? null) === 'succeeded') {
+                                $this->syncPaymentIntentStatus($existingPayment, $refreshed);
+
+                                return $refreshed;
+                            }
+                        }
+
+                        $existingPayment->update([
+                            'status' => 'canceled',
+                            'failed_at' => $existingPayment->failed_at ?? now(),
+                        ]);
+                    } else {
+                        $this->syncPaymentIntentStatus($existingPayment, $existingIntent);
+                    }
                 }
 
                 if ($lockedOrders->contains(fn (Order $locked) => $locked->payment_received)) {
@@ -779,7 +852,15 @@ class PaymentController extends Controller
 
         $intent = $this->stripe->retrievePaymentIntent($data['payment_intent']);
         $this->assertIntentMatchesPayment($intent, $payment);
+
+        $wasSucceeded = $payment->status === 'succeeded';
         $this->syncPaymentIntentStatus($payment, $intent);
+
+        // The webhook may lag behind the client's redirect — when verification
+        // is what first observes the success, push the table update from here.
+        if (! $wasSucceeded && ($intent['status'] ?? null) === 'succeeded') {
+            $this->notifyPaymentCompleted($payment);
+        }
 
         return response()->json([
             'status' => $intent['status'] ?? $payment->fresh()->status,
@@ -842,26 +923,13 @@ class PaymentController extends Controller
             return response()->json(['received' => true, 'ignored' => true]);
         }
 
+        $wasSucceeded = $payment->status === 'succeeded';
         $this->syncPaymentIntentStatus($payment, $intent, $type);
 
-        if ($type === 'payment_intent.succeeded' && $payment->table_scan_session_id) {
-            $session = $payment->order?->tableScanSession;
-            if ($session) {
-                $affectedOrders = $this->paymentOrders($payment);
-                $snapshots = $affectedOrders->map(fn (Order $o) => NotificationService::orderSnapshot($o->fresh()->load('paidBy')))
-                    ->values()->all();
-                NotificationService::notifyTableCustomers(
-                    $session->restaurant_table_id,
-                    'payment_updated',
-                    'A payment has been completed on this table.',
-                    [
-                        'template' => 'payment.completed',
-                        'order_id' => $payment->order_id,
-                        'payment_id' => $payment->id,
-                        'order_snapshots' => $snapshots,
-                    ],
-                );
-            }
+        // Skip the broadcast when verify() already observed the success —
+        // the table customers were notified at that point.
+        if ($type === 'payment_intent.succeeded' && ! $wasSucceeded) {
+            $this->notifyPaymentCompleted($payment);
         }
 
         StripeWebhookLog::create([
@@ -1013,6 +1081,37 @@ class PaymentController extends Controller
         return $payment->order
             ? new EloquentCollection([$payment->order])
             : new EloquentCollection();
+    }
+
+    private function notifyPaymentCompleted(OrderPayment $payment): void
+    {
+        if (! $payment->table_scan_session_id) {
+            return;
+        }
+
+        $session = $payment->order?->tableScanSession
+            ?? $this->paymentOrders($payment)->first()?->tableScanSession;
+
+        if (! $session) {
+            return;
+        }
+
+        $snapshots = $this->paymentOrders($payment)
+            ->map(fn (Order $o) => NotificationService::orderSnapshot($o->fresh()->load('paidBy')))
+            ->values()->all();
+
+        NotificationService::notifyTableCustomers(
+            $session->restaurant_table_id,
+            'payment_updated',
+            'A payment has been completed on this table.',
+            [
+                'template' => 'payment.completed',
+                'customer_id' => $payment->customer_id,
+                'order_id' => $payment->order_id,
+                'payment_id' => $payment->id,
+                'order_snapshots' => $snapshots,
+            ],
+        );
     }
 
     private function customerIdentity($customer): array

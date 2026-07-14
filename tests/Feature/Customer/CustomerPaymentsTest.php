@@ -607,7 +607,7 @@ class CustomerPaymentsTest extends TestCase
         $this->assertNull($ownOrder->fresh()->paid_by);
     }
 
-    public function test_assignment_rejects_another_payer_and_release_is_atomic_while_payment_is_active(): void
+    public function test_assignment_rejects_another_payer_and_release_cancels_own_stale_intent(): void
     {
         [$tablemate, $tablemateSession] = $this->tablemate();
         [$otherPayer, $otherPayerSession] = $this->tablemate();
@@ -630,12 +630,143 @@ class CustomerPaymentsTest extends TestCase
             ->postJson('/api/customer/payments/create-intent')
             ->assertOk();
 
+        // The payer's own abandoned intent (opened the payment step, went
+        // back) no longer blocks unchecking: it is canceled and released.
+        $this->withHeaders($this->headers)
+            ->deleteJson("/api/customer/payments/pay-for/{$targetOrder->order_public_id}")
+            ->assertOk()
+            ->assertJsonPath('released_orders_count', 1);
+
+        $this->assertNull($targetOrder->fresh()->paid_by);
+        $this->assertContains('pi_fake_1', $this->stripe->canceled);
+        $this->assertDatabaseHas('order_payments', [
+            'stripe_payment_intent_id' => 'pi_fake_1',
+            'status' => 'canceled',
+        ]);
+        $this->assertFalse($ownOrder->fresh()->payment_pending);
+        $this->assertFalse($targetOrder->fresh()->payment_pending);
+        $this->assertSame($otherPayerSession->restaurant_table_id, $this->session->restaurant_table_id);
+    }
+
+    public function test_release_is_blocked_while_a_payment_is_processing_or_owned_by_another_payer(): void
+    {
+        [$tablemate, $tablemateSession] = $this->tablemate();
+        $targetOrder = $this->order([
+            'table_scan_session_id' => $tablemateSession->id,
+            'payment_pending' => false,
+        ], $tablemate);
+
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/payments/pay-for', [
+                'order_id' => $targetOrder->order_public_id,
+            ])
+            ->assertOk();
+
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/payments/create-intent')
+            ->assertOk();
+
+        OrderPayment::where('stripe_payment_intent_id', 'pi_fake_1')
+            ->update(['status' => 'processing']);
+
         $this->withHeaders($this->headers)
             ->deleteJson("/api/customer/payments/pay-for/{$targetOrder->order_public_id}")
             ->assertStatus(409);
 
         $this->assertSame($this->customer->id, $targetOrder->fresh()->paid_by);
-        $this->assertSame($otherPayerSession->restaurant_table_id, $this->session->restaurant_table_id);
+
+        // A payment started by a different customer also blocks the release.
+        OrderPayment::where('stripe_payment_intent_id', 'pi_fake_1')
+            ->update(['status' => 'requires_payment_method', 'customer_id' => $tablemate->id]);
+
+        $this->withHeaders($this->headers)
+            ->deleteJson("/api/customer/payments/pay-for/{$targetOrder->order_public_id}")
+            ->assertStatus(409);
+
+        $this->assertSame($this->customer->id, $targetOrder->fresh()->paid_by);
+        $this->assertNotContains('pi_fake_1', $this->stripe->canceled);
+    }
+
+    public function test_create_intent_replaces_stale_intent_when_payable_set_changes(): void
+    {
+        [$tablemate, $tablemateSession] = $this->tablemate();
+        $ownOrder = $this->order(['amount' => 6, 'payment_pending' => false]);
+
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/payments/create-intent')
+            ->assertOk()
+            ->assertJsonPath('paymentIntentId', 'pi_fake_1');
+
+        $coveredOrder = $this->order([
+            'amount' => 7,
+            'table_scan_session_id' => $tablemateSession->id,
+            'payment_pending' => false,
+        ], $tablemate);
+
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/payments/pay-for', [
+                'order_id' => $coveredOrder->order_public_id,
+            ])
+            ->assertOk();
+
+        // The payable set grew after the first intent — a fresh intent must
+        // cover both orders instead of silently reusing the stale one.
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/payments/create-intent')
+            ->assertOk()
+            ->assertJsonPath('paymentIntentId', 'pi_fake_2');
+
+        $this->assertContains('pi_fake_1', $this->stripe->canceled);
+        $this->assertSame(1300, $this->stripe->created[1]['amountMinor']);
+
+        $payment = OrderPayment::where('stripe_payment_intent_id', 'pi_fake_2')->firstOrFail();
+        $this->assertCount(2, $payment->orders);
+    }
+
+    public function test_verify_success_notifies_table_customers_once(): void
+    {
+        [$tablemate] = $this->tablemate();
+        $order = $this->order(['payment_pending' => false]);
+        $this->payment($order, 'pi_paid');
+        $this->stripe->intents['pi_paid'] = [
+            'id' => 'pi_paid',
+            'client_secret' => null,
+            'status' => 'succeeded',
+            'metadata' => ['order_id' => (string) $order->id, 'customer_id' => (string) $this->customer->id],
+            'payment_method' => 'pm_card_visa',
+        ];
+
+        $this->withHeaders($this->headers)
+            ->getJson('/api/customer/payments/verify?payment_intent=pi_paid')
+            ->assertOk()
+            ->assertJsonPath('status', 'succeeded');
+
+        $completed = Notification::where('event', 'payment_updated')
+            ->whereNotNull('customer_id')
+            ->get()
+            ->filter(fn (Notification $notification) => ($notification->metadata['template'] ?? null) === 'payment.completed');
+        $this->assertCount(2, $completed);
+        $this->assertEqualsCanonicalizing(
+            [$this->customer->id, $tablemate->id],
+            $completed->pluck('customer_id')->all(),
+        );
+        $this->assertNotEmpty($completed->first()->metadata['order_snapshots'] ?? []);
+        $this->assertTrue((bool) ($completed->first()->metadata['order_snapshots'][0]['payment_received'] ?? false));
+
+        // A late webhook for the same intent must not broadcast again.
+        $this->stripe->events[] = [
+            'type' => 'payment_intent.succeeded',
+            'payment_intent' => $this->stripe->intents['pi_paid'],
+        ];
+        $this->postJson('/api/customer/payments/webhook', [], [
+            'Stripe-Signature' => 'valid',
+        ])->assertOk();
+
+        $completedAfter = Notification::where('event', 'payment_updated')
+            ->whereNotNull('customer_id')
+            ->get()
+            ->filter(fn (Notification $notification) => ($notification->metadata['template'] ?? null) === 'payment.completed');
+        $this->assertCount(2, $completedAfter);
     }
 
     public function test_combined_intent_and_webhook_update_every_covered_order(): void
@@ -1003,6 +1134,7 @@ class FakeStripePaymentService extends StripePaymentService
 {
     public array $created = [];
     public array $updated = [];
+    public array $canceled = [];
     public array $intents = [];
     public array $events = [];
     public bool $rejectWebhook = false;
@@ -1055,6 +1187,23 @@ class FakeStripePaymentService extends StripePaymentService
             'metadata' => [],
             'payment_method' => null,
         ];
+    }
+
+    public function cancelPaymentIntent(string $paymentIntentId): array
+    {
+        $payload = $this->intents[$paymentIntentId] ?? [
+            'id' => $paymentIntentId,
+            'client_secret' => null,
+            'status' => 'requires_payment_method',
+            'metadata' => [],
+            'payment_method' => null,
+        ];
+
+        $payload['status'] = 'canceled';
+        $this->canceled[] = $paymentIntentId;
+        $this->intents[$paymentIntentId] = $payload;
+
+        return $payload;
     }
 
     public function parseWebhookEvent(string $payload, ?string $signature): array
