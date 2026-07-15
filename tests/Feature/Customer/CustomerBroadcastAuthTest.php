@@ -14,10 +14,10 @@ class CustomerBroadcastAuthTest extends TestCase
     {
         parent::setUp();
 
-        config()->set('broadcasting.default', 'reverb');
-        config()->set('broadcasting.connections.reverb.key', 'test-key');
-        config()->set('broadcasting.connections.reverb.secret', 'test-secret');
-        config()->set('broadcasting.connections.reverb.app_id', 'test-app');
+        config()->set('broadcasting.default', 'pusher');
+        config()->set('broadcasting.connections.pusher.key', 'test-key');
+        config()->set('broadcasting.connections.pusher.secret', 'test-secret');
+        config()->set('broadcasting.connections.pusher.app_id', 'test-app');
     }
 
     public function test_customer_can_authorize_only_their_private_realtime_channel(): void
@@ -71,5 +71,20 @@ class CustomerBroadcastAuthTest extends TestCase
             'Authorization' => "Bearer {$token}",
             'Accept' => 'application/json',
         ])->assertUnprocessable()->assertJsonValidationErrors('socket_id');
+    }
+
+    public function test_customer_broadcast_auth_requires_pusher_to_be_configured(): void
+    {
+        $customer = Customer::factory()->create();
+        $token = $customer->createToken('broadcast-test')->plainTextToken;
+        config()->set('broadcasting.default', 'log');
+
+        $this->postJson('/api/customer/broadcasting/auth', [
+            'socket_id' => '1234.5678',
+            'channel_name' => "private-customer.{$customer->id}",
+        ], [
+            'Authorization' => "Bearer {$token}",
+            'Accept' => 'application/json',
+        ])->assertServiceUnavailable();
     }
 }

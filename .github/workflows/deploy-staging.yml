@@ -89,8 +89,4 @@ jobs:
             # Restart the Supervisor-managed queue workers gracefully.
             php artisan queue:restart
 
-            # Reverb is a persistent Supervisor-managed process. This asks the
-            # existing process to reload the newly deployed application code.
-            php artisan reverb:restart
-
             echo "Deployment to staging complete."

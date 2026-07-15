@@ -22,8 +22,13 @@ class BroadcastAuthController extends Controller
             return response()->json(['message' => 'Forbidden.'], 403);
         }
 
-        $key = (string) config('broadcasting.connections.reverb.key');
-        $secret = (string) config('broadcasting.connections.reverb.secret');
+        $connection = (string) config('broadcasting.default');
+        if ($connection !== 'pusher') {
+            return response()->json(['message' => 'Customer realtime is not configured.'], 503);
+        }
+
+        $key = (string) config('broadcasting.connections.pusher.key');
+        $secret = (string) config('broadcasting.connections.pusher.secret');
         if ($key === '' || $secret === '') {
             return response()->json(['message' => 'Realtime is not configured.'], 503);
         }

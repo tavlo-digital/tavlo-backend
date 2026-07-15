@@ -58,7 +58,7 @@ return [
     ],
 
     'realtime' => [
-        'customer_enabled' => (bool) env('CUSTOMER_REVERB_ENABLED', false),
+        'customer_enabled' => (bool) env('CUSTOMER_REALTIME_ENABLED', false),
         'queue' => env('REALTIME_QUEUE', 'realtime'),
     ],
 
