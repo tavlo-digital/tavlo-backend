@@ -2,6 +2,8 @@
 
 namespace Tests\Feature\Customer;
 
+use App\Events\CustomerRealtimeNotification;
+use App\Jobs\DeliverCustomerRealtime;
 use App\Jobs\DeliverNotification;
 use App\Jobs\RecordCustomerSessionActivity;
 use App\Models\Customer;
@@ -12,6 +14,8 @@ use App\Models\TableScanSession;
 use App\Models\Vendor;
 use App\Services\NotificationService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Defer\DeferredCallbackCollection;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Queue;
 use Tests\TestCase;
 
@@ -35,7 +39,70 @@ class QueuedSideEffectsTest extends TestCase
         );
 
         $this->assertDatabaseCount('notifications', 0);
+        $this->invokeDeferredCallbacks();
         Queue::assertPushedOn('notifications', DeliverNotification::class);
+    }
+
+    public function test_realtime_and_notification_jobs_share_an_event_id_and_are_enqueued_after_response(): void
+    {
+        Queue::fake();
+        config()->set('services.notifications.queue_enabled', true);
+        config()->set('services.realtime.customer_enabled', true);
+
+        [$table] = $this->activeTableSession();
+
+        NotificationService::notifyTableCustomers(
+            $table->id,
+            'order_updated',
+            'Sharing changed.',
+            ['template' => 'order.sharing_updated'],
+            false,
+        );
+
+        Queue::assertNothingPushed();
+        $this->invokeDeferredCallbacks();
+
+        $realtimeDeliveryId = null;
+        Queue::assertPushedOn('realtime', DeliverCustomerRealtime::class, function (DeliverCustomerRealtime $job) use (&$realtimeDeliveryId): bool {
+            $realtimeDeliveryId = $job->deliveryId;
+
+            return $job->payload['metadata']['template'] === 'order.sharing_updated';
+        });
+        Queue::assertPushedOn('notifications', DeliverNotification::class, function (DeliverNotification $job) use (&$realtimeDeliveryId): bool {
+            return $job->deliveryId === $realtimeDeliveryId;
+        });
+    }
+
+    public function test_realtime_job_broadcasts_once_to_all_active_table_customers(): void
+    {
+        Event::fake([CustomerRealtimeNotification::class]);
+        [$table, $firstSession] = $this->activeTableSession();
+        $secondCustomer = Customer::factory()->create();
+        TableScanSession::create([
+            'vendor_id' => $firstSession->vendor_id,
+            'restaurant_table_id' => $table->id,
+            'customer_id' => $secondCustomer->id,
+            'pin' => '2345',
+            'status' => 'active',
+            'scanned_at' => now(),
+        ]);
+
+        (new DeliverCustomerRealtime('realtime-delivery-1', 'table', [
+            'restaurant_table_id' => $table->id,
+            'event' => 'payment_updated',
+            'message' => 'Payment changed.',
+            'metadata' => ['state_patch' => ['id' => 'patch-1']],
+            'created_at' => now()->toISOString(),
+        ]))->handle();
+
+        Event::assertDispatched(CustomerRealtimeNotification::class, function (CustomerRealtimeNotification $event) use ($firstSession, $secondCustomer): bool {
+            $ids = collect($event->customerIds)->sort()->values()->all();
+
+            return $event->deliveryId === 'realtime-delivery-1'
+                && $event->event === 'payment_updated'
+                && $event->metadata['state_patch']['id'] === 'patch-1'
+                && $ids === collect([$firstSession->customer_id, $secondCustomer->id])->sort()->values()->all();
+        });
     }
 
     public function test_notification_delivery_is_idempotent_for_each_recipient(): void
@@ -171,5 +238,10 @@ class QueuedSideEffectsTest extends TestCase
         ]);
 
         return [$table, $session, $customer];
+    }
+
+    private function invokeDeferredCallbacks(): void
+    {
+        app(DeferredCallbackCollection::class)->invoke();
     }
 }

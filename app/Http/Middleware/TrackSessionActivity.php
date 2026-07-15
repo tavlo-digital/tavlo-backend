@@ -3,6 +3,7 @@
 namespace App\Http\Middleware;
 
 use App\Jobs\RecordCustomerSessionActivity;
+use App\Services\DeferredQueueDispatcher;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -28,7 +29,7 @@ class TrackSessionActivity
         );
 
         if ((bool) config('services.session_activity.queue_enabled', false)) {
-            dispatch($job)->afterResponse();
+            DeferredQueueDispatcher::dispatch($job);
         } else {
             $job->handle();
         }

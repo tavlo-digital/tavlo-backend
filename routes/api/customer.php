@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Api\Customer\AuthController;
+use App\Http\Controllers\Api\Customer\BroadcastAuthController;
 use App\Http\Controllers\Api\Customer\CartController;
 use App\Http\Controllers\Api\Customer\FavoriteController;
 use App\Http\Controllers\Api\Customer\LoyaltyController;
@@ -70,6 +71,11 @@ Route::get('table/status', [TableScanController::class, 'status'])->name('table.
 Route::post('table/call', [TableScanController::class, 'call'])->name('table.call');
 
 // Authenticated customer routes
+Route::middleware('auth:customer')->post(
+    'broadcasting/auth',
+    BroadcastAuthController::class,
+)->name('broadcasting.auth');
+
 Route::middleware(['auth:customer', 'track.session.activity'])->group(function () {
     Route::get('me',           [AuthController::class, 'me'])->name('me');
     Route::post('logout',      [AuthController::class, 'logout'])->name('logout');

@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Jobs\DeliverCustomerRealtime;
 use App\Jobs\DeliverNotification;
 use App\Models\CartItem;
 use App\Models\Notification;
@@ -354,16 +355,28 @@ class NotificationService
     private static function dispatch(string $type, array $payload): void
     {
         $deliveryId = (string) Str::uuid7();
+        $createdAt = now()->toISOString();
         $payload['metadata'] = isset($payload['metadata'])
             ? [
                 ...$payload['metadata'],
                 'event_version' => (int) floor(microtime(true) * 1_000_000),
             ]
             : [];
+        $payload['created_at'] = $createdAt;
+
+        if (
+            (bool) config('services.realtime.customer_enabled', false)
+            && in_array($type, [self::TYPE_TABLE, self::TYPE_CUSTOMERS], true)
+        ) {
+            DeferredQueueDispatcher::dispatch(
+                new DeliverCustomerRealtime($deliveryId, $type, $payload),
+            );
+        }
+
         $job = new DeliverNotification($deliveryId, $type, $payload);
 
         if ((bool) config('services.notifications.queue_enabled', false)) {
-            dispatch($job)->afterCommit();
+            DeferredQueueDispatcher::dispatch($job);
 
             return;
         }

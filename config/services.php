@@ -57,6 +57,11 @@ return [
         'retention_days' => (int) env('SESSION_ACTIVITY_RETENTION_DAYS', 30),
     ],
 
+    'realtime' => [
+        'customer_enabled' => (bool) env('CUSTOMER_REVERB_ENABLED', false),
+        'queue' => env('REALTIME_QUEUE', 'realtime'),
+    ],
+
     'supabase' => [
         'url' => env('SUPABASE_URL'),
         'jwt_secret' => env('SUPABASE_JWT_SECRET'),
