@@ -91,12 +91,8 @@ class CartController extends Controller
         }
 
         $payload = $this->buildCartPayload($mySession, $request);
-        $payload['people'] = collect($payload['people'])
-            ->map(fn (array $person) => [...$person, 'is_me' => $person['session_id'] === $mySession->id])
-            ->values()
-            ->all();
 
-        return response()->json($payload);
+        return response()->json($this->cartPayloadForSession($payload, $mySession));
     }
 
     /**
@@ -189,6 +185,16 @@ class CartController extends Controller
             'cart' => $cart,
             'payload_version' => now()->getTimestampMs(),
         ];
+    }
+
+    private function cartPayloadForSession(array $payload, TableScanSession $mySession): array
+    {
+        $payload['people'] = collect($payload['people'])
+            ->map(fn (array $person) => [...$person, 'is_me' => $person['session_id'] === $mySession->id])
+            ->values()
+            ->all();
+
+        return $payload;
     }
 
     private function cartItemBelongsToOrderedOrder(CartItem $item, array $orderedOrderIds): bool
@@ -291,6 +297,7 @@ class CartController extends Controller
         $itemName = $item->menuItem && $vendor
             ? $this->customizations->menuItemName($item->menuItem, $vendor, $locale)
             : ($item->menuItem?->name ?? 'an item');
+        $realtimeCart = $this->realtimeCartMetadata($mySession, $request);
         NotificationService::notifyTableCustomers(
             $mySession->restaurant_table_id,
             'cart_updated',
@@ -301,11 +308,14 @@ class CartController extends Controller
                 'customer_name' => $customerName,
                 'menu_item_id' => $item->menu_item_id,
                 'item_name' => $itemName,
-                ...$this->realtimeCartMetadata($mySession, $request),
+                ...$realtimeCart,
             ],
         );
 
-        return response()->json($this->itemPayload($item, $mySession->vendor?->country, $vendor, $locale), 201);
+        return response()->json([
+            ...$this->itemPayload($item, $mySession->vendor?->country, $vendor, $locale),
+            'cart' => $this->cartPayloadForSession($realtimeCart['cart'], $mySession),
+        ], 201);
     }
 
     /**
@@ -388,6 +398,7 @@ class CartController extends Controller
         $itemName = $item->menuItem && $vendor
             ? $this->customizations->menuItemName($item->menuItem, $vendor, $locale)
             : ($item->menuItem?->name ?? 'an item');
+        $realtimeCart = $this->realtimeCartMetadata($mySession, $request);
         NotificationService::notifyTableCustomers(
             $mySession->restaurant_table_id,
             'cart_updated',
@@ -398,11 +409,14 @@ class CartController extends Controller
                 'customer_name' => $customerName,
                 'menu_item_id' => $item->menu_item_id,
                 'item_name' => $itemName,
-                ...$this->realtimeCartMetadata($mySession, $request),
+                ...$realtimeCart,
             ],
         );
 
-        return response()->json($this->itemPayload($item, $mySession->vendor?->country, $vendor, $locale));
+        return response()->json([
+            ...$this->itemPayload($item, $mySession->vendor?->country, $vendor, $locale),
+            'cart' => $this->cartPayloadForSession($realtimeCart['cart'], $mySession),
+        ]);
     }
 
     /**
@@ -436,6 +450,7 @@ class CartController extends Controller
         $item->delete();
 
         $customerName = $this->customerName($request->user());
+        $realtimeCart = $this->realtimeCartMetadata($mySession, $request);
         NotificationService::notifyTableCustomers(
             $mySession->restaurant_table_id,
             'cart_updated',
@@ -446,11 +461,13 @@ class CartController extends Controller
                 'customer_name' => $customerName,
                 'menu_item_id' => $menuItemId,
                 'item_name' => $itemName,
-                ...$this->realtimeCartMetadata($mySession, $request),
+                ...$realtimeCart,
             ],
         );
 
-        return response()->json(null, 204);
+        return response()->json([
+            'cart' => $this->cartPayloadForSession($realtimeCart['cart'], $mySession),
+        ]);
     }
 
     /**
@@ -491,7 +508,7 @@ class CartController extends Controller
         $tableTotal = 0.0;
         $tableItemCount = 0;
 
-        $people = $sessions->map(function (TableScanSession $s) use ($mySession, $vendorCountry, $serviceFeeRate, $vendor, $locale, &$tableTotal, &$tableItemCount) {
+        $people = $sessions->map(function (TableScanSession $s) use ($mySession, $vendorCountry, $serviceFeeRate, $locale, &$tableTotal, &$tableItemCount) {
             $personalTotal = 0.0;
             $personalCount = 0;
             $isMe = $s->id === $mySession->id;
@@ -968,11 +985,11 @@ class CartController extends Controller
 
         if ($unavailableItems->isNotEmpty()) {
             return response()->json([
-                'message'           => 'Some items in your cart are no longer available. Please remove them before confirming.',
+                'message' => 'Some items in your cart are no longer available. Please remove them before confirming.',
                 'unavailable_items' => $unavailableItems->map(fn (CartItem $item) => [
                     'cart_item_id' => $item->id,
                     'menu_item_id' => $item->menu_item_id,
-                    'name'         => $item->menuItem?->name ?? 'Unknown item',
+                    'name' => $item->menuItem?->name ?? 'Unknown item',
                 ])->values(),
             ], 422);
         }
@@ -1165,7 +1182,7 @@ class CartController extends Controller
         $tableTotal = 0.0;
         $tableOrderCount = 0;
 
-        $people = $sessions->map(function (TableScanSession $s) use ($mySession, $orders, $allCartItems, $ordersById, $sessionCustomerNames, $vendorCountry, $serviceFeeRate, $vendor, $locale, &$tableTotal, &$tableOrderCount) {
+        $people = $sessions->map(function (TableScanSession $s) use ($mySession, $orders, $allCartItems, $ordersById, $sessionCustomerNames, $vendorCountry, $vendor, $locale, &$tableTotal, &$tableOrderCount) {
             $personOrders = $orders->get($s->id, collect());
             $personTotal = (float) $personOrders->sum(fn (Order $o) => (float) $o->amount);
 
@@ -1327,7 +1344,6 @@ class CartController extends Controller
             'served_at' => $this->dateTimes->formatDateTime($ci->served_at, $vendor),
         ];
     }
-
 
     /**
      * Build the per-order dict (without its `items` array — that is computed by the caller).

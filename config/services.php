@@ -46,6 +46,17 @@ return [
         'url' => env('VENDOR_FRONTEND_URL', 'http://localhost:3000'),
     ],
 
+    'notifications' => [
+        'queue_enabled' => (bool) env('NOTIFICATIONS_QUEUE_ENABLED', false),
+        'queue' => env('NOTIFICATIONS_QUEUE', 'notifications'),
+    ],
+
+    'session_activity' => [
+        'queue_enabled' => (bool) env('SESSION_ACTIVITY_QUEUE_ENABLED', false),
+        'queue' => env('SESSION_ACTIVITY_QUEUE', 'activity'),
+        'retention_days' => (int) env('SESSION_ACTIVITY_RETENTION_DAYS', 30),
+    ],
+
     'supabase' => [
         'url' => env('SUPABASE_URL'),
         'jwt_secret' => env('SUPABASE_JWT_SECRET'),

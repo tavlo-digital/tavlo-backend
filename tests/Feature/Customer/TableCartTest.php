@@ -376,7 +376,9 @@ class TableCartTest extends TestCase
             ->assertJsonPath('vat_amount', 0.7)
             ->assertJsonPath('line_total', 7.7)
             ->assertJsonPath('menu_item.name', 'Fries')
-            ->assertJsonPath('menu_item.vat_rate', 10);
+            ->assertJsonPath('menu_item.vat_rate', 10)
+            ->assertJsonPath('cart.people.0.personal_items.0.quantity', 2)
+            ->assertJsonPath('cart.people.0.is_me', true);
 
         $this->assertDatabaseHas('cart_items', [
             'table_scan_session_id' => $this->session->id,
@@ -781,7 +783,8 @@ class TableCartTest extends TestCase
             ->patchJson("/api/customer/cart/items/{$item->id}", ['quantity' => 3, 'notes' => 'Extra crispy'])
             ->assertOk()
             ->assertJsonPath('quantity', 3)
-            ->assertJsonPath('notes', 'Extra crispy');
+            ->assertJsonPath('notes', 'Extra crispy')
+            ->assertJsonPath('cart.people.0.personal_items.0.quantity', 3);
     }
 
     public function test_update_item_returns_404_for_another_sessions_item(): void
@@ -821,7 +824,8 @@ class TableCartTest extends TestCase
 
         $this->withHeaders($this->headers)
             ->deleteJson("/api/customer/cart/items/{$item->id}")
-            ->assertNoContent();
+            ->assertOk()
+            ->assertJsonPath('cart.people.0.personal_items', []);
 
         $this->assertDatabaseMissing('cart_items', ['id' => $item->id]);
     }
@@ -1666,7 +1670,7 @@ class TableCartTest extends TestCase
         $session ??= $this->session;
 
         return Order::create([
-            'order_public_id' => 'ord-split-' . uniqid(),
+            'order_public_id' => 'ord-split-'.uniqid(),
             'customer_id' => $customer->id,
             'vendor_id' => $this->vendor->id,
             'table_scan_session_id' => $session->id,

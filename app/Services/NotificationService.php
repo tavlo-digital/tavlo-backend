@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Jobs\DeliverNotification;
 use App\Models\CartItem;
 use App\Models\Notification;
 use App\Models\Order;
@@ -9,6 +10,7 @@ use App\Models\RestaurantTable;
 use App\Models\TableScanSession;
 use App\Models\TeamMember;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Str;
 
 class NotificationService
 {
@@ -18,6 +20,14 @@ class NotificationService
 
     public const KITCHEN = 'kitchen';
 
+    private const TYPE_TABLE = 'table';
+
+    private const TYPE_CUSTOMERS = 'customers';
+
+    private const TYPE_ROLE = 'role';
+
+    private const TYPE_OPERATIONS = 'operations';
+
     public static function notifyTableCustomers(
         int $restaurantTableId,
         string $event,
@@ -25,28 +35,13 @@ class NotificationService
         array $metadata = [],
         bool $notifyOperations = true,
     ): void {
-        $sessions = TableScanSession::query()
-            ->where('restaurant_table_id', $restaurantTableId)
-            ->where('status', 'active')
-            ->get(['customer_id', 'vendor_id']);
-
-        self::notifyCustomers(
-            $sessions->pluck('customer_id')->filter()->unique(),
-            $event,
-            $message,
-            $sessions->first()?->vendor_id,
-            $metadata,
-        );
-
-        if ($notifyOperations && $sessions->isNotEmpty()) {
-            self::notifyOperationsForTableEvent(
-                (int) $sessions->first()->vendor_id,
-                $restaurantTableId,
-                $event,
-                $message,
-                $metadata,
-            );
-        }
+        self::dispatch(self::TYPE_TABLE, [
+            'restaurant_table_id' => $restaurantTableId,
+            'event' => $event,
+            'message' => $message,
+            'metadata' => $metadata,
+            'notify_operations' => $notifyOperations,
+        ]);
     }
 
     public static function notifyCustomers(
@@ -56,32 +51,18 @@ class NotificationService
         ?int $vendorId = null,
         array $metadata = [],
     ): void {
-        $now = now();
-
-        $rows = $customerIds->map(fn (int $id) => [
-            'customer_id' => $id,
-            'vendor_id' => $vendorId,
+        self::dispatch(self::TYPE_CUSTOMERS, [
+            'customer_ids' => $customerIds->map(fn ($id) => (int) $id)->unique()->values()->all(),
             'event' => $event,
             'message' => $message,
-            'metadata' => $metadata !== [] ? json_encode($metadata) : null,
-            'read' => false,
-            'created_at' => $now,
-            'updated_at' => $now,
-        ])->all();
-
-        if (! empty($rows)) {
-            Notification::insert($rows);
-        }
+            'vendor_id' => $vendorId,
+            'metadata' => $metadata,
+        ]);
     }
 
     public static function notify(string $role, int $id, string $event, string $message): void
     {
-        Notification::create([
-            "{$role}_id" => $id,
-            'event' => $event,
-            'message' => $message,
-            'read' => false,
-        ]);
+        self::dispatch(self::TYPE_ROLE, compact('role', 'id', 'event', 'message'));
     }
 
     /**
@@ -96,9 +77,132 @@ class NotificationService
         array $metadata,
         bool $silent = false,
     ): void {
+        self::dispatch(self::TYPE_OPERATIONS, [
+            'vendor_id' => $vendorId,
+            'event' => $event,
+            'message' => $message,
+            'audiences' => $audiences,
+            'metadata' => $metadata,
+            'silent' => $silent,
+        ]);
+    }
+
+    /**
+     * Execute a queued delivery. Public for DeliverNotification only.
+     *
+     * @param  array<string, mixed>  $payload
+     */
+    public static function deliver(string $deliveryId, string $type, array $payload): void
+    {
+        match ($type) {
+            self::TYPE_TABLE => self::deliverTableCustomers($deliveryId, $payload),
+            self::TYPE_CUSTOMERS => self::deliverCustomers(
+                $deliveryId,
+                collect($payload['customer_ids']),
+                $payload['event'],
+                $payload['message'],
+                $payload['vendor_id'],
+                $payload['metadata'],
+            ),
+            self::TYPE_ROLE => self::deliverRole($deliveryId, $payload),
+            self::TYPE_OPERATIONS => self::deliverOperations(
+                $deliveryId,
+                $payload['vendor_id'],
+                $payload['event'],
+                $payload['message'],
+                $payload['audiences'],
+                $payload['metadata'],
+                $payload['silent'],
+            ),
+            default => throw new \InvalidArgumentException("Unknown notification delivery type [{$type}]."),
+        };
+    }
+
+    /** @param array<string, mixed> $payload */
+    private static function deliverTableCustomers(string $deliveryId, array $payload): void
+    {
+        $sessions = TableScanSession::query()
+            ->where('restaurant_table_id', $payload['restaurant_table_id'])
+            ->where('status', 'active')
+            ->get(['customer_id', 'vendor_id']);
+
+        self::deliverCustomers(
+            $deliveryId,
+            $sessions->pluck('customer_id')->filter()->unique(),
+            $payload['event'],
+            $payload['message'],
+            $sessions->first()?->vendor_id,
+            $payload['metadata'],
+        );
+
+        if ($payload['notify_operations'] && $sessions->isNotEmpty()) {
+            self::deliverOperationsForTableEvent(
+                $deliveryId,
+                (int) $sessions->first()->vendor_id,
+                $payload['restaurant_table_id'],
+                $payload['event'],
+                $payload['message'],
+                $payload['metadata'],
+            );
+        }
+    }
+
+    private static function deliverCustomers(
+        string $deliveryId,
+        Collection $customerIds,
+        string $event,
+        string $message,
+        ?int $vendorId = null,
+        array $metadata = [],
+    ): void {
+        $now = now();
+
+        $rows = $customerIds->map(fn (int $id) => [
+            'customer_id' => $id,
+            'vendor_id' => $vendorId,
+            'delivery_key' => "{$deliveryId}:customer:{$id}",
+            'event' => $event,
+            'message' => $message,
+            'metadata' => json_encode(self::deliveryMetadata($deliveryId, $metadata)),
+            'read' => false,
+            'is_silent' => false,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ])->all();
+
+        if (! empty($rows)) {
+            Notification::insertOrIgnore($rows);
+        }
+    }
+
+    /** @param array<string, mixed> $payload */
+    private static function deliverRole(string $deliveryId, array $payload): void
+    {
+        Notification::insertOrIgnore([[
+            'delivery_key' => "{$deliveryId}:{$payload['role']}:{$payload['id']}",
+            "{$payload['role']}_id" => $payload['id'],
+            'event' => $payload['event'],
+            'message' => $payload['message'],
+            'read' => false,
+            'is_silent' => false,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]]);
+    }
+
+    private static function deliverOperations(
+        string $deliveryId,
+        int $vendorId,
+        string $event,
+        string $message,
+        array $audiences,
+        array $metadata,
+        bool $silent = false,
+    ): void {
         $audiences = array_values(array_unique($audiences));
         $now = now();
         $base = [
+            'delivery_key' => null,
             'customer_id' => null,
             'vendor_id' => $vendorId,
             'waiter_id' => null,
@@ -106,7 +210,7 @@ class NotificationService
             'admin_id' => null,
             'event' => $event,
             'message' => $message,
-            'metadata' => json_encode($metadata),
+            'metadata' => json_encode(self::deliveryMetadata($deliveryId, $metadata)),
             'read' => $silent,
             'is_silent' => $silent,
             'created_at' => $now,
@@ -115,7 +219,10 @@ class NotificationService
         $rows = [];
 
         if (in_array(self::VENDOR, $audiences, true)) {
-            $rows[] = $base;
+            $rows[] = [
+                ...$base,
+                'delivery_key' => "{$deliveryId}:vendor:{$vendorId}",
+            ];
         }
 
         $staffRoles = array_values(array_intersect(
@@ -129,16 +236,17 @@ class NotificationService
                 ->where('status', 'active')
                 ->whereIn('role', $staffRoles)
                 ->get(['id', 'role'])
-                ->each(function (TeamMember $member) use (&$rows, $base): void {
+                ->each(function (TeamMember $member) use (&$rows, $base, $deliveryId): void {
                     $rows[] = [
                         ...$base,
+                        'delivery_key' => "{$deliveryId}:{$member->role}:{$member->id}",
                         $member->role === self::WAITER ? 'waiter_id' : 'kitchen_id' => $member->id,
                     ];
                 });
         }
 
         if ($rows !== []) {
-            Notification::insert($rows);
+            Notification::insertOrIgnore($rows);
         }
     }
 
@@ -160,7 +268,7 @@ class NotificationService
             'payment_received' => (bool) $order->payment_received,
             'paid_by' => $paidBy ? [
                 'id' => $paidBy->id,
-                'name' => trim(($paidBy->first_name ?? '') . ' ' . ($paidBy->last_name ?? '')) ?: 'Guest',
+                'name' => trim(($paidBy->first_name ?? '').' '.($paidBy->last_name ?? '')) ?: 'Guest',
             ] : null,
         ];
 
@@ -182,7 +290,8 @@ class NotificationService
         return $snapshot;
     }
 
-    private static function notifyOperationsForTableEvent(
+    private static function deliverOperationsForTableEvent(
+        string $deliveryId,
         int $vendorId,
         int $tableId,
         string $event,
@@ -220,7 +329,8 @@ class NotificationService
             $staffTemplate = 'staff.table_session_changed';
         }
 
-        self::notifyOperations(
+        self::deliverOperations(
+            $deliveryId,
             $vendorId,
             $event,
             $message,
@@ -238,5 +348,34 @@ class NotificationService
             ],
             $silent,
         );
+    }
+
+    /** @param array<string, mixed> $payload */
+    private static function dispatch(string $type, array $payload): void
+    {
+        $deliveryId = (string) Str::uuid7();
+        $payload['metadata'] = isset($payload['metadata'])
+            ? [
+                ...$payload['metadata'],
+                'event_version' => (int) floor(microtime(true) * 1_000_000),
+            ]
+            : [];
+        $job = new DeliverNotification($deliveryId, $type, $payload);
+
+        if ((bool) config('services.notifications.queue_enabled', false)) {
+            dispatch($job)->afterCommit();
+
+            return;
+        }
+
+        $job->handle();
+    }
+
+    private static function deliveryMetadata(string $deliveryId, array $metadata): array
+    {
+        return [
+            ...$metadata,
+            'event_id' => $deliveryId,
+        ];
     }
 }
