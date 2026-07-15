@@ -37,7 +37,7 @@ class TableStatePatchService
             : Order::with([
                 'paidBy:id,first_name,last_name',
                 'vendor:id,country',
-                'tableScanSession:id,customer_id',
+                'tableScanSession.customer:id,first_name,last_name',
             ])->whereIn('id', $upsertOrderIds)->get();
 
         $explicitItemIds = $this->ids($itemIds)->diff($removedItems)->values();
@@ -45,6 +45,70 @@ class TableStatePatchService
             ->reject(fn (CartItem $item) => $removedItems->contains((int) $item->id))
             ->unique('id')
             ->values();
+
+        return $this->makePatch(
+            $operation,
+            $orders,
+            $items,
+            $removedOrders,
+            $removedItems,
+            null,
+        );
+    }
+
+    /**
+     * Build a patch without reloading records already made authoritative by a
+     * mutation transaction.
+     *
+     * @param  Collection<int, Order>  $orders
+     * @param  Collection<int, CartItem>  $items
+     * @param  iterable<int|string>  $removedOrderIds
+     * @param  iterable<int|string>  $removedItemIds
+     * @return array<string, mixed>
+     */
+    public function buildFromLoadedState(
+        string $operation,
+        Collection $orders,
+        Collection $items,
+        iterable $removedOrderIds = [],
+        iterable $removedItemIds = [],
+        ?string $vendorCountry = null,
+    ): array {
+        $removedOrders = $this->ids($removedOrderIds);
+        $removedItems = $this->ids($removedItemIds);
+        $orders = $orders
+            ->reject(fn (Order $order) => $removedOrders->contains((int) $order->id))
+            ->unique('id')
+            ->values();
+        $items = $items
+            ->reject(fn (CartItem $item) => $removedItems->contains((int) $item->id))
+            ->unique('id')
+            ->values();
+
+        return $this->makePatch(
+            $operation,
+            $orders,
+            $items,
+            $removedOrders,
+            $removedItems,
+            $vendorCountry,
+        );
+    }
+
+    /**
+     * @param  Collection<int, Order>  $orders
+     * @param  Collection<int, CartItem>  $items
+     * @return array<string, mixed>
+     */
+    private function makePatch(
+        string $operation,
+        Collection $orders,
+        Collection $items,
+        Collection $removedOrders,
+        Collection $removedItems,
+        ?string $vendorCountry,
+    ): array {
+        $upsertOrderIds = $orders->pluck('id')->map(fn ($id) => (int) $id)->values();
 
         $referencedOrderIds = $items
             ->flatMap(fn (CartItem $item) => $this->sharedOrderIds($item))
@@ -54,18 +118,26 @@ class TableStatePatchService
             ->unique()
             ->values();
 
-        $identityOrders = $referencedOrderIds->isEmpty()
-            ? collect()
-            : Order::with('tableScanSession.customer:id,first_name,last_name')
-                ->whereIn('id', $referencedOrderIds)
-                ->get()
-                ->keyBy('id');
+        $identityOrders = $orders->keyBy('id');
+        $missingIdentityIds = $referencedOrderIds->diff($identityOrders->keys()->map(fn ($id) => (int) $id));
+        if ($missingIdentityIds->isNotEmpty()) {
+            $identityOrders = $identityOrders->merge(
+                Order::with('tableScanSession.customer:id,first_name,last_name')
+                    ->whereIn('id', $missingIdentityIds)
+                    ->get()
+                    ->keyBy('id'),
+            );
+        }
 
-        $countryByVendor = $orders
-            ->filter(fn (Order $order) => $order->vendor !== null)
-            ->mapWithKeys(fn (Order $order) => [
-                (int) $order->vendor_id => (string) ($order->vendor?->country ?? 'AT'),
-            ]);
+        $countryByVendor = $vendorCountry !== null
+            ? $orders->mapWithKeys(fn (Order $order) => [
+                (int) $order->vendor_id => $vendorCountry,
+            ])
+            : $orders
+                ->filter(fn (Order $order) => $order->vendor !== null)
+                ->mapWithKeys(fn (Order $order) => [
+                    (int) $order->vendor_id => (string) ($order->vendor?->country ?? 'AT'),
+                ]);
 
         $ownerVendorIds = $identityOrders
             ->mapWithKeys(fn (Order $order) => [(int) $order->id => (int) $order->vendor_id]);
@@ -204,7 +276,9 @@ class TableStatePatchService
                     return null;
                 }
 
-                $customer = $order->tableScanSession?->customer;
+                $customer = $order->relationLoaded('customer')
+                    ? $order->customer
+                    : $order->tableScanSession?->customer;
 
                 return [
                     'order_id' => (int) $order->id,

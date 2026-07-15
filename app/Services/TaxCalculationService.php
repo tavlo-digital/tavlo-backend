@@ -75,6 +75,10 @@ class TaxCalculationService
             return 0.0;
         }
 
+        if ($menuItem->getAttribute('resolved_vat_rate') !== null) {
+            return (float) $menuItem->getAttribute('resolved_vat_rate');
+        }
+
         if ($menuItem->tax_category) {
             $rate = self::resolveVatRate($menuItem->tax_category, $vendorCountry);
 

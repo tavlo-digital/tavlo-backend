@@ -11,8 +11,7 @@ use App\Models\Vendor;
 use App\Services\LocaleService;
 use App\Services\MenuCustomizationService;
 use App\Services\NotificationService;
-use App\Services\PaymentGuardService;
-use App\Services\ShareOrderService;
+use App\Services\OrderSharingService;
 use App\Services\TableStatePatchService;
 use App\Services\TaxCalculationService;
 use App\Services\VendorDateTimeService;
@@ -30,6 +29,7 @@ class CartController extends Controller
         private readonly LocaleService $locales,
         private readonly MenuCustomizationService $customizations,
         private readonly TableStatePatchService $statePatches,
+        private readonly OrderSharingService $orderSharing,
     ) {}
 
     /**
@@ -39,6 +39,30 @@ class CartController extends Controller
     private function activeSession(Request $request): ?TableScanSession
     {
         return TableScanSession::where('customer_id', $request->user()->id)
+            ->where('status', 'active')
+            ->latest('scanned_at')
+            ->first();
+    }
+
+    /**
+     * Resolve the sharing context in one query. The regular relation-based
+     * helper would otherwise require separate vendor and settings queries.
+     */
+    private function activeSharingSession(Request $request): ?TableScanSession
+    {
+        return TableScanSession::query()
+            ->select('table_scan_sessions.*')
+            ->addSelect([
+                'sharing_vendor_country' => Vendor::query()
+                    ->select('country')
+                    ->whereColumn('vendors.id', 'table_scan_sessions.vendor_id')
+                    ->limit(1),
+                'sharing_service_fee_rate' => DB::table('vendor_settings')
+                    ->select('service_fee_rate')
+                    ->whereColumn('vendor_settings.vendor_id', 'table_scan_sessions.vendor_id')
+                    ->limit(1),
+            ])
+            ->where('customer_id', $request->user()->id)
             ->where('status', 'active')
             ->latest('scanned_at')
             ->first();
@@ -61,22 +85,6 @@ class CartController extends Controller
     private function customerName($customer): string
     {
         return trim(($customer->first_name ?? '').' '.($customer->last_name ?? '')) ?: 'A guest';
-    }
-
-    /**
-     * Sharing or unsharing changes the amounts of every order the cart item
-     * touches. While any of them is covered by an active payment (an open
-     * checkout), the item is locked.
-     */
-    private function itemLockedByActivePayment(Order $targetOrder, CartItem $cartItem): bool
-    {
-        $relatedOrderIds = collect([$targetOrder->id, $cartItem->order_id])
-            ->merge(is_array($cartItem->shared_order_ids) ? $cartItem->shared_order_ids : [])
-            ->merge(Order::where('parent_order_id', $targetOrder->id)->pluck('id'))
-            ->filter()
-            ->unique();
-
-        return PaymentGuardService::activePaymentsCovering($relatedOrderIds)->isNotEmpty();
     }
 
     /**
@@ -712,191 +720,23 @@ class CartController extends Controller
             return response()->json(['message' => 'Provide shared_item or unshared_item.'], 422);
         }
 
-        $customerId = $request->user()->id;
-
-        $order = Order::where('id', $order_id)
-            ->where('customer_id', $customerId)
-            ->first();
-
-        if (! $order) {
-            return response()->json(['message' => 'Order not found.'], 404);
-        }
-
-        $mySession = $this->activeSession($request);
+        $mySession = $this->activeSharingSession($request);
         if (! $mySession) {
             return response()->json(['message' => 'No active table session found.'], 422);
         }
 
-        $sessionIds = $this->tableSessionIds($mySession);
-
-        $affectedOrderIds = collect([$order->id]);
-        $affectedItemIds = collect();
-        $removedOrderIds = collect();
-
-        if (! empty($data['shared_item'])) {
-            $cartItem = CartItem::where('id', $data['shared_item'])
-                ->whereIn('table_scan_session_id', $sessionIds)
-                ->first();
-
-            if (! $cartItem) {
-                return response()->json([
-                    'message' => 'Shared cart item does not belong to this table.',
-                ], 422);
-            }
-
-            if ($this->itemLockedByActivePayment($order, $cartItem)) {
-                return response()->json([
-                    'message' => 'These items are locked while a payment is in progress.',
-                ], 409);
-            }
-
-            if ((int) $cartItem->table_scan_session_id === (int) $mySession->id) {
-                return response()->json([
-                    'message' => 'You cannot share your own cart item with yourself.',
-                ], 422);
-            }
-
-            if ($cartItem->order_id) {
-                $ownerOrder = Order::where('id', $cartItem->order_id)->first();
-
-                if ($ownerOrder && (int) $ownerOrder->paid_by === (int) $customerId) {
-                    return response()->json([
-                        'message' => 'You are already paying for this item.',
-                    ], 422);
-                }
-            }
-
-            // When my order is covered by another payer, my opt-in share must
-            // stay payable by me: it attaches to my side order instead of the
-            // covered order, so the payer keeps covering only my own items.
-            $isCoveredByOther = $order->paid_by !== null && (int) $order->paid_by !== (int) $customerId;
-            $existingSideOrderId = $isCoveredByOther
-                ? Order::where('parent_order_id', $order->id)->where('payment_received', false)->value('id')
-                : null;
-            $myShareOrderIds = array_values(array_filter([$order->id, $existingSideOrderId]));
-
-            $existingSharedOrderIds = array_map('intval', is_array($cartItem->shared_order_ids) ? $cartItem->shared_order_ids : []);
-            if (array_intersect($myShareOrderIds, $existingSharedOrderIds) !== []) {
-                return response()->json([
-                    'message' => 'This item is already shared with your order.',
-                ], 422);
-            }
-
-            $targetOrderId = DB::transaction(function () use ($cartItem, $order, $isCoveredByOther, $myShareOrderIds) {
-                $target = $isCoveredByOther ? ShareOrderService::sideOrderFor($order) : $order;
-                $locked = CartItem::where('id', $cartItem->id)->lockForUpdate()->first();
-                $existing = array_map('intval', is_array($locked->shared_order_ids) ? $locked->shared_order_ids : []);
-                if (array_intersect([...$myShareOrderIds, $target->id], $existing) !== []) {
-                    throw ValidationException::withMessages([
-                        'shared_item' => ['This item is already shared with your order.'],
-                    ]);
-                }
-                $updated = array_values(array_unique(array_merge($existing, [$target->id])));
-                $locked->update(['shared_order_ids' => $updated]);
-
-                return $target->id;
-            });
-            $affectedOrderIds->push($targetOrderId);
-
-            $cartItem->refresh();
-            $affectedItemIds->push((int) $cartItem->id);
-            $freshIds = array_map('intval', is_array($cartItem->shared_order_ids) ? $cartItem->shared_order_ids : []);
-
-            if ($cartItem->order_id) {
-                $affectedOrderIds->push($cartItem->order_id);
-            }
-            $affectedOrderIds = $affectedOrderIds->merge($freshIds);
-        }
-
-        if (! empty($data['unshared_item'])) {
-            $cartItem = CartItem::where('id', $data['unshared_item'])
-                ->whereIn('table_scan_session_id', $sessionIds)
-                ->first();
-
-            if (! $cartItem) {
-                return response()->json([
-                    'message' => 'Unshared cart item does not belong to this table.',
-                ], 422);
-            }
-
-            if ($this->itemLockedByActivePayment($order, $cartItem)) {
-                return response()->json([
-                    'message' => 'These items are locked while a payment is in progress.',
-                ], 409);
-            }
-
-            if ($cartItem->order_id) {
-                $ownerOrder = Order::where('id', $cartItem->order_id)->first();
-
-                if ($ownerOrder && $ownerOrder->payment_received) {
-                    return response()->json([
-                        'message' => 'Cannot unshare an item whose owner has already paid.',
-                    ], 422);
-                }
-            }
-
-            DB::transaction(function () use ($cartItem, $order, &$affectedOrderIds) {
-                $locked = CartItem::where('id', $cartItem->id)->lockForUpdate()->first();
-                $existing = is_array($locked->shared_order_ids) ? $locked->shared_order_ids : [];
-                $affectedOrderIds = $affectedOrderIds->merge(array_map('intval', $existing));
-                if ($locked->order_id) {
-                    $affectedOrderIds->push($locked->order_id);
-                }
-
-                $filtered = array_values(array_filter(
-                    array_map('intval', $existing),
-                    fn (int $id) => $id !== $order->id
-                ));
-                $locked->update(['shared_order_ids' => $filtered]);
-            });
-            $affectedItemIds->push((int) $cartItem->id);
-        }
-
-        if (! $mySession->relationLoaded('vendor')) {
-            $mySession->load('vendor.vendorSetting');
-        }
-        $vendorCountry = $this->vendorCountry($mySession);
-        $serviceFeeRate = $this->serviceFeeRate($mySession);
-        $ordersToRecalc = Order::whereIn('id', $affectedOrderIds->unique()->values()->all())
-            ->where('payment_received', false)
-            ->whereNotNull('table_scan_session_id')
-            ->get();
-
-        foreach ($ordersToRecalc as $affectedOrder) {
-            $itemsTotal = $this->computeOrderAmount(
-                $affectedOrder,
-                $affectedOrder->table_scan_session_id,
-                vendorCountry: $vendorCountry
-            );
-            $serviceFee = round($itemsTotal * ($serviceFeeRate / 100), 2);
-            $affectedOrder->update([
-                'amount' => round($itemsTotal + $serviceFee, 2),
-                'service_fee' => $serviceFee,
-            ]);
-        }
-
-        // A side order that lost its last share reference has no reason to
-        // exist anymore.
-        foreach ($ordersToRecalc as $affectedOrder) {
-            if ($affectedOrder->parent_order_id) {
-                if (ShareOrderService::deleteIfEmpty($affectedOrder)) {
-                    $removedOrderIds->push((int) $affectedOrder->id);
-                }
-            }
-        }
+        $result = $this->orderSharing->update(
+            $order_id,
+            (int) $request->user()->id,
+            $mySession,
+            $this->tableSessionIds($mySession),
+            ! empty($data['shared_item']) ? (int) $data['shared_item'] : null,
+            ! empty($data['unshared_item']) ? (int) $data['unshared_item'] : null,
+            (string) ($mySession->getAttribute('sharing_vendor_country') ?: 'AT'),
+            (float) ($mySession->getAttribute('sharing_service_fee_rate') ?: 0),
+        );
 
         $customerName = $this->customerName($request->user());
-        $snapshots = Order::with('paidBy:id,first_name,last_name')
-            ->whereIn('id', $affectedOrderIds->unique()->values()->all())
-            ->get()
-            ->map(fn (Order $o) => NotificationService::orderSnapshot($o))
-            ->values()->all();
-        $statePatch = $this->statePatches->build(
-            'order.sharing_updated',
-            $affectedOrderIds,
-            $affectedItemIds,
-            $removedOrderIds,
-        );
         NotificationService::notifyTableCustomers(
             $mySession->restaurant_table_id,
             'order_updated',
@@ -905,18 +745,18 @@ class CartController extends Controller
                 'template' => 'order.sharing_updated',
                 'customer_id' => $request->user()->id,
                 'customer_name' => $customerName,
-                'order_id' => $order->id,
-                'order_snapshots' => $snapshots,
-                'removed_order_ids' => $removedOrderIds->unique()->values()->all(),
-                'state_patch' => $statePatch,
+                'order_id' => $result['order']->id,
+                'order_snapshots' => $result['order_snapshots'],
+                'removed_order_ids' => $result['removed_order_ids'],
+                'state_patch' => $result['state_patch'],
             ],
         );
 
         return response()->json([
             'message' => 'Item sharing updated.',
-            'order_snapshots' => $snapshots,
-            'removed_order_ids' => $removedOrderIds->unique()->values()->all(),
-            'state_patch' => $statePatch,
+            'order_snapshots' => $result['order_snapshots'],
+            'removed_order_ids' => $result['removed_order_ids'],
+            'state_patch' => $result['state_patch'],
         ]);
     }
 

@@ -16,6 +16,7 @@ use App\Models\TableScanSession;
 use App\Models\Vendor;
 use App\Models\VendorSetting;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 class TableCartTest extends TestCase
@@ -1180,6 +1181,34 @@ class TableCartTest extends TestCase
             'quantity' => 1,
         ]);
 
+        // Unrelated table history must not increase the mutation's query
+        // count: the endpoint should only load the changed sharing graph.
+        foreach (range(1, 12) as $sequence) {
+            $extraOrder = Order::create([
+                'order_public_id' => "ord-unrelated-share-budget-{$sequence}",
+                'customer_id' => $other->id,
+                'vendor_id' => $this->vendor->id,
+                'table_scan_session_id' => $otherSession->id,
+                'status' => Order::STATUS_CONFIRMED,
+                'amount' => 4.2,
+                'currency' => 'EUR',
+                'order_type' => 'dine-in',
+                'payment_pending' => false,
+                'payment_received' => false,
+            ]);
+            CartItem::create([
+                'table_scan_session_id' => $otherSession->id,
+                'menu_item_id' => $this->menuItem->id,
+                'order_id' => $extraOrder->id,
+                'quantity' => 1,
+            ]);
+        }
+
+        $queryCount = 0;
+        DB::listen(function () use (&$queryCount): void {
+            $queryCount++;
+        });
+
         $response = $this->withHeaders($this->headers)
             ->putJson("/api/customer/table/order/update/{$myOrder->id}", [
                 'shared_item' => $sharedItem->id,
@@ -1209,6 +1238,7 @@ class TableCartTest extends TestCase
         $this->assertNotNull($notification);
         $this->assertSame($statePatch, $notification->metadata['state_patch']);
         $this->assertArrayNotHasKey('person_snapshots', $notification->metadata);
+        $this->assertLessThanOrEqual(22, $queryCount, "Sharing update executed {$queryCount} database queries.");
     }
 
     public function test_unshare_compact_patch_reports_deleted_empty_side_order(): void
