@@ -5,6 +5,8 @@ namespace App\Services;
 use App\Models\CartItem;
 use App\Models\Order;
 use App\Models\OrderPayment;
+use App\Models\TableScanSession;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -16,6 +18,94 @@ use Illuminate\Support\Str;
  */
 class ShareOrderService
 {
+    /**
+     * Remove every individual share the payer previously took from the orders
+     * they are about to cover. This is the server-side equivalent of the old
+     * sequence of one unshare request per item, but runs in the pay-for
+     * transaction and reports every structural change for the state patch.
+     *
+     * @param  iterable<int, Order>  $coveredOrders
+     * @return array{affected_order_ids: Collection, affected_item_ids: Collection, removed_order_ids: Collection}
+     */
+    public static function removePayerSharesFrom(iterable $coveredOrders, TableScanSession $payerSession): array
+    {
+        $coveredOrderIds = collect($coveredOrders)
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values();
+
+        $payerOrders = Order::where('table_scan_session_id', $payerSession->id)
+            ->where('payment_received', false)
+            ->whereNotIn('status', [Order::STATUS_CANCELLED])
+            ->lockForUpdate()
+            ->get();
+        $payerOrderIds = $payerOrders->pluck('id')->map(fn ($id) => (int) $id)->values();
+
+        if ($coveredOrderIds->isEmpty() || $payerOrderIds->isEmpty()) {
+            return [
+                'affected_order_ids' => collect(),
+                'affected_item_ids' => collect(),
+                'removed_order_ids' => collect(),
+            ];
+        }
+
+        $items = CartItem::whereIn('order_id', $coveredOrderIds)
+            ->lockForUpdate()
+            ->get()
+            ->filter(function (CartItem $item) use ($payerOrderIds) {
+                return collect($item->shared_order_ids ?? [])
+                    ->map(fn ($id) => (int) $id)
+                    ->intersect($payerOrderIds)
+                    ->isNotEmpty();
+            });
+
+        if ($items->isNotEmpty() && PaymentGuardService::activePaymentsCovering($payerOrderIds)->isNotEmpty()) {
+            abort(409, 'Your current item shares are locked while a payment is in progress.');
+        }
+
+        $affectedOrderIds = collect();
+        $affectedItemIds = collect();
+
+        foreach ($items as $item) {
+            $existing = collect($item->shared_order_ids ?? [])
+                ->map(fn ($id) => (int) $id)
+                ->unique()
+                ->values();
+            $updated = $existing->diff($payerOrderIds)->values();
+
+            $item->update(['shared_order_ids' => $updated->all()]);
+            $affectedItemIds->push((int) $item->id);
+            $affectedOrderIds = $affectedOrderIds
+                ->merge($existing)
+                ->merge($updated)
+                ->push((int) $item->order_id);
+        }
+
+        $affectedOrderIds = $affectedOrderIds->unique()->values();
+
+        Order::with('vendor.vendorSetting')
+            ->whereIn('id', $affectedOrderIds)
+            ->where('payment_received', false)
+            ->get()
+            ->each(fn (Order $order) => self::recalcOrder($order));
+
+        $removedOrderIds = collect();
+        $payerOrders
+            ->filter(fn (Order $order) => $order->parent_order_id !== null)
+            ->each(function (Order $sideOrder) use ($affectedOrderIds, $removedOrderIds): void {
+                if ($affectedOrderIds->contains((int) $sideOrder->id) && self::deleteIfEmpty($sideOrder)) {
+                    $removedOrderIds->push((int) $sideOrder->id);
+                }
+            });
+
+        return [
+            'affected_order_ids' => $affectedOrderIds,
+            'affected_item_ids' => $affectedItemIds->unique()->values(),
+            'removed_order_ids' => $removedOrderIds->unique()->values(),
+        ];
+    }
+
     /**
      * Find or create the unpaid side order attached to $main.
      */

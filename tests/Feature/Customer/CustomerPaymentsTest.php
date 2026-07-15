@@ -23,11 +23,17 @@ class CustomerPaymentsTest extends TestCase
     use RefreshDatabase;
 
     private Customer $customer;
+
     private Vendor $vendor;
+
     private VendorSetting $settings;
+
     private TableScanSession $session;
+
     private MenuItem $menuItem;
+
     private array $headers;
+
     private FakeStripePaymentService $stripe;
 
     protected function setUp(): void
@@ -67,7 +73,7 @@ class CustomerPaymentsTest extends TestCase
         $category = MenuCategory::create([
             'vendor_id' => $this->vendor->id,
             'name' => 'Mains',
-            'slug' => 'mains-' . $this->vendor->id,
+            'slug' => 'mains-'.$this->vendor->id,
         ]);
 
         $this->menuItem = MenuItem::create([
@@ -77,7 +83,7 @@ class CustomerPaymentsTest extends TestCase
             'price' => 6,
         ]);
 
-        $this->stripe = new FakeStripePaymentService();
+        $this->stripe = new FakeStripePaymentService;
         $this->app->instance(StripePaymentService::class, $this->stripe);
     }
 
@@ -115,7 +121,7 @@ class CustomerPaymentsTest extends TestCase
             ->assertOk()
             ->assertJsonPath('method.stripe', true);
 
-        $wrapped = urlencode('{' . $this->vendor->vendor_public_id . '}');
+        $wrapped = urlencode('{'.$this->vendor->vendor_public_id.'}');
         $this->getJson("/api/customer/payment-methods?restaurant_id={$wrapped}")
             ->assertOk()
             ->assertJsonPath('method.on-site', true);
@@ -628,6 +634,79 @@ class CustomerPaymentsTest extends TestCase
         $this->assertSame($this->customer->id, $second->fresh()->paid_by);
     }
 
+    public function test_pay_for_atomically_removes_the_payers_item_share_and_returns_the_same_patch_as_realtime(): void
+    {
+        [$tablemate, $tablemateSession] = $this->tablemate();
+
+        $payerOrder = $this->order([
+            'amount' => 9.9,
+            'payment_pending' => false,
+        ]);
+        CartItem::create([
+            'table_scan_session_id' => $this->session->id,
+            'menu_item_id' => $this->menuItem->id,
+            'order_id' => $payerOrder->id,
+            'quantity' => 1,
+        ]);
+
+        $targetOrder = $this->order([
+            'table_scan_session_id' => $tablemateSession->id,
+            'amount' => 3.3,
+            'payment_pending' => false,
+        ], $tablemate);
+        $targetItem = CartItem::create([
+            'table_scan_session_id' => $tablemateSession->id,
+            'menu_item_id' => $this->menuItem->id,
+            'order_id' => $targetOrder->id,
+            'quantity' => 1,
+            'shared_order_ids' => [$payerOrder->id],
+        ]);
+
+        [$unrelatedCustomer, $unrelatedSession] = $this->tablemate();
+        $unrelatedOrder = $this->order([
+            'table_scan_session_id' => $unrelatedSession->id,
+            'payment_pending' => false,
+        ], $unrelatedCustomer);
+        $unrelatedItem = CartItem::create([
+            'table_scan_session_id' => $unrelatedSession->id,
+            'menu_item_id' => $this->menuItem->id,
+            'order_id' => $unrelatedOrder->id,
+            'quantity' => 1,
+        ]);
+
+        $response = $this->withHeaders($this->headers)
+            ->postJson('/api/customer/payments/pay-for', [
+                'order_id' => $targetOrder->order_public_id,
+            ])
+            ->assertOk()
+            ->assertJsonPath('state_patch.operation', 'payment.assigned');
+
+        $statePatch = $response->json('state_patch');
+        $targetItemPatch = collect($statePatch['items']['upsert'])
+            ->firstWhere('cart_item_id', $targetItem->id);
+        $targetOrderPatch = collect($statePatch['orders']['upsert'])
+            ->firstWhere('id', $targetOrder->id);
+
+        $this->assertNotEmpty($statePatch['id']);
+        $this->assertGreaterThan(0, $statePatch['version']);
+        $this->assertSame([], $targetItemPatch['shared_order_ids']);
+        $this->assertSame($this->customer->id, $targetOrderPatch['paid_by']['id']);
+        $this->assertNotContains($unrelatedOrder->id, array_column($statePatch['orders']['upsert'], 'id'));
+        $this->assertNotContains($unrelatedItem->id, array_column($statePatch['items']['upsert'], 'cart_item_id'));
+        $this->assertSame([], array_map('intval', $targetItem->fresh()->shared_order_ids ?? []));
+        $this->assertSame(6.6, (float) $payerOrder->fresh()->amount);
+        $this->assertSame(6.6, (float) $targetOrder->fresh()->amount);
+        $this->assertSame($this->customer->id, $targetOrder->fresh()->paid_by);
+
+        $assignedNotification = Notification::where('customer_id', $tablemate->id)
+            ->where('event', 'order_updated')
+            ->get()
+            ->first(fn (Notification $notification) => ($notification->metadata['template'] ?? null) === 'payment.assigned');
+
+        $this->assertNotNull($assignedNotification);
+        $this->assertSame($statePatch, $assignedNotification->metadata['state_patch']);
+    }
+
     public function test_single_order_assignment_rejects_ineligible_order(): void
     {
         [$tablemate, $tablemateSession] = $this->tablemate();
@@ -804,11 +883,12 @@ class CustomerPaymentsTest extends TestCase
         $mateToken = $tablemate->createToken('test', ['role:customer'])->plainTextToken;
         $mateHeaders = ['Authorization' => "Bearer {$mateToken}", 'Accept' => 'application/json'];
 
-        $this->withHeaders($mateHeaders)
+        $response = $this->withHeaders($mateHeaders)
             ->postJson('/api/customer/payments/pay-for', [
                 'order_id' => $myOrder->order_public_id,
             ])
-            ->assertOk();
+            ->assertOk()
+            ->assertJsonPath('state_patch.operation', 'payment.assigned');
 
         $sideOrder = Order::where('parent_order_id', $myOrder->id)->first();
         $this->assertNotNull($sideOrder);
@@ -818,6 +898,15 @@ class CustomerPaymentsTest extends TestCase
         $this->assertSame(3.3, (float) $sideOrder->fresh()->amount);
         $this->assertSame($tablemate->id, $myOrder->fresh()->paid_by);
         $this->assertNull($sideOrder->fresh()->paid_by);
+
+        $statePatch = $response->json('state_patch');
+        $sideOrderPatch = collect($statePatch['orders']['upsert'])
+            ->firstWhere('id', $sideOrder->id);
+        $sharedItemPatch = collect($statePatch['items']['upsert'])
+            ->firstWhere('cart_item_id', $sharedItem->id);
+        $this->assertNotNull($sideOrderPatch);
+        $this->assertSame($myOrder->id, $sideOrderPatch['parent_order_id']);
+        $this->assertSame([$sideOrder->id], $sharedItemPatch['shared_order_ids']);
 
         // The payer is charged for their own share + my own items only
         // (3.30 + 6.60 gross, incl. 10% AT food VAT).
@@ -856,16 +945,24 @@ class CustomerPaymentsTest extends TestCase
 
         $mateToken = $tablemate->createToken('test', ['role:customer'])->plainTextToken;
 
-        $this->withHeaders(['Authorization' => "Bearer {$mateToken}", 'Accept' => 'application/json'])
+        $response = $this->withHeaders(['Authorization' => "Bearer {$mateToken}", 'Accept' => 'application/json'])
             ->deleteJson("/api/customer/payments/pay-for/{$myOrder->order_public_id}")
             ->assertOk()
-            ->assertJsonPath('released_orders_count', 1);
+            ->assertJsonPath('released_orders_count', 1)
+            ->assertJsonPath('state_patch.operation', 'payment.assignment_released');
 
         $this->assertNull($myOrder->fresh()->paid_by);
         $this->assertDatabaseMissing('orders', ['id' => $sideOrder->id]);
         $this->assertSame([$myOrder->id], array_map('intval', $sharedItem->fresh()->shared_order_ids));
         // Own burger (6.60 gross) + merged-back share (3.30).
         $this->assertSame(9.9, (float) $myOrder->fresh()->amount);
+
+        $statePatch = $response->json('state_patch');
+        $this->assertContains($sideOrder->id, $statePatch['orders']['remove_ids']);
+        $this->assertNotNull(collect($statePatch['orders']['upsert'])->firstWhere('id', $myOrder->id));
+        $sharedItemPatch = collect($statePatch['items']['upsert'])
+            ->firstWhere('cart_item_id', $sharedItem->id);
+        $this->assertSame([$myOrder->id], $sharedItemPatch['shared_order_ids']);
     }
 
     public function test_side_orders_cannot_be_covered_by_pay_for(): void
@@ -1016,16 +1113,31 @@ class CustomerPaymentsTest extends TestCase
         [$tablemate] = $this->tablemate();
         $order = $this->order(['payment_pending' => false]);
 
-        $this->withHeaders($this->headers)
+        $createResponse = $this->withHeaders($this->headers)
             ->postJson('/api/customer/payments/create-intent')
-            ->assertOk();
+            ->assertOk()
+            ->assertJsonPath('state_patch.operation', 'payment.initiated');
 
         $this->assertTrue($order->fresh()->payment_pending);
 
-        $this->withHeaders($this->headers)
+        $createPatch = $createResponse->json('state_patch');
+        $pendingOrderPatch = collect($createPatch['orders']['upsert'])
+            ->firstWhere('id', $order->id);
+        $this->assertTrue($pendingOrderPatch['payment_pending']);
+        $this->assertFalse($pendingOrderPatch['payment_received']);
+
+        $initiatedNotification = Notification::where('customer_id', $tablemate->id)
+            ->where('event', 'payment_updated')
+            ->get()
+            ->first(fn (Notification $notification) => ($notification->metadata['template'] ?? null) === 'payment.initiated');
+        $this->assertNotNull($initiatedNotification);
+        $this->assertSame($createPatch, $initiatedNotification->metadata['state_patch']);
+
+        $cancelResponse = $this->withHeaders($this->headers)
             ->deleteJson('/api/customer/payments/intent')
             ->assertOk()
-            ->assertJsonPath('canceled', true);
+            ->assertJsonPath('canceled', true)
+            ->assertJsonPath('state_patch.operation', 'payment.canceled');
 
         $this->assertContains('pi_fake_1', $this->stripe->canceled);
         $this->assertDatabaseHas('order_payments', [
@@ -1040,6 +1152,13 @@ class CustomerPaymentsTest extends TestCase
             ->get()
             ->first(fn (Notification $n) => str_contains((string) $n->getRawOriginal('metadata'), 'payment.canceled'));
         $this->assertNotNull($canceledNotification);
+
+        $cancelPatch = $cancelResponse->json('state_patch');
+        $unlockedOrderPatch = collect($cancelPatch['orders']['upsert'])
+            ->firstWhere('id', $order->id);
+        $this->assertFalse($unlockedOrderPatch['payment_pending']);
+        $this->assertFalse($unlockedOrderPatch['payment_received']);
+        $this->assertSame($cancelPatch, $canceledNotification->metadata['state_patch']);
 
         // Idempotent when nothing remains to cancel.
         $this->withHeaders($this->headers)
@@ -1587,7 +1706,7 @@ class CustomerPaymentsTest extends TestCase
     private function order(array $attributes = [], ?Customer $customer = null): Order
     {
         return Order::create(array_merge([
-            'order_public_id' => 'ord-' . uniqid(),
+            'order_public_id' => 'ord-'.uniqid(),
             'customer_id' => ($customer ?? $this->customer)->id,
             'vendor_id' => $this->vendor->id,
             'table_scan_session_id' => $customer ? null : $this->session->id,
@@ -1623,22 +1742,25 @@ class CustomerPaymentsTest extends TestCase
 class FakeStripePaymentService extends StripePaymentService
 {
     public array $created = [];
+
     public array $updated = [];
+
     public array $canceled = [];
+
     public array $intents = [];
+
     public array $events = [];
+
     public bool $rejectWebhook = false;
 
-    public function __construct()
-    {
-    }
+    public function __construct() {}
 
     public function createPaymentIntent(int $amountMinor, string $currency, string $stripeAccountId, array $metadata): array
     {
-        $id = 'pi_fake_' . (count($this->created) + 1);
+        $id = 'pi_fake_'.(count($this->created) + 1);
         $payload = [
             'id' => $id,
-            'client_secret' => $id . '_secret_test',
+            'client_secret' => $id.'_secret_test',
             'status' => 'requires_payment_method',
             'metadata' => $metadata,
             'payment_method' => null,
@@ -1654,7 +1776,7 @@ class FakeStripePaymentService extends StripePaymentService
     {
         $payload = $this->intents[$paymentIntentId] ?? [
             'id' => $paymentIntentId,
-            'client_secret' => $paymentIntentId . '_secret_test',
+            'client_secret' => $paymentIntentId.'_secret_test',
             'status' => 'requires_payment_method',
             'metadata' => [],
             'payment_method' => null,

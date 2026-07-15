@@ -12,6 +12,7 @@ use App\Models\Vendor;
 use App\Services\LocaleService;
 use App\Services\MenuCustomizationService;
 use App\Services\NotificationService;
+use App\Services\TableStatePatchService;
 use App\Services\TaxCalculationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -23,6 +24,7 @@ class OrderController extends Controller
     public function __construct(
         private readonly LocaleService $locales,
         private readonly MenuCustomizationService $customizations,
+        private readonly TableStatePatchService $statePatches,
     ) {}
 
     /**
@@ -210,10 +212,13 @@ class OrderController extends Controller
             'payment_method' => $order->payment_method ?? 'cash',
         ]);
 
+        $statePatch = $this->statePatches->build('payment.cash_confirmed', [$order->id]);
+
         $this->notifySessionCustomers($order, 'payment_updated', 'Your cash payment has been confirmed.', [
             'template' => 'payment.cash_confirmed',
             'order_id' => $order->id,
             'order_snapshots' => [NotificationService::orderSnapshot($order->fresh()->load('paidBy'))],
+            'state_patch' => $statePatch,
         ]);
         $this->notifyOperations(
             $request,
@@ -1159,7 +1164,6 @@ class OrderController extends Controller
             abort(403, 'Waiters can only mark items served.');
         }
     }
-
 
     private function syncOrderStatusFromCartItems(Order $order): void
     {

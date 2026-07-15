@@ -13,6 +13,7 @@ use App\Services\NotificationService;
 use App\Services\PaymentGuardService;
 use App\Services\ShareOrderService;
 use App\Services\StripePaymentService;
+use App\Services\TableStatePatchService;
 use App\Services\TaxCalculationService;
 use Closure;
 use Illuminate\Database\Eloquent\Builder;
@@ -29,9 +30,10 @@ class PaymentController extends Controller
 {
     private const TERMINAL_PAYMENT_STATUSES = ['succeeded', 'canceled', 'failed', 'payment_failed'];
 
-    public function __construct(private readonly StripePaymentService $stripe)
-    {
-    }
+    public function __construct(
+        private readonly StripePaymentService $stripe,
+        private readonly TableStatePatchService $statePatches,
+    ) {}
 
     /**
      * GET /api/customer/payment-methods?restaurant_id=...
@@ -163,17 +165,27 @@ class PaymentController extends Controller
                 abort(409, 'This order is locked while a payment is in progress.');
             }
 
+            $shareChanges = ShareOrderService::removePayerSharesFrom($orders, $payerSession);
+
             Order::whereIn('id', $orders->pluck('id'))
                 ->whereNull('paid_by')
                 ->update(['paid_by' => $payer->id]);
 
             // The owner's personal opt-in shares move to their side order so
             // the payer covers only the owner's own items.
-            $affectedOrderIds = $orders->pluck('id');
+            $affectedOrderIds = $orders->pluck('id')
+                ->merge($shareChanges['affected_order_ids']);
             foreach ($orders as $order) {
                 $side = ShareOrderService::moveOptInShares($order);
                 if ($side) {
                     $affectedOrderIds->push($side->id);
+                }
+
+                $existingSideId = Order::where('parent_order_id', $order->id)
+                    ->where('payment_received', false)
+                    ->value('id');
+                if ($existingSideId) {
+                    $affectedOrderIds->push((int) $existingSideId);
                 }
             }
 
@@ -184,6 +196,8 @@ class PaymentController extends Controller
                     return $order;
                 }),
                 'affected_order_ids' => $affectedOrderIds->unique()->values(),
+                'affected_item_ids' => $shareChanges['affected_item_ids'],
+                'removed_order_ids' => $shareChanges['removed_order_ids'],
             ];
         });
         $orders = $result['orders'];
@@ -200,6 +214,12 @@ class PaymentController extends Controller
             ->get()
             ->map(fn (Order $o) => NotificationService::orderSnapshot($o))
             ->values()->all();
+        $statePatch = $this->statePatches->build(
+            'payment.assigned',
+            $result['affected_order_ids'],
+            $result['affected_item_ids'],
+            $result['removed_order_ids'],
+        );
         NotificationService::notifyTableCustomers(
             $payerSession->restaurant_table_id,
             'order_updated',
@@ -212,6 +232,8 @@ class PaymentController extends Controller
                 'customer_name' => $targetName,
                 'order_ids' => $orders->pluck('id')->values()->all(),
                 'order_snapshots' => $snapshots,
+                'removed_order_ids' => $result['removed_order_ids']->all(),
+                'state_patch' => $statePatch,
             ],
             false,
         );
@@ -224,6 +246,7 @@ class PaymentController extends Controller
                 'id' => $order->id,
                 'order_public_id' => $order->order_public_id,
             ])->values(),
+            'state_patch' => $statePatch,
         ]);
     }
 
@@ -306,6 +329,12 @@ class PaymentController extends Controller
             ];
         });
 
+        $statePatch = $this->statePatches->build(
+            'payment.assignment_released',
+            $result ? $result['affected_order_ids'] : [],
+            removedOrderIds: $result ? $result['removed_order_ids'] : [],
+        );
+
         if ($result && $result['released']->isNotEmpty()) {
             $released = $result['released'];
             $targetSession = TableScanSession::with('customer:id,first_name,last_name')
@@ -333,6 +362,7 @@ class PaymentController extends Controller
                     'released_orders_count' => $released->count(),
                     'order_snapshots' => $releasedSnapshots,
                     'removed_order_ids' => $result['removed_order_ids']->all(),
+                    'state_patch' => $statePatch,
                 ],
                 false,
             );
@@ -341,6 +371,7 @@ class PaymentController extends Controller
         return response()->json([
             'message' => 'Payment assignment released.',
             'released_orders_count' => $result ? $result['released']->count() : 0,
+            'state_patch' => $statePatch,
         ]);
     }
 
@@ -439,8 +470,13 @@ class PaymentController extends Controller
             return $affected->unique()->values();
         });
 
+        $statePatch = $this->statePatches->build(
+            'payment.canceled',
+            $affectedOrderIds ?? [],
+        );
+
         if ($affectedOrderIds !== null && $affectedOrderIds->isNotEmpty()) {
-            $customerName = trim(($customer->first_name ?? '') . ' ' . ($customer->last_name ?? '')) ?: 'A guest';
+            $customerName = trim(($customer->first_name ?? '').' '.($customer->last_name ?? '')) ?: 'A guest';
             $snapshots = Order::with('paidBy:id,first_name,last_name')
                 ->whereIn('id', $affectedOrderIds)
                 ->get()
@@ -455,11 +491,15 @@ class PaymentController extends Controller
                     'customer_id' => $customer->id,
                     'customer_name' => $customerName,
                     'order_snapshots' => $snapshots,
+                    'state_patch' => $statePatch,
                 ],
             );
         }
 
-        return response()->json(['canceled' => $affectedOrderIds !== null]);
+        return response()->json([
+            'canceled' => $affectedOrderIds !== null,
+            'state_patch' => $statePatch,
+        ]);
     }
 
     /**
@@ -504,7 +544,7 @@ class PaymentController extends Controller
                 ->count();
             if ($unboundCount > 0) {
                 return response()->json([
-                    'message'            => 'You have items in your cart that have not been submitted. Please confirm your full order before paying.',
+                    'message' => 'You have items in your cart that have not been submitted. Please confirm your full order before paying.',
                     'unbound_item_count' => $unboundCount,
                 ], 422);
             }
@@ -652,15 +692,18 @@ class PaymentController extends Controller
             });
         } catch (StripeInvalidRequestException $e) {
             \Log::error("Stripe payment intent failed for vendor {$order->vendor_id}: {$e->getMessage()}");
+
             return response()->json([
                 'message' => 'Online payments are not available for this restaurant yet. Please pay on-site.',
             ], 422);
         }
 
+        $statePatch = $this->statePatches->build('payment.initiated', $orderIds);
+
         if ($order->table_scan_session_id) {
             $tableId = $order->tableScanSession?->restaurant_table_id;
             if ($tableId) {
-                $customerName = trim(($customer->first_name ?? '') . ' ' . ($customer->last_name ?? '')) ?: 'A guest';
+                $customerName = trim(($customer->first_name ?? '').' '.($customer->last_name ?? '')) ?: 'A guest';
                 $snapshots = Order::with('paidBy:id,first_name,last_name')
                     ->whereIn('id', $orderIds)->get()
                     ->map(fn (Order $o) => NotificationService::orderSnapshot($o))
@@ -675,6 +718,7 @@ class PaymentController extends Controller
                         'customer_name' => $customerName,
                         'order_id' => $order->id,
                         'order_snapshots' => $snapshots,
+                        'state_patch' => $statePatch,
                     ],
                 );
             }
@@ -683,6 +727,7 @@ class PaymentController extends Controller
         return response()->json([
             'clientSecret' => $intent['client_secret'],
             'paymentIntentId' => $intent['id'],
+            'state_patch' => $statePatch,
         ]);
     }
 
@@ -744,7 +789,7 @@ class PaymentController extends Controller
                 ->count();
             if ($unboundCount > 0) {
                 return response()->json([
-                    'message'            => 'You have items in your cart that have not been submitted. Please confirm your full order before paying.',
+                    'message' => 'You have items in your cart that have not been submitted. Please confirm your full order before paying.',
                     'unbound_item_count' => $unboundCount,
                 ], 422);
             }
@@ -807,7 +852,9 @@ class PaymentController extends Controller
             }
         });
 
-        $customerName = trim(($customer->first_name ?? '') . ' ' . ($customer->last_name ?? '')) ?: 'A guest';
+        $statePatch = $this->statePatches->build('payment.cash_requested', $orderIds);
+
+        $customerName = trim(($customer->first_name ?? '').' '.($customer->last_name ?? '')) ?: 'A guest';
         $tableId = $order->tableScanSession?->restaurant_table_id;
 
         if ($tableId) {
@@ -826,6 +873,7 @@ class PaymentController extends Controller
                     'order_id' => $order->id,
                     'notes' => $data['notes'] ?? null,
                     'order_snapshots' => $snapshots,
+                    'state_patch' => $statePatch,
                 ],
             );
         }
@@ -834,6 +882,7 @@ class PaymentController extends Controller
             'message' => 'Cash payment requested. A waiter will come to your table.',
             'amount' => $amount,
             'currency' => strtoupper($currency),
+            'state_patch' => $statePatch,
         ]);
     }
 
@@ -919,6 +968,7 @@ class PaymentController extends Controller
             );
         } catch (StripeInvalidRequestException $e) {
             \Log::error("Stripe payment intent update failed for order {$order->id}: {$e->getMessage()}");
+
             return response()->json(['message' => 'PaymentIntent could not be updated.'], 422);
         }
 
@@ -951,10 +1001,12 @@ class PaymentController extends Controller
             ]);
         });
 
+        $statePatch = $this->statePatches->build('payment.updated', $coveredOrders->pluck('id'));
+
         if ($order->table_scan_session_id) {
             $tableId = $order->tableScanSession?->restaurant_table_id;
             if ($tableId) {
-                $customerName = trim(($customer->first_name ?? '') . ' ' . ($customer->last_name ?? '')) ?: 'A guest';
+                $customerName = trim(($customer->first_name ?? '').' '.($customer->last_name ?? '')) ?: 'A guest';
                 $snapshots = $coveredOrders->map(fn (Order $o) => NotificationService::orderSnapshot($o->fresh()->load('paidBy')))
                     ->values()->all();
                 NotificationService::notifyTableCustomers(
@@ -968,6 +1020,7 @@ class PaymentController extends Controller
                         'order_id' => $order->id,
                         'payment_id' => $payment->id,
                         'order_snapshots' => $snapshots,
+                        'state_patch' => $statePatch,
                     ],
                 );
             }
@@ -976,6 +1029,7 @@ class PaymentController extends Controller
         return response()->json([
             'clientSecret' => $updatedIntent['client_secret'],
             'paymentIntentId' => $updatedIntent['id'],
+            'state_patch' => $statePatch,
         ]);
     }
 
@@ -999,15 +1053,22 @@ class PaymentController extends Controller
         $wasSucceeded = $payment->status === 'succeeded';
         $this->syncPaymentIntentStatus($payment, $intent);
 
+        $completedNow = ! $wasSucceeded && ($intent['status'] ?? null) === 'succeeded';
+        $statePatch = $this->statePatches->build(
+            $completedNow ? 'payment.completed' : 'payment.verified',
+            $this->paymentOrders($payment)->pluck('id'),
+        );
+
         // The webhook may lag behind the client's redirect — when verification
         // is what first observes the success, push the table update from here.
-        if (! $wasSucceeded && ($intent['status'] ?? null) === 'succeeded') {
-            $this->notifyPaymentCompleted($payment);
+        if ($completedNow) {
+            $this->notifyPaymentCompleted($payment, $statePatch);
         }
 
         return response()->json([
             'status' => $intent['status'] ?? $payment->fresh()->status,
             'orderStatus' => $this->orderStatus($intent['status'] ?? $payment->status),
+            'state_patch' => $statePatch,
         ]);
     }
 
@@ -1262,10 +1323,10 @@ class PaymentController extends Controller
 
         return $payment->order
             ? new EloquentCollection([$payment->order])
-            : new EloquentCollection();
+            : new EloquentCollection;
     }
 
-    private function notifyPaymentCompleted(OrderPayment $payment): void
+    private function notifyPaymentCompleted(OrderPayment $payment, ?array $statePatch = null): void
     {
         if (! $payment->table_scan_session_id) {
             return;
@@ -1281,6 +1342,10 @@ class PaymentController extends Controller
         $snapshots = $this->paymentOrders($payment)
             ->map(fn (Order $o) => NotificationService::orderSnapshot($o->fresh()->load('paidBy')))
             ->values()->all();
+        $statePatch ??= $this->statePatches->build(
+            'payment.completed',
+            $this->paymentOrders($payment)->pluck('id'),
+        );
 
         NotificationService::notifyTableCustomers(
             $session->restaurant_table_id,
@@ -1292,6 +1357,7 @@ class PaymentController extends Controller
                 'order_id' => $payment->order_id,
                 'payment_id' => $payment->id,
                 'order_snapshots' => $snapshots,
+                'state_patch' => $statePatch,
             ],
         );
     }
