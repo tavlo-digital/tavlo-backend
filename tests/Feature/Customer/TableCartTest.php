@@ -377,10 +377,8 @@ class TableCartTest extends TestCase
             ->assertJsonPath('line_total', 7.7)
             ->assertJsonPath('menu_item.name', 'Fries')
             ->assertJsonPath('menu_item.vat_rate', 10)
-            ->assertJsonPath('delta.operation', 'cart.item_added')
-            ->assertJsonPath('delta.changed_cart_people.0.personal_items.0.quantity', 2)
-            ->assertJsonPath('delta.changed_cart_people.0.is_me', true)
-            ->assertJsonMissingPath('cart');
+            ->assertJsonPath('cart.people.0.personal_items.0.quantity', 2)
+            ->assertJsonPath('cart.people.0.is_me', true);
 
         $this->assertDatabaseHas('cart_items', [
             'table_scan_session_id' => $this->session->id,
@@ -786,8 +784,7 @@ class TableCartTest extends TestCase
             ->assertOk()
             ->assertJsonPath('quantity', 3)
             ->assertJsonPath('notes', 'Extra crispy')
-            ->assertJsonPath('delta.operation', 'cart.item_updated')
-            ->assertJsonPath('delta.changed_cart_people.0.personal_items.0.quantity', 3);
+            ->assertJsonPath('cart.people.0.personal_items.0.quantity', 3);
     }
 
     public function test_update_item_returns_404_for_another_sessions_item(): void
@@ -828,8 +825,7 @@ class TableCartTest extends TestCase
         $this->withHeaders($this->headers)
             ->deleteJson("/api/customer/cart/items/{$item->id}")
             ->assertOk()
-            ->assertJsonPath('delta.operation', 'cart.item_removed')
-            ->assertJsonPath('delta.changed_cart_people.0.personal_items', []);
+            ->assertJsonPath('cart.people.0.personal_items', []);
 
         $this->assertDatabaseMissing('cart_items', ['id' => $item->id]);
     }
