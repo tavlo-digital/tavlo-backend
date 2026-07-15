@@ -86,7 +86,19 @@ jobs:
             # Rebuild caches
             php artisan optimize
 
-            # Restart queue workers
+            # Ask any worker from the previous release to exit gracefully.
             php artisan queue:restart
+
+            # queue:restart does not start a missing worker. Launch a detached
+            # worker for the customer side-effect queues after every deploy;
+            # the previous worker exits after its current job.
+            nohup php artisan queue:work database \
+              --queue=notifications,activity \
+              --sleep=1 \
+              --tries=3 \
+              --backoff=3 \
+              --timeout=90 \
+              >> storage/logs/queue-worker.log 2>&1 < /dev/null &
+            echo $! > storage/app/queue-worker.pid
 
             echo "Deployment to staging complete."
