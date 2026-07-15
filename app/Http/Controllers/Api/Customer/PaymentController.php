@@ -496,6 +496,7 @@ class PaymentController extends Controller
         $order = $orders->first(fn (Order $candidate) => $this->orderOwnerCustomerId($candidate) === (int) $customer->id)
             ?? $orders->first();
         $orderIds = $orders->pluck('id');
+        $orderIdsArray = $orderIds->map(fn ($id) => (int) $id)->values()->all();
 
         foreach ($orders->pluck('table_scan_session_id')->filter()->unique() as $sessionId) {
             $unboundCount = CartItem::where('table_scan_session_id', $sessionId)
@@ -531,6 +532,7 @@ class PaymentController extends Controller
             'customer_id' => (string) $customer->id,
             'payment_for' => $order->table_scan_session_id ? 'dine_in' : 'order',
             'covered_order_count' => (string) $orders->count(),
+            'order_ids' => json_encode($orderIdsArray),
         ];
 
         if ($order->table_scan_session_id) {
@@ -538,7 +540,7 @@ class PaymentController extends Controller
         }
 
         try {
-            $intent = DB::transaction(function () use ($order, $orderIds, $amounts, $customer, $settings, $amount, $currency, $metadata) {
+            $intent = DB::transaction(function () use ($order, $orderIds, $orderIdsArray, $amounts, $customer, $settings, $amount, $currency, $metadata) {
                 $lockedOrders = Order::whereIn('id', $orderIds)->lockForUpdate()->get();
 
                 $existingPayment = OrderPayment::where('customer_id', $customer->id)
@@ -617,6 +619,7 @@ class PaymentController extends Controller
 
                 $payment = OrderPayment::create([
                     'order_id' => $order->id,
+                    'order_ids' => $orderIdsArray,
                     'vendor_id' => $order->vendor_id,
                     'customer_id' => $customer->id,
                     'table_scan_session_id' => $order->table_scan_session_id,
@@ -733,6 +736,7 @@ class PaymentController extends Controller
 
         $orders = $this->groupedOrdersForPayment($order, (int) $customer->id);
         $orderIds = $orders->pluck('id');
+        $orderIdsArray = $orderIds->map(fn ($id) => (int) $id)->values()->all();
 
         foreach ($orders->pluck('table_scan_session_id')->filter()->unique() as $sessionId) {
             $unboundCount = CartItem::where('table_scan_session_id', $sessionId)
@@ -757,15 +761,16 @@ class PaymentController extends Controller
 
         $currency = $order->vendor?->currency ?? $order->currency ?? 'EUR';
 
-        DB::transaction(function () use ($order, $orderIds, $amounts, $customer, $amount, $currency, $data) {
+        DB::transaction(function () use ($order, $orderIds, $orderIdsArray, $amounts, $customer, $amount, $currency, $data) {
             $lockedOrders = Order::whereIn('id', $orderIds)->lockForUpdate()->get();
 
             if ($lockedOrders->contains(fn (Order $locked) => $locked->payment_received)) {
                 abort(409, 'One or more orders are already paid.');
             }
 
-            OrderPayment::create([
+            $payment = OrderPayment::create([
                 'order_id' => $order->id,
+                'order_ids' => $orderIdsArray,
                 'vendor_id' => $order->vendor_id,
                 'customer_id' => $customer->id,
                 'table_scan_session_id' => $order->table_scan_session_id,
@@ -782,8 +787,13 @@ class PaymentController extends Controller
                     'vendor_id' => (string) $order->vendor_id,
                     'customer_id' => (string) $customer->id,
                     'covered_order_count' => (string) $lockedOrders->count(),
+                    'order_ids' => json_encode($orderIdsArray),
                 ],
             ]);
+
+            $payment->orders()->attach($amounts->mapWithKeys(fn ($orderAmount, $id) => [
+                $id => ['amount' => $orderAmount],
+            ])->all());
 
             foreach ($lockedOrders as $lockedOrder) {
                 $lockedOrder->update([

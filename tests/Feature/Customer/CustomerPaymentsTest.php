@@ -252,6 +252,10 @@ class CustomerPaymentsTest extends TestCase
         $this->assertSame('acct_test_123', $this->stripe->created[0]['stripeAccountId']);
         $this->assertSame('dine_in', $this->stripe->created[0]['metadata']['payment_for']);
         $this->assertSame((string) $this->session->id, $this->stripe->created[0]['metadata']['table_session_id']);
+        $this->assertSame([$order->id], json_decode($this->stripe->created[0]['metadata']['order_ids'], true));
+
+        $payment = OrderPayment::where('stripe_payment_intent_id', 'pi_fake_1')->firstOrFail();
+        $this->assertSame([$order->id], $payment->order_ids);
 
         $this->assertDatabaseHas('order_payments', [
             'order_id' => $order->id,
@@ -284,10 +288,46 @@ class CustomerPaymentsTest extends TestCase
 
         $this->assertSame(1200, $this->stripe->created[0]['amountMinor']);
         $payment = OrderPayment::where('stripe_payment_intent_id', 'pi_fake_1')->firstOrFail();
+        $this->assertEqualsCanonicalizing([$first->id, $second->id], $payment->order_ids);
+        $this->assertEqualsCanonicalizing(
+            [$first->id, $second->id],
+            json_decode($this->stripe->created[0]['metadata']['order_ids'], true),
+        );
         $this->assertEqualsCanonicalizing(
             [$first->id, $second->id],
             $payment->orders->pluck('id')->all(),
         );
+    }
+
+    public function test_request_cash_records_every_covered_order_id_and_pivot(): void
+    {
+        [$tablemate, $tablemateSession] = $this->tablemate();
+        $first = $this->order(['payment_pending' => false]);
+        $second = $this->order([
+            'table_scan_session_id' => $tablemateSession->id,
+            'payment_pending' => false,
+            'paid_by' => $this->customer->id,
+        ], $tablemate);
+
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/payments/request-cash', [
+                'order_id' => $first->order_public_id,
+                'customer_id' => $this->customer->id,
+            ])
+            ->assertOk();
+
+        $payment = OrderPayment::where('status', 'cash_requested')->firstOrFail();
+        $this->assertEqualsCanonicalizing([$first->id, $second->id], $payment->order_ids);
+        $this->assertEqualsCanonicalizing(
+            [$first->id, $second->id],
+            json_decode($payment->metadata['order_ids'], true),
+        );
+        $this->assertEqualsCanonicalizing(
+            [$first->id, $second->id],
+            $payment->orders->pluck('id')->all(),
+        );
+        $this->assertTrue((bool) $first->fresh()->payment_pending);
+        $this->assertTrue((bool) $second->fresh()->payment_pending);
     }
 
     public function test_update_intent_adds_tip_and_updates_payable_amount(): void

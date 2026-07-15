@@ -878,11 +878,15 @@ class TableCartTest extends TestCase
             ->postJson('/api/customer/table/order/draft')
             ->assertCreated();
 
+        $draft = Order::where('customer_id', $this->customer->id)->latest('id')->firstOrFail();
+        $this->assertFalse((bool) $draft->payment_pending);
+
         $this->withHeaders($this->headers)
             ->postJson('/api/customer/table/order/confirmed')
             ->assertOk();
 
-        $order = Order::where('customer_id', $this->customer->id)->latest('id')->first();
+        $order = Order::where('customer_id', $this->customer->id)->latest('id')->firstOrFail();
+        $this->assertFalse((bool) $order->payment_pending);
         $this->assertDatabaseHas('cart_items', [
             'table_scan_session_id' => $this->session->id,
             'menu_item_id' => $this->menuItem->id,

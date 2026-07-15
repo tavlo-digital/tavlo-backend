@@ -10,6 +10,7 @@ class OrderPayment extends Model
 {
     protected $fillable = [
         'order_id',
+        'order_ids',
         'vendor_id',
         'customer_id',
         'table_scan_session_id',
@@ -29,6 +30,7 @@ class OrderPayment extends Model
     {
         return [
             'amount'           => 'decimal:2',
+            'order_ids'        => 'array',
             'metadata'         => 'array',
             'paid_at'          => 'datetime',
             'failed_at'        => 'datetime',

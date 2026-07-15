@@ -120,7 +120,7 @@ class StaffOrderController extends Controller
                     // No predefined payment method — like customer orders, so a
                     // guest can still pay it (pay-for/Stripe) or the waiter collects.
                     'payment_method' => null,
-                    'payment_pending' => true,
+                    'payment_pending' => false,
                     'payment_received' => false,
                     'order_type' => 'dine-in',
                     'placed_by' => 'waiter',
@@ -166,7 +166,7 @@ class StaffOrderController extends Controller
             $order->update([
                 'amount' => round($itemsTotal + $serviceFee, 2),
                 'service_fee' => $serviceFee,
-                'payment_pending' => true,
+                'payment_pending' => false,
             ]);
 
             return ['order' => $order, 'session' => $session, 'itemCount' => $itemCount];

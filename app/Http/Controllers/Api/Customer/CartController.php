@@ -639,7 +639,7 @@ class CartController extends Controller
                 'draft_at' => now(),
                 'amount' => $myTotal,
                 'currency' => $currency,
-                'payment_pending' => true,
+                'payment_pending' => false,
                 'payment_received' => false,
                 'order_type' => 'dine-in',
             ]);
@@ -952,7 +952,7 @@ class CartController extends Controller
                 'draft_at' => now(),
                 'amount' => $myTotal,
                 'currency' => $currency,
-                'payment_pending' => true,
+                'payment_pending' => false,
                 'payment_received' => false,
                 'order_type' => 'dine-in',
             ]);

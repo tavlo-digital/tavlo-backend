@@ -219,7 +219,7 @@ class StaffOrderTest extends TestCase
         // No predefined payment method — the order stays payable by a customer
         // (pay-for/Stripe) or collectable by the waiter.
         $this->assertNull($order->payment_method);
-        $this->assertTrue((bool) $order->payment_pending);
+        $this->assertFalse((bool) $order->payment_pending);
 
         $cartItem = CartItem::where('order_id', $order->id)->firstOrFail();
         $this->assertNotNull($cartItem->received_at);
