@@ -13,6 +13,7 @@ use App\Services\MenuCustomizationService;
 use App\Services\NotificationService;
 use App\Services\PaymentGuardService;
 use App\Services\ShareOrderService;
+use App\Services\TableStateDeltaService;
 use App\Services\TaxCalculationService;
 use App\Services\VendorDateTimeService;
 use Illuminate\Http\JsonResponse;
@@ -28,6 +29,7 @@ class CartController extends Controller
         private readonly VendorDateTimeService $dateTimes,
         private readonly LocaleService $locales,
         private readonly MenuCustomizationService $customizations,
+        private readonly TableStateDeltaService $tableDeltas,
     ) {}
 
     /**
@@ -297,7 +299,12 @@ class CartController extends Controller
         $itemName = $item->menuItem && $vendor
             ? $this->customizations->menuItemName($item->menuItem, $vendor, $locale)
             : ($item->menuItem?->name ?? 'an item');
-        $realtimeCart = $this->realtimeCartMetadata($mySession, $request);
+        $delta = $this->tableDeltas->cartDelta(
+            $mySession,
+            [$mySession->id],
+            'cart.item_added',
+            $request,
+        );
         NotificationService::notifyTableCustomers(
             $mySession->restaurant_table_id,
             'cart_updated',
@@ -308,13 +315,13 @@ class CartController extends Controller
                 'customer_name' => $customerName,
                 'menu_item_id' => $item->menu_item_id,
                 'item_name' => $itemName,
-                ...$realtimeCart,
+                'delta' => $delta,
             ],
         );
 
         return response()->json([
             ...$this->itemPayload($item, $mySession->vendor?->country, $vendor, $locale),
-            'cart' => $this->cartPayloadForSession($realtimeCart['cart'], $mySession),
+            'delta' => $delta,
         ], 201);
     }
 
@@ -398,7 +405,12 @@ class CartController extends Controller
         $itemName = $item->menuItem && $vendor
             ? $this->customizations->menuItemName($item->menuItem, $vendor, $locale)
             : ($item->menuItem?->name ?? 'an item');
-        $realtimeCart = $this->realtimeCartMetadata($mySession, $request);
+        $delta = $this->tableDeltas->cartDelta(
+            $mySession,
+            [$mySession->id],
+            'cart.item_updated',
+            $request,
+        );
         NotificationService::notifyTableCustomers(
             $mySession->restaurant_table_id,
             'cart_updated',
@@ -409,13 +421,13 @@ class CartController extends Controller
                 'customer_name' => $customerName,
                 'menu_item_id' => $item->menu_item_id,
                 'item_name' => $itemName,
-                ...$realtimeCart,
+                'delta' => $delta,
             ],
         );
 
         return response()->json([
             ...$this->itemPayload($item, $mySession->vendor?->country, $vendor, $locale),
-            'cart' => $this->cartPayloadForSession($realtimeCart['cart'], $mySession),
+            'delta' => $delta,
         ]);
     }
 
@@ -450,7 +462,12 @@ class CartController extends Controller
         $item->delete();
 
         $customerName = $this->customerName($request->user());
-        $realtimeCart = $this->realtimeCartMetadata($mySession, $request);
+        $delta = $this->tableDeltas->cartDelta(
+            $mySession,
+            [$mySession->id],
+            'cart.item_removed',
+            $request,
+        );
         NotificationService::notifyTableCustomers(
             $mySession->restaurant_table_id,
             'cart_updated',
@@ -461,12 +478,12 @@ class CartController extends Controller
                 'customer_name' => $customerName,
                 'menu_item_id' => $menuItemId,
                 'item_name' => $itemName,
-                ...$realtimeCart,
+                'delta' => $delta,
             ],
         );
 
         return response()->json([
-            'cart' => $this->cartPayloadForSession($realtimeCart['cart'], $mySession),
+            'delta' => $delta,
         ]);
     }
 
@@ -728,6 +745,8 @@ class CartController extends Controller
         $sessionIds = $this->tableSessionIds($mySession);
 
         $affectedOrderIds = collect([$order->id]);
+        $affectedSessionIds = collect([$mySession->id]);
+        $affectedItemIds = collect();
 
         if (! empty($data['shared_item'])) {
             $cartItem = CartItem::where('id', $data['shared_item'])
@@ -739,6 +758,9 @@ class CartController extends Controller
                     'message' => 'Shared cart item does not belong to this table.',
                 ], 422);
             }
+
+            $affectedItemIds->push($cartItem->id);
+            $affectedSessionIds->push($cartItem->table_scan_session_id);
 
             if ($this->itemLockedByActivePayment($order, $cartItem)) {
                 return response()->json([
@@ -814,6 +836,9 @@ class CartController extends Controller
                 ], 422);
             }
 
+            $affectedItemIds->push($cartItem->id);
+            $affectedSessionIds->push($cartItem->table_scan_session_id);
+
             if ($this->itemLockedByActivePayment($order, $cartItem)) {
                 return response()->json([
                     'message' => 'These items are locked while a payment is in progress.',
@@ -871,30 +896,31 @@ class CartController extends Controller
 
         // A side order that lost its last share reference has no reason to
         // exist anymore.
+        $removedOrderIds = collect();
         foreach ($ordersToRecalc as $affectedOrder) {
             if ($affectedOrder->parent_order_id) {
-                ShareOrderService::deleteIfEmpty($affectedOrder);
+                if (ShareOrderService::deleteIfEmpty($affectedOrder)) {
+                    $removedOrderIds->push($affectedOrder->id);
+                }
             }
         }
 
         $customerName = $this->customerName($request->user());
-        $snapshots = Order::with('paidBy:id,first_name,last_name')
-            ->whereIn('id', $affectedOrderIds->unique()->values()->all())
-            ->get()
-            ->map(fn (Order $o) => NotificationService::orderSnapshot($o))
-            ->values()->all();
-        $history = $this->buildTableHistoryResponse($mySession, $request);
-        $affectedSessionIds = $ordersToRecalc
-            ->pluck('table_scan_session_id')
+        $affectedSessionIds = $affectedSessionIds
+            ->merge($ordersToRecalc->pluck('table_scan_session_id'))
             ->filter()
             ->map(fn ($id) => (int) $id)
             ->unique()
             ->values()
             ->all();
-        $personSnapshots = collect($history['people'])
-            ->filter(fn (array $person) => in_array((int) $person['session_id'], $affectedSessionIds, true))
-            ->values()
-            ->all();
+        $delta = $this->tableDeltas->historyDelta(
+            $mySession,
+            $affectedSessionIds,
+            ! empty($data['shared_item']) ? 'order.item_shared' : 'order.item_unshared',
+            $removedOrderIds->all(),
+            $affectedItemIds->all(),
+            $request,
+        );
         NotificationService::notifyTableCustomers(
             $mySession->restaurant_table_id,
             'order_updated',
@@ -904,12 +930,11 @@ class CartController extends Controller
                 'customer_id' => $request->user()->id,
                 'customer_name' => $customerName,
                 'order_id' => $order->id,
-                'order_snapshots' => $snapshots,
-                'person_snapshots' => $personSnapshots,
+                'delta' => $delta,
             ],
         );
 
-        return response()->json($history);
+        return response()->json(['delta' => $delta]);
     }
 
     /**

@@ -13,6 +13,7 @@ use App\Services\NotificationService;
 use App\Services\PaymentGuardService;
 use App\Services\ShareOrderService;
 use App\Services\StripePaymentService;
+use App\Services\TableStateDeltaService;
 use App\Services\TaxCalculationService;
 use Closure;
 use Illuminate\Database\Eloquent\Builder;
@@ -29,9 +30,10 @@ class PaymentController extends Controller
 {
     private const TERMINAL_PAYMENT_STATUSES = ['succeeded', 'canceled', 'failed', 'payment_failed'];
 
-    public function __construct(private readonly StripePaymentService $stripe)
-    {
-    }
+    public function __construct(
+        private readonly StripePaymentService $stripe,
+        private readonly TableStateDeltaService $tableDeltas,
+    ) {}
 
     /**
      * GET /api/customer/payment-methods?restaurant_id=...
@@ -163,19 +165,65 @@ class PaymentController extends Controller
                 abort(409, 'This order is locked while a payment is in progress.');
             }
 
+            // A payer may already be individually sharing items owned by the
+            // target order. Remove those references atomically before taking
+            // full coverage so one click never produces N unshare requests or
+            // double-counts a share plus the complete covered order.
+            $payerOrders = Order::where('table_scan_session_id', $payerSession->id)
+                ->where('payment_received', false)
+                ->lockForUpdate()
+                ->get();
+            $payerOrderIds = $payerOrders->pluck('id')->map(fn ($id) => (int) $id)->all();
+            $affectedItemIds = collect();
+            $affectedOrderIds = $orders->pluck('id');
+            $recalculatedOrderIds = collect();
+
+            if ($payerOrderIds !== []) {
+                CartItem::whereIn('order_id', $orders->pluck('id'))
+                    ->lockForUpdate()
+                    ->get()
+                    ->each(function (CartItem $item) use ($payerOrderIds, $affectedItemIds, $affectedOrderIds, $recalculatedOrderIds): void {
+                        $sharedOrderIds = array_map('intval', is_array($item->shared_order_ids) ? $item->shared_order_ids : []);
+                        $removedIds = array_values(array_intersect($sharedOrderIds, $payerOrderIds));
+                        if ($removedIds === []) {
+                            return;
+                        }
+
+                        $item->update([
+                            'shared_order_ids' => array_values(array_diff($sharedOrderIds, $removedIds)),
+                        ]);
+                        $affectedItemIds->push($item->id);
+                        $affectedOrderIds->push(...$removedIds);
+                        $recalculatedOrderIds->push($item->order_id, ...$removedIds);
+                    });
+            }
+
             Order::whereIn('id', $orders->pluck('id'))
                 ->whereNull('paid_by')
                 ->update(['paid_by' => $payer->id]);
 
             // The owner's personal opt-in shares move to their side order so
             // the payer covers only the owner's own items.
-            $affectedOrderIds = $orders->pluck('id');
             foreach ($orders as $order) {
                 $side = ShareOrderService::moveOptInShares($order);
                 if ($side) {
                     $affectedOrderIds->push($side->id);
                 }
             }
+
+            $removedOrderIds = collect();
+            Order::whereIn('id', $recalculatedOrderIds->unique())
+                ->where('payment_received', false)
+                ->get()
+                ->each(function (Order $affectedOrder) use ($removedOrderIds): void {
+                    if ($affectedOrder->parent_order_id && ShareOrderService::deleteIfEmpty($affectedOrder)) {
+                        $removedOrderIds->push($affectedOrder->id);
+
+                        return;
+                    }
+
+                    ShareOrderService::recalcOrder($affectedOrder);
+                });
 
             return [
                 'orders' => $orders->map(function (Order $order) use ($payer) {
@@ -184,6 +232,8 @@ class PaymentController extends Controller
                     return $order;
                 }),
                 'affected_order_ids' => $affectedOrderIds->unique()->values(),
+                'affected_item_ids' => $affectedItemIds->unique()->values(),
+                'removed_order_ids' => $removedOrderIds->unique()->values(),
             ];
         });
         $orders = $result['orders'];
@@ -195,11 +245,21 @@ class PaymentController extends Controller
             ? $this->customerIdentity($targetSession->customer)['name']
             : 'Waiter';
 
-        $snapshots = Order::with('paidBy:id,first_name,last_name')
-            ->whereIn('id', $result['affected_order_ids'])
-            ->get()
-            ->map(fn (Order $o) => NotificationService::orderSnapshot($o))
-            ->values()->all();
+        $affectedSessionIds = Order::whereIn('id', $result['affected_order_ids'])
+            ->pluck('table_scan_session_id')
+            ->push($payerSession->id)
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+        $delta = $this->tableDeltas->historyDelta(
+            $payerSession,
+            $affectedSessionIds,
+            'payment.assigned',
+            $result['removed_order_ids']->all(),
+            $result['affected_item_ids']->all(),
+            $request,
+        );
         NotificationService::notifyTableCustomers(
             $payerSession->restaurant_table_id,
             'order_updated',
@@ -211,7 +271,7 @@ class PaymentController extends Controller
                 'payer_name' => $payerIdentity['name'],
                 'customer_name' => $targetName,
                 'order_ids' => $orders->pluck('id')->values()->all(),
-                'order_snapshots' => $snapshots,
+                'delta' => $delta,
             ],
             false,
         );
@@ -224,6 +284,7 @@ class PaymentController extends Controller
                 'id' => $order->id,
                 'order_public_id' => $order->order_public_id,
             ])->values(),
+            'delta' => $delta,
         ]);
     }
 
@@ -315,11 +376,20 @@ class PaymentController extends Controller
                 ? $this->customerIdentity($targetSession->customer)['name']
                 : 'Waiter';
 
-            $releasedSnapshots = Order::with('paidBy:id,first_name,last_name')
-                ->whereIn('id', $result['affected_order_ids'])
-                ->get()
-                ->map(fn (Order $o) => NotificationService::orderSnapshot($o))
-                ->values()->all();
+            $affectedSessionIds = Order::whereIn('id', $result['affected_order_ids'])
+                ->pluck('table_scan_session_id')
+                ->push($payerSession->id)
+                ->filter()
+                ->unique()
+                ->values()
+                ->all();
+            $delta = $this->tableDeltas->historyDelta(
+                $payerSession,
+                $affectedSessionIds,
+                'payment.assignment_released',
+                $result['removed_order_ids']->all(),
+                request: $request,
+            );
             NotificationService::notifyTableCustomers(
                 $payerSession->restaurant_table_id,
                 'order_updated',
@@ -331,8 +401,7 @@ class PaymentController extends Controller
                     'payer_name' => $payerIdentity['name'],
                     'customer_name' => $targetName,
                     'released_orders_count' => $released->count(),
-                    'order_snapshots' => $releasedSnapshots,
-                    'removed_order_ids' => $result['removed_order_ids']->all(),
+                    'delta' => $delta,
                 ],
                 false,
             );
@@ -341,6 +410,7 @@ class PaymentController extends Controller
         return response()->json([
             'message' => 'Payment assignment released.',
             'released_orders_count' => $result ? $result['released']->count() : 0,
+            'delta' => $delta ?? null,
         ]);
     }
 

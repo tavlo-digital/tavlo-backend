@@ -23,11 +23,17 @@ class CustomerPaymentsTest extends TestCase
     use RefreshDatabase;
 
     private Customer $customer;
+
     private Vendor $vendor;
+
     private VendorSetting $settings;
+
     private TableScanSession $session;
+
     private MenuItem $menuItem;
+
     private array $headers;
+
     private FakeStripePaymentService $stripe;
 
     protected function setUp(): void
@@ -67,7 +73,7 @@ class CustomerPaymentsTest extends TestCase
         $category = MenuCategory::create([
             'vendor_id' => $this->vendor->id,
             'name' => 'Mains',
-            'slug' => 'mains-' . $this->vendor->id,
+            'slug' => 'mains-'.$this->vendor->id,
         ]);
 
         $this->menuItem = MenuItem::create([
@@ -77,7 +83,7 @@ class CustomerPaymentsTest extends TestCase
             'price' => 6,
         ]);
 
-        $this->stripe = new FakeStripePaymentService();
+        $this->stripe = new FakeStripePaymentService;
         $this->app->instance(StripePaymentService::class, $this->stripe);
     }
 
@@ -115,7 +121,7 @@ class CustomerPaymentsTest extends TestCase
             ->assertOk()
             ->assertJsonPath('method.stripe', true);
 
-        $wrapped = urlencode('{' . $this->vendor->vendor_public_id . '}');
+        $wrapped = urlencode('{'.$this->vendor->vendor_public_id.'}');
         $this->getJson("/api/customer/payment-methods?restaurant_id={$wrapped}")
             ->assertOk()
             ->assertJsonPath('method.on-site', true);
@@ -626,6 +632,51 @@ class CustomerPaymentsTest extends TestCase
             ->assertJsonPath('orders.0.id', $second->id);
 
         $this->assertSame($this->customer->id, $second->fresh()->paid_by);
+    }
+
+    public function test_pay_for_atomically_removes_the_payers_item_share(): void
+    {
+        [$tablemate, $tablemateSession] = $this->tablemate();
+
+        $payerOrder = $this->order([
+            'amount' => 9.9,
+            'payment_pending' => false,
+        ]);
+        CartItem::create([
+            'table_scan_session_id' => $this->session->id,
+            'menu_item_id' => $this->menuItem->id,
+            'order_id' => $payerOrder->id,
+            'quantity' => 1,
+        ]);
+
+        $targetOrder = $this->order([
+            'table_scan_session_id' => $tablemateSession->id,
+            'amount' => 3.3,
+            'payment_pending' => false,
+        ], $tablemate);
+        $targetItem = CartItem::create([
+            'table_scan_session_id' => $tablemateSession->id,
+            'menu_item_id' => $this->menuItem->id,
+            'order_id' => $targetOrder->id,
+            'quantity' => 1,
+            'shared_order_ids' => [$payerOrder->id],
+        ]);
+
+        $response = $this->withHeaders($this->headers)
+            ->postJson('/api/customer/payments/pay-for', [
+                'order_id' => $targetOrder->order_public_id,
+            ])
+            ->assertOk()
+            ->assertJsonPath('delta.operation', 'payment.assigned')
+            ->assertJsonPath('delta.affected_item_ids.0', $targetItem->id)
+            ->assertJsonCount(2, 'delta.changed_people');
+
+        $this->assertSame([], $targetItem->fresh()->shared_order_ids);
+        $this->assertSame(6.6, (float) $payerOrder->fresh()->amount);
+        $this->assertSame(6.6, (float) $targetOrder->fresh()->amount);
+        $this->assertSame($this->customer->id, $targetOrder->fresh()->paid_by);
+        $this->assertNotEmpty($response->json('delta.event_id'));
+        $this->assertGreaterThan(0, $response->json('delta.event_version'));
     }
 
     public function test_single_order_assignment_rejects_ineligible_order(): void
@@ -1587,7 +1638,7 @@ class CustomerPaymentsTest extends TestCase
     private function order(array $attributes = [], ?Customer $customer = null): Order
     {
         return Order::create(array_merge([
-            'order_public_id' => 'ord-' . uniqid(),
+            'order_public_id' => 'ord-'.uniqid(),
             'customer_id' => ($customer ?? $this->customer)->id,
             'vendor_id' => $this->vendor->id,
             'table_scan_session_id' => $customer ? null : $this->session->id,
@@ -1623,22 +1674,25 @@ class CustomerPaymentsTest extends TestCase
 class FakeStripePaymentService extends StripePaymentService
 {
     public array $created = [];
+
     public array $updated = [];
+
     public array $canceled = [];
+
     public array $intents = [];
+
     public array $events = [];
+
     public bool $rejectWebhook = false;
 
-    public function __construct()
-    {
-    }
+    public function __construct() {}
 
     public function createPaymentIntent(int $amountMinor, string $currency, string $stripeAccountId, array $metadata): array
     {
-        $id = 'pi_fake_' . (count($this->created) + 1);
+        $id = 'pi_fake_'.(count($this->created) + 1);
         $payload = [
             'id' => $id,
-            'client_secret' => $id . '_secret_test',
+            'client_secret' => $id.'_secret_test',
             'status' => 'requires_payment_method',
             'metadata' => $metadata,
             'payment_method' => null,
@@ -1654,7 +1708,7 @@ class FakeStripePaymentService extends StripePaymentService
     {
         $payload = $this->intents[$paymentIntentId] ?? [
             'id' => $paymentIntentId,
-            'client_secret' => $paymentIntentId . '_secret_test',
+            'client_secret' => $paymentIntentId.'_secret_test',
             'status' => 'requires_payment_method',
             'metadata' => [],
             'payment_method' => null,
