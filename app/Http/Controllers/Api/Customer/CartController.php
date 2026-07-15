@@ -13,6 +13,7 @@ use App\Services\MenuCustomizationService;
 use App\Services\NotificationService;
 use App\Services\PaymentGuardService;
 use App\Services\ShareOrderService;
+use App\Services\TableStatePatchService;
 use App\Services\TaxCalculationService;
 use App\Services\VendorDateTimeService;
 use Illuminate\Http\JsonResponse;
@@ -28,6 +29,7 @@ class CartController extends Controller
         private readonly VendorDateTimeService $dateTimes,
         private readonly LocaleService $locales,
         private readonly MenuCustomizationService $customizations,
+        private readonly TableStatePatchService $statePatches,
     ) {}
 
     /**
@@ -728,6 +730,8 @@ class CartController extends Controller
         $sessionIds = $this->tableSessionIds($mySession);
 
         $affectedOrderIds = collect([$order->id]);
+        $affectedItemIds = collect();
+        $removedOrderIds = collect();
 
         if (! empty($data['shared_item'])) {
             $cartItem = CartItem::where('id', $data['shared_item'])
@@ -795,6 +799,7 @@ class CartController extends Controller
             $affectedOrderIds->push($targetOrderId);
 
             $cartItem->refresh();
+            $affectedItemIds->push((int) $cartItem->id);
             $freshIds = array_map('intval', is_array($cartItem->shared_order_ids) ? $cartItem->shared_order_ids : []);
 
             if ($cartItem->order_id) {
@@ -844,6 +849,7 @@ class CartController extends Controller
                 ));
                 $locked->update(['shared_order_ids' => $filtered]);
             });
+            $affectedItemIds->push((int) $cartItem->id);
         }
 
         if (! $mySession->relationLoaded('vendor')) {
@@ -873,7 +879,9 @@ class CartController extends Controller
         // exist anymore.
         foreach ($ordersToRecalc as $affectedOrder) {
             if ($affectedOrder->parent_order_id) {
-                ShareOrderService::deleteIfEmpty($affectedOrder);
+                if (ShareOrderService::deleteIfEmpty($affectedOrder)) {
+                    $removedOrderIds->push((int) $affectedOrder->id);
+                }
             }
         }
 
@@ -883,18 +891,12 @@ class CartController extends Controller
             ->get()
             ->map(fn (Order $o) => NotificationService::orderSnapshot($o))
             ->values()->all();
-        $history = $this->buildTableHistoryResponse($mySession, $request);
-        $affectedSessionIds = $ordersToRecalc
-            ->pluck('table_scan_session_id')
-            ->filter()
-            ->map(fn ($id) => (int) $id)
-            ->unique()
-            ->values()
-            ->all();
-        $personSnapshots = collect($history['people'])
-            ->filter(fn (array $person) => in_array((int) $person['session_id'], $affectedSessionIds, true))
-            ->values()
-            ->all();
+        $statePatch = $this->statePatches->build(
+            'order.sharing_updated',
+            $affectedOrderIds,
+            $affectedItemIds,
+            $removedOrderIds,
+        );
         NotificationService::notifyTableCustomers(
             $mySession->restaurant_table_id,
             'order_updated',
@@ -905,11 +907,17 @@ class CartController extends Controller
                 'customer_name' => $customerName,
                 'order_id' => $order->id,
                 'order_snapshots' => $snapshots,
-                'person_snapshots' => $personSnapshots,
+                'removed_order_ids' => $removedOrderIds->unique()->values()->all(),
+                'state_patch' => $statePatch,
             ],
         );
 
-        return response()->json($history);
+        return response()->json([
+            'message' => 'Item sharing updated.',
+            'order_snapshots' => $snapshots,
+            'removed_order_ids' => $removedOrderIds->unique()->values()->all(),
+            'state_patch' => $statePatch,
+        ]);
     }
 
     /**

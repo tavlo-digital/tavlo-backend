@@ -8,6 +8,7 @@ use App\Models\MenuCategory;
 use App\Models\MenuItem;
 use App\Models\ModifierGroup;
 use App\Models\ModifierOption;
+use App\Models\Notification;
 use App\Models\NotificationTemplate;
 use App\Models\Order;
 use App\Models\RestaurantTable;
@@ -1115,6 +1116,186 @@ class TableCartTest extends TestCase
             ->assertJsonPath('message', 'You are already paying for this item.');
 
         $this->assertSame([], $item->fresh()->shared_order_ids ?? []);
+    }
+
+    public function test_update_order_returns_compact_patch_matching_realtime_and_excludes_unrelated_rows(): void
+    {
+        $other = Customer::factory()->create(['first_name' => 'Bob', 'last_name' => 'Jones']);
+        $otherSession = TableScanSession::create([
+            'vendor_id' => $this->vendor->id,
+            'restaurant_table_id' => $this->table->id,
+            'customer_id' => $other->id,
+            'pin' => '',
+            'status' => 'active',
+            'scanned_at' => now(),
+        ]);
+
+        $myOrder = Order::create([
+            'order_public_id' => 'ord-compact-share-caller',
+            'customer_id' => $this->customer->id,
+            'vendor_id' => $this->vendor->id,
+            'table_scan_session_id' => $this->session->id,
+            'status' => Order::STATUS_CONFIRMED,
+            'amount' => 0,
+            'currency' => 'EUR',
+            'order_type' => 'dine-in',
+            'payment_pending' => false,
+            'payment_received' => false,
+        ]);
+        $otherOrder = Order::create([
+            'order_public_id' => 'ord-compact-share-owner',
+            'customer_id' => $other->id,
+            'vendor_id' => $this->vendor->id,
+            'table_scan_session_id' => $otherSession->id,
+            'status' => Order::STATUS_CONFIRMED,
+            'amount' => 4.2,
+            'currency' => 'EUR',
+            'order_type' => 'dine-in',
+            'payment_pending' => false,
+            'payment_received' => false,
+        ]);
+        $sharedItem = CartItem::create([
+            'table_scan_session_id' => $otherSession->id,
+            'menu_item_id' => $this->menuItem->id,
+            'order_id' => $otherOrder->id,
+            'quantity' => 1,
+        ]);
+
+        $unrelatedOrder = Order::create([
+            'order_public_id' => 'ord-unrelated-to-share',
+            'customer_id' => $other->id,
+            'vendor_id' => $this->vendor->id,
+            'table_scan_session_id' => $otherSession->id,
+            'status' => Order::STATUS_CONFIRMED,
+            'amount' => 4.2,
+            'currency' => 'EUR',
+            'order_type' => 'dine-in',
+            'payment_pending' => false,
+            'payment_received' => false,
+        ]);
+        $unrelatedItem = CartItem::create([
+            'table_scan_session_id' => $otherSession->id,
+            'menu_item_id' => $this->menuItem->id,
+            'order_id' => $unrelatedOrder->id,
+            'quantity' => 1,
+        ]);
+
+        $response = $this->withHeaders($this->headers)
+            ->putJson("/api/customer/table/order/update/{$myOrder->id}", [
+                'shared_item' => $sharedItem->id,
+            ])
+            ->assertOk()
+            ->assertJsonPath('message', 'Item sharing updated.')
+            ->assertJsonPath('state_patch.operation', 'order.sharing_updated')
+            ->assertJsonMissingPath('people')
+            ->assertJsonMissingPath('summary');
+
+        $statePatch = $response->json('state_patch');
+        $orderPatches = collect($statePatch['orders']['upsert']);
+        $itemPatches = collect($statePatch['items']['upsert']);
+        $sharedItemPatch = $itemPatches->firstWhere('cart_item_id', $sharedItem->id);
+
+        $this->assertNotNull($orderPatches->firstWhere('id', $myOrder->id));
+        $this->assertNotNull($orderPatches->firstWhere('id', $otherOrder->id));
+        $this->assertNull($orderPatches->firstWhere('id', $unrelatedOrder->id));
+        $this->assertSame([$myOrder->id], $sharedItemPatch['shared_order_ids']);
+        $this->assertNull($itemPatches->firstWhere('cart_item_id', $unrelatedItem->id));
+
+        $notification = Notification::where('customer_id', $other->id)
+            ->where('event', 'order_updated')
+            ->get()
+            ->first(fn (Notification $row) => ($row->metadata['template'] ?? null) === 'order.sharing_updated');
+
+        $this->assertNotNull($notification);
+        $this->assertSame($statePatch, $notification->metadata['state_patch']);
+        $this->assertArrayNotHasKey('person_snapshots', $notification->metadata);
+    }
+
+    public function test_unshare_compact_patch_reports_deleted_empty_side_order(): void
+    {
+        $other = Customer::factory()->create(['first_name' => 'Bob', 'last_name' => 'Jones']);
+        $otherSession = TableScanSession::create([
+            'vendor_id' => $this->vendor->id,
+            'restaurant_table_id' => $this->table->id,
+            'customer_id' => $other->id,
+            'pin' => '',
+            'status' => 'active',
+            'scanned_at' => now(),
+        ]);
+
+        $mainOrder = Order::create([
+            'order_public_id' => 'ord-unshare-main',
+            'customer_id' => $this->customer->id,
+            'vendor_id' => $this->vendor->id,
+            'table_scan_session_id' => $this->session->id,
+            'status' => Order::STATUS_CONFIRMED,
+            'amount' => 0,
+            'currency' => 'EUR',
+            'order_type' => 'dine-in',
+            'payment_pending' => false,
+            'payment_received' => false,
+        ]);
+        $sideOrder = Order::create([
+            'order_public_id' => 'ord-unshare-side',
+            'parent_order_id' => $mainOrder->id,
+            'customer_id' => $this->customer->id,
+            'vendor_id' => $this->vendor->id,
+            'table_scan_session_id' => $this->session->id,
+            'status' => Order::STATUS_CONFIRMED,
+            'amount' => 2.1,
+            'currency' => 'EUR',
+            'order_type' => 'dine-in',
+            'payment_pending' => false,
+            'payment_received' => false,
+        ]);
+        $ownerOrder = Order::create([
+            'order_public_id' => 'ord-unshare-owner',
+            'customer_id' => $other->id,
+            'vendor_id' => $this->vendor->id,
+            'table_scan_session_id' => $otherSession->id,
+            'status' => Order::STATUS_CONFIRMED,
+            'amount' => 2.1,
+            'currency' => 'EUR',
+            'order_type' => 'dine-in',
+            'payment_pending' => false,
+            'payment_received' => false,
+        ]);
+        $sharedItem = CartItem::create([
+            'table_scan_session_id' => $otherSession->id,
+            'menu_item_id' => $this->menuItem->id,
+            'order_id' => $ownerOrder->id,
+            'quantity' => 1,
+            'shared_order_ids' => [$sideOrder->id],
+        ]);
+
+        $response = $this->withHeaders($this->headers)
+            ->putJson("/api/customer/table/order/update/{$sideOrder->id}", [
+                'unshared_item' => $sharedItem->id,
+            ])
+            ->assertOk()
+            ->assertJsonPath('state_patch.operation', 'order.sharing_updated')
+            ->assertJsonPath('removed_order_ids.0', $sideOrder->id)
+            ->assertJsonPath('state_patch.orders.remove_ids.0', $sideOrder->id)
+            ->assertJsonMissingPath('people');
+
+        $this->assertDatabaseMissing('orders', ['id' => $sideOrder->id]);
+        $this->assertSame([], array_map('intval', $sharedItem->fresh()->shared_order_ids ?? []));
+
+        $statePatch = $response->json('state_patch');
+        $this->assertNull(collect($statePatch['orders']['upsert'])->firstWhere('id', $sideOrder->id));
+        $this->assertSame(
+            [],
+            collect($statePatch['items']['upsert'])->firstWhere('cart_item_id', $sharedItem->id)['shared_order_ids'],
+        );
+
+        $notification = Notification::where('customer_id', $other->id)
+            ->where('event', 'order_updated')
+            ->get()
+            ->first(fn (Notification $row) => ($row->metadata['template'] ?? null) === 'order.sharing_updated');
+
+        $this->assertNotNull($notification);
+        $this->assertSame($statePatch, $notification->metadata['state_patch']);
+        $this->assertSame([$sideOrder->id], $notification->metadata['removed_order_ids']);
     }
 
     public function test_table_history_items_include_status_from_preparation_timestamps(): void
