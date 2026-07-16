@@ -8,6 +8,7 @@ use App\Models\MenuItem;
 use App\Models\Order;
 use App\Models\TableScanSession;
 use App\Models\Vendor;
+use App\Services\CustomerCommandBus;
 use App\Services\LocaleService;
 use App\Services\MenuCustomizationService;
 use App\Services\NotificationService;
@@ -30,7 +31,53 @@ class CartController extends Controller
         private readonly MenuCustomizationService $customizations,
         private readonly TableStatePatchService $statePatches,
         private readonly OrderSharingService $orderSharing,
+        private readonly CustomerCommandBus $commands,
     ) {}
+
+    private function queuedCommandResponse(
+        Request $request,
+        TableScanSession $session,
+        string $operation,
+        array $payload,
+    ): ?JsonResponse {
+        if (! $this->commands->enabled() || $request->attributes->get('customer_command_sync')) {
+            return null;
+        }
+
+        try {
+            $command = $this->commands->dispatch(
+                $request->user(),
+                $session,
+                $operation,
+                $payload,
+                $request->header('Accept-Language'),
+            );
+        } catch (\Throwable $exception) {
+            report($exception);
+
+            return null;
+        }
+
+        return response()->json([
+            'message' => 'Change accepted.',
+            ...$command,
+        ], 202);
+    }
+
+    public function commandStatus(Request $request, string $commandId): JsonResponse
+    {
+        $status = $this->commands->status($commandId);
+        if (! $status) {
+            return response()->json(['message' => 'Command not found or expired.'], 404);
+        }
+        if ((int) ($status['customer_id'] ?? 0) !== (int) $request->user()->id) {
+            return response()->json(['message' => 'Command not found or expired.'], 404);
+        }
+
+        unset($status['customer_id']);
+
+        return response()->json($status);
+    }
 
     /**
      * Resolve the authenticated customer's active session.
@@ -227,6 +274,7 @@ class CartController extends Controller
     {
         $data = Validator::make($request->all(), [
             'menu_item_id' => ['required', 'integer', 'exists:menu_items,id'],
+            'client_item_id' => ['sometimes', 'nullable', 'uuid'],
             'quantity' => ['sometimes', 'integer', 'min:1', 'max:99'],
             'notes' => ['nullable', 'string', 'max:500'],
             'paid_addons' => ['sometimes', 'array'],
@@ -255,6 +303,10 @@ class CartController extends Controller
         $mySession = $this->activeSession($request);
         if (! $mySession) {
             return response()->json(['message' => 'No active table session found.'], 422);
+        }
+
+        if ($queued = $this->queuedCommandResponse($request, $mySession, 'cart.add', $data)) {
+            return $queued;
         }
 
         $menuItem = MenuItem::where('id', $data['menu_item_id'])
@@ -288,6 +340,7 @@ class CartController extends Controller
         } else {
             $item = CartItem::create([
                 'table_scan_session_id' => $mySession->id,
+                'client_item_id' => $data['client_item_id'] ?? null,
                 'menu_item_id' => $data['menu_item_id'],
                 'order_id' => null,
                 'quantity' => $data['quantity'] ?? 1,
@@ -318,6 +371,8 @@ class CartController extends Controller
                 'customer_name' => $customerName,
                 'menu_item_id' => $item->menu_item_id,
                 'item_name' => $itemName,
+                'command_id' => $request->attributes->get('customer_command_id'),
+                'command_status' => $request->attributes->get('customer_command_id') ? 'completed' : null,
                 ...$realtimeCart,
             ],
         );
@@ -359,6 +414,7 @@ class CartController extends Controller
             'modifiers.*.option_ids' => ['sometimes', 'array'],
             'modifiers.*.option_ids.*' => ['integer'],
             'modifiers.*.options' => ['sometimes', 'array'],
+            'client_item_id' => ['sometimes', 'nullable', 'uuid'],
         ])->validate();
 
         $mySession = $this->activeSession($request);
@@ -366,8 +422,20 @@ class CartController extends Controller
             return response()->json(['message' => 'No active table session found.'], 422);
         }
 
-        $item = CartItem::where('id', $id)
-            ->where('table_scan_session_id', $mySession->id)
+        if ($queued = $this->queuedCommandResponse($request, $mySession, 'cart.update', [
+            ...$data,
+            'cart_item_id' => $id,
+        ])) {
+            return $queued;
+        }
+
+        $item = CartItem::where('table_scan_session_id', $mySession->id)
+            ->where(function ($query) use ($id, $data) {
+                $query->where('id', $id);
+                if (! empty($data['client_item_id'])) {
+                    $query->orWhere('client_item_id', $data['client_item_id']);
+                }
+            })
             ->first();
 
         if (! $item) {
@@ -419,6 +487,8 @@ class CartController extends Controller
                 'customer_name' => $customerName,
                 'menu_item_id' => $item->menu_item_id,
                 'item_name' => $itemName,
+                'command_id' => $request->attributes->get('customer_command_id'),
+                'command_status' => $request->attributes->get('customer_command_id') ? 'completed' : null,
                 ...$realtimeCart,
             ],
         );
@@ -436,13 +506,29 @@ class CartController extends Controller
      */
     public function removeItem(Request $request, int $id): JsonResponse
     {
+        $data = Validator::make($request->all(), [
+            'client_item_id' => ['sometimes', 'nullable', 'uuid'],
+        ])->validate();
+
         $mySession = $this->activeSession($request);
         if (! $mySession) {
             return response()->json(['message' => 'No active table session found.'], 422);
         }
 
-        $item = CartItem::where('id', $id)
-            ->where('table_scan_session_id', $mySession->id)
+        if ($queued = $this->queuedCommandResponse($request, $mySession, 'cart.remove', [
+            'cart_item_id' => $id,
+            'client_item_id' => $data['client_item_id'] ?? null,
+        ])) {
+            return $queued;
+        }
+
+        $item = CartItem::where('table_scan_session_id', $mySession->id)
+            ->where(function ($query) use ($id, $data) {
+                $query->where('id', $id);
+                if (! empty($data['client_item_id'])) {
+                    $query->orWhere('client_item_id', $data['client_item_id']);
+                }
+            })
             ->first();
 
         if (! $item) {
@@ -471,6 +557,8 @@ class CartController extends Controller
                 'customer_name' => $customerName,
                 'menu_item_id' => $menuItemId,
                 'item_name' => $itemName,
+                'command_id' => $request->attributes->get('customer_command_id'),
+                'command_status' => $request->attributes->get('customer_command_id') ? 'completed' : null,
                 ...$realtimeCart,
             ],
         );
@@ -605,6 +693,14 @@ class CartController extends Controller
             return response()->json(['message' => 'No active table session found.'], 422);
         }
 
+        if ($this->commands->enabled() && ! $this->commands->waitForSession((int) $mySession->id)) {
+            return response()->json([
+                'message' => 'Your latest cart changes are still being saved. Please retry shortly.',
+                'code' => 'CUSTOMER_COMMANDS_PENDING',
+                'retry_after_ms' => 250,
+            ], 409);
+        }
+
         $existingSubmittedOrder = $this->currentUnpaidSubmittedOrder($request->user()->id, $mySession->id);
 
         if ($existingSubmittedOrder) {
@@ -725,6 +821,13 @@ class CartController extends Controller
             return response()->json(['message' => 'No active table session found.'], 422);
         }
 
+        if ($queued = $this->queuedCommandResponse($request, $mySession, 'order.share', [
+            ...$data,
+            'order_id' => $order_id,
+        ])) {
+            return $queued;
+        }
+
         $result = $this->orderSharing->update(
             $order_id,
             (int) $request->user()->id,
@@ -749,6 +852,8 @@ class CartController extends Controller
                 'order_snapshots' => $result['order_snapshots'],
                 'removed_order_ids' => $result['removed_order_ids'],
                 'state_patch' => $result['state_patch'],
+                'command_id' => $request->attributes->get('customer_command_id'),
+                'command_status' => $request->attributes->get('customer_command_id') ? 'completed' : null,
             ],
         );
 
@@ -774,6 +879,14 @@ class CartController extends Controller
         $mySession = $this->activeSession($request);
         if (! $mySession) {
             return response()->json(['message' => 'No active table session found.'], 422);
+        }
+
+        if ($this->commands->enabled() && ! $this->commands->waitForSession((int) $mySession->id)) {
+            return response()->json([
+                'message' => 'Your latest cart changes are still being saved. Please retry shortly.',
+                'code' => 'CUSTOMER_COMMANDS_PENDING',
+                'retry_after_ms' => 250,
+            ], 409);
         }
 
         $draftOrder = $this->currentDraftOrder($customerId, $mySession->id);
@@ -1488,6 +1601,7 @@ class CartController extends Controller
 
         return [
             'id' => $item->id,
+            'client_item_id' => $item->client_item_id,
             'quantity' => $item->quantity,
             'notes' => $item->notes,
             'price' => $unitPrice,

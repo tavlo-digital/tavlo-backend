@@ -36,9 +36,9 @@ return [
     ],
 
     'stripe' => [
-        'key'                        => env('STRIPE_KEY'),
-        'secret'                     => env('STRIPE_SECRET'),
-        'webhook_secret'             => env('STRIPE_WEBHOOK_SECRET'),
+        'key' => env('STRIPE_KEY'),
+        'secret' => env('STRIPE_SECRET'),
+        'webhook_secret' => env('STRIPE_WEBHOOK_SECRET'),
         'subscription_webhook_secret' => env('STRIPE_SUBSCRIPTION_WEBHOOK_SECRET'),
     ],
 
@@ -60,6 +60,20 @@ return [
     'realtime' => [
         'customer_enabled' => (bool) env('CUSTOMER_REALTIME_ENABLED', false),
         'queue' => env('REALTIME_QUEUE', 'realtime'),
+    ],
+
+    'customer_api_cache' => [
+        'enabled' => (bool) env('CUSTOMER_API_CACHE_ENABLED', false),
+        'store' => env('CUSTOMER_API_CACHE_STORE', 'redis'),
+        'ttl' => (int) env('CUSTOMER_API_CACHE_TTL', 120),
+    ],
+
+    'customer_commands' => [
+        'enabled' => (bool) env('CUSTOMER_ASYNC_COMMANDS_ENABLED', false),
+        'connection' => env('CUSTOMER_COMMANDS_CONNECTION', 'redis'),
+        'queue' => env('CUSTOMER_COMMANDS_QUEUE', 'customer-commands'),
+        'status_ttl' => (int) env('CUSTOMER_COMMAND_STATUS_TTL', 3600),
+        'barrier_timeout_ms' => (int) env('CUSTOMER_COMMAND_BARRIER_TIMEOUT_MS', 2000),
     ],
 
     'supabase' => [

@@ -26,6 +26,7 @@ class CartItem extends Model
 
     protected $fillable = [
         'table_scan_session_id',
+        'client_item_id',
         'menu_item_id',
         'order_id',
         'quantity',

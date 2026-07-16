@@ -20,12 +20,12 @@ return Application::configure(basePath: dirname(__DIR__))
                 ->name('customer.')
                 ->group(base_path('routes/api/customer.php'));
 
-            Route::middleware('api')
+            Route::middleware(['api', 'customer.cache.invalidate'])
                 ->prefix('api/vendor')
                 ->name('vendor.')
                 ->group(base_path('routes/api/vendor.php'));
 
-            Route::middleware('api')
+            Route::middleware(['api', 'customer.cache.invalidate'])
                 ->prefix('api/admin')
                 ->name('admin.api.')
                 ->group(base_path('routes/api/admin.php'));
@@ -38,6 +38,8 @@ return Application::configure(basePath: dirname(__DIR__))
             'admin' => \App\Http\Middleware\EnsureUserIsAdmin::class,
             'vendor.staff.access' => \App\Http\Middleware\EnsureStaffCanAccessVendorRoute::class,
             'track.session.activity' => \App\Http\Middleware\TrackSessionActivity::class,
+            'customer.response.cache' => \App\Http\Middleware\CacheCustomerApiResponse::class,
+            'customer.cache.invalidate' => \App\Http\Middleware\InvalidateCustomerApiCache::class,
         ]);
 
         $middleware->web(append: [

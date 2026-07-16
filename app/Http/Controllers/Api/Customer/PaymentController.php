@@ -9,6 +9,7 @@ use App\Models\OrderPayment;
 use App\Models\StripeWebhookLog;
 use App\Models\TableScanSession;
 use App\Models\Vendor;
+use App\Services\CustomerCommandBus;
 use App\Services\NotificationService;
 use App\Services\PaymentGuardService;
 use App\Services\ShareOrderService;
@@ -33,7 +34,21 @@ class PaymentController extends Controller
     public function __construct(
         private readonly StripePaymentService $stripe,
         private readonly TableStatePatchService $statePatches,
+        private readonly CustomerCommandBus $commands,
     ) {}
+
+    private function pendingCommandResponse(TableScanSession $session): ?JsonResponse
+    {
+        if (! $this->commands->enabled() || $this->commands->waitForSession((int) $session->id)) {
+            return null;
+        }
+
+        return response()->json([
+            'message' => 'Your latest cart changes are still being saved. Please retry shortly.',
+            'code' => 'CUSTOMER_COMMANDS_PENDING',
+            'retry_after_ms' => 250,
+        ], 409);
+    }
 
     /**
      * GET /api/customer/payment-methods?restaurant_id=...
@@ -111,6 +126,9 @@ class PaymentController extends Controller
         $payerSession = $this->activeSession((int) $payer->id);
         if (! $payerSession) {
             return response()->json(['message' => 'No active table session found.'], 422);
+        }
+        if ($pending = $this->pendingCommandResponse($payerSession)) {
+            return $pending;
         }
 
         $tableSessionIds = TableScanSession::where('vendor_id', $payerSession->vendor_id)
@@ -260,6 +278,9 @@ class PaymentController extends Controller
 
         if (! $payerSession) {
             return response()->json(['message' => 'No active table session found.'], 422);
+        }
+        if ($pending = $this->pendingCommandResponse($payerSession)) {
+            return $pending;
         }
 
         $tableSessionIds = TableScanSession::where('vendor_id', $payerSession->vendor_id)
@@ -512,6 +533,9 @@ class PaymentController extends Controller
         $payerSession = $this->activeSession((int) $customer->id);
         if (! $payerSession) {
             return response()->json(['message' => 'No active table session found.'], 422);
+        }
+        if ($pending = $this->pendingCommandResponse($payerSession)) {
+            return $pending;
         }
 
         $orders = $this->payableSessionOrders($payerSession, (int) $customer->id);

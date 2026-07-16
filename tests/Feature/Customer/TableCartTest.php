@@ -2,6 +2,8 @@
 
 namespace Tests\Feature\Customer;
 
+use App\Http\Controllers\Api\Customer\CartController;
+use App\Jobs\ProcessCustomerCommand;
 use App\Models\CartItem;
 use App\Models\Customer;
 use App\Models\MenuCategory;
@@ -15,8 +17,11 @@ use App\Models\RestaurantTable;
 use App\Models\TableScanSession;
 use App\Models\Vendor;
 use App\Models\VendorSetting;
+use App\Services\CustomerCommandBus;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Mockery;
 use Tests\TestCase;
 
 class TableCartTest extends TestCase
@@ -80,6 +85,89 @@ class TableCartTest extends TestCase
             'pin' => '1234',
             'status' => 'active',
             'scanned_at' => now(),
+        ]);
+    }
+
+    public function test_cart_add_can_be_accepted_as_an_ordered_redis_command(): void
+    {
+        $commands = Mockery::mock(CustomerCommandBus::class);
+        $commands->shouldReceive('enabled')->once()->andReturnTrue();
+        $commands->shouldReceive('dispatch')->once()->andReturn([
+            'command_id' => '0190f26e-7c87-7def-8e46-111111111111',
+            'sequence' => 1,
+            'operation' => 'cart.add',
+            'status' => 'accepted',
+        ]);
+        $this->app->instance(CustomerCommandBus::class, $commands);
+
+        $this->postJson('/api/customer/cart/items', [
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 1,
+        ], $this->headers)
+            ->assertStatus(202)
+            ->assertJsonPath('status', 'accepted')
+            ->assertJsonPath('sequence', 1);
+
+        $this->assertDatabaseCount('cart_items', 0);
+    }
+
+    public function test_customer_get_cache_hits_and_mutations_invalidate_it(): void
+    {
+        config()->set('services.customer_api_cache.enabled', true);
+        config()->set('services.customer_api_cache.store', 'array');
+        config()->set('services.customer_api_cache.ttl', 120);
+        Cache::store('array')->clear();
+
+        $this->getJson('/api/customer/cart', $this->headers)
+            ->assertOk()
+            ->assertHeader('X-Tavlo-Cache', 'MISS');
+        $this->getJson('/api/customer/cart', $this->headers)
+            ->assertOk()
+            ->assertHeader('X-Tavlo-Cache', 'HIT');
+
+        $this->postJson('/api/customer/cart/items', [
+            'menu_item_id' => $this->menuItem->id,
+        ], $this->headers)->assertCreated();
+
+        $this->getJson('/api/customer/cart', $this->headers)
+            ->assertOk()
+            ->assertHeader('X-Tavlo-Cache', 'MISS')
+            ->assertJsonCount(1, 'people.0.personal_items');
+    }
+
+    public function test_ordered_cart_command_is_committed_by_the_worker(): void
+    {
+        $commandId = '0190f26e-7c87-7def-8e46-222222222222';
+        $commands = Mockery::mock(CustomerCommandBus::class);
+        $commands->shouldReceive('expectedSequence')->once()->with($this->session->id)->andReturn(1);
+        $commands->shouldReceive('enabled')->once()->andReturnTrue();
+        $commands->shouldReceive('finish')->once()->withArgs(
+            fn (string $id, int $sessionId, int $sequence, string $status) => $id === $commandId
+                && $sessionId === $this->session->id
+                && $sequence === 1
+                && $status === 'completed'
+        );
+        $this->app->instance(CustomerCommandBus::class, $commands);
+
+        $job = new ProcessCustomerCommand(
+            $commandId,
+            1,
+            $this->customer->id,
+            $this->session->id,
+            'cart.add',
+            ['menu_item_id' => $this->menuItem->id, 'quantity' => 2],
+            'en',
+        );
+        $job->handle($commands, $this->app->make(CartController::class));
+
+        $this->assertDatabaseHas('customer_commands', [
+            'command_id' => $commandId,
+            'status' => 'completed',
+        ]);
+        $this->assertDatabaseHas('cart_items', [
+            'table_scan_session_id' => $this->session->id,
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 2,
         ]);
     }
 
