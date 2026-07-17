@@ -31,10 +31,11 @@ class EnsureStaffCanAccessVendorRoute
             'vendor.me',
             'vendor.logout',
             'vendor.profile.password',
-            'vendor.realtime.token',
+            'vendor.broadcasting.auth',
             'vendor.notifications.index',
             'vendor.notifications.read',
             'vendor.notifications.readAll',
+            'vendor.commands.show',
             'vendor.orders.index',
             'vendor.orders.show',
             'vendor.orders.itemStatus',
@@ -43,11 +44,13 @@ class EnsureStaffCanAccessVendorRoute
         $allowedByRole = [
             'kitchen' => [
                 'vendor.orders.ready',
+                'vendor.orders.itemStatusBatch',
             ],
             'waiter' => [
                 'vendor.orders.confirm',
                 'vendor.orders.confirmCash',
                 'vendor.orders.served',
+                'vendor.orders.itemStatusBatch',
                 'vendor.tables.index',
                 'vendor.tables.closeSession',
                 'vendor.tables.dismissCall',

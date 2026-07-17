@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers\Api\Vendor;
 
+use App\Exceptions\StaffCommandConflictException;
+use App\Http\Controllers\Api\Vendor\Concerns\QueuesStaffCommands;
 use App\Http\Controllers\Controller;
 use App\Models\CartItem;
 use App\Models\Order;
@@ -12,19 +14,24 @@ use App\Models\Vendor;
 use App\Services\LocaleService;
 use App\Services\MenuCustomizationService;
 use App\Services\NotificationService;
+use App\Services\StaffCommandBus;
 use App\Services\TableStatePatchService;
 use App\Services\TaxCalculationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Throwable;
 
 class OrderController extends Controller
 {
+    use QueuesStaffCommands;
+
     public function __construct(
         private readonly LocaleService $locales,
         private readonly MenuCustomizationService $customizations,
         private readonly TableStatePatchService $statePatches,
+        private readonly StaffCommandBus $staffCommands,
     ) {}
 
     /**
@@ -170,6 +177,16 @@ class OrderController extends Controller
      */
     public function confirm(Request $request, string $orderId): JsonResponse
     {
+        if ($queued = $this->queuedStaffCommand(
+            $request,
+            $this->staffCommands,
+            'order.confirm',
+            ['order_id' => $orderId],
+            $this->staffCommandResourcesForOrderRoute($request, $orderId),
+        )) {
+            return $queued;
+        }
+
         $order = $this->resolveOrder($orderId, $request);
 
         $order->update([
@@ -201,6 +218,20 @@ class OrderController extends Controller
      */
     public function confirmCashPayment(Request $request, string $orderId): JsonResponse
     {
+        $data = $request->validate([
+            'paymentNote' => ['sometimes', 'nullable', 'string', 'max:500'],
+        ]);
+
+        if ($queued = $this->queuedStaffCommand(
+            $request,
+            $this->staffCommands,
+            'order.confirm_cash',
+            ['order_id' => $orderId, ...$data],
+            $this->staffCommandResourcesForOrderRoute($request, $orderId),
+        )) {
+            return $queued;
+        }
+
         $order = $this->resolveOrder($orderId, $request);
 
         $order->update([
@@ -210,6 +241,9 @@ class OrderController extends Controller
             // Waiters can collect unpaid orders even when the customer never
             // requested cash — record the in-person payment as cash.
             'payment_method' => $order->payment_method ?? 'cash',
+            ...(array_key_exists('paymentNote', $data)
+                ? ['payment_note' => $data['paymentNote']]
+                : []),
         ]);
 
         $statePatch = $this->statePatches->build('payment.cash_confirmed', [$order->id]);
@@ -241,6 +275,16 @@ class OrderController extends Controller
      */
     public function markReady(Request $request, string $orderId): JsonResponse
     {
+        if ($queued = $this->queuedStaffCommand(
+            $request,
+            $this->staffCommands,
+            'order.ready',
+            ['order_id' => $orderId],
+            $this->staffCommandResourcesForOrderRoute($request, $orderId),
+        )) {
+            return $queued;
+        }
+
         $order = $this->resolveOrder($orderId, $request);
 
         $now = now();
@@ -281,13 +325,27 @@ class OrderController extends Controller
      */
     public function updateItemStatus(Request $request, string $orderId, string $cartItemId): JsonResponse
     {
-        $order = $this->resolveOrder($orderId, $request);
-
         $data = $request->validate([
             'status' => ['required', 'string', 'in:new,preparing,ready,served'],
         ]);
 
         $this->authorizeItemStatus($request, $data['status']);
+
+        if ($queued = $this->queuedStaffCommand(
+            $request,
+            $this->staffCommands,
+            'order.item_status',
+            [
+                'order_id' => $orderId,
+                'cart_item_id' => $cartItemId,
+                'status' => $data['status'],
+            ],
+            $this->staffCommandResourcesForOrderRoute($request, $orderId),
+        )) {
+            return $queued;
+        }
+
+        $order = $this->resolveOrder($orderId, $request);
 
         $transition = DB::transaction(function () use ($order, $cartItemId, $data) {
             $item = $this->linkedCartItemsQuery($order)
@@ -418,6 +476,80 @@ class OrderController extends Controller
     }
 
     /**
+     * POST /api/vendor/orders/items/status-batch
+     * Each item is an independent ordered/idempotent staff command.
+     */
+    public function batchItemStatus(Request $request): JsonResponse
+    {
+        $actor = $request->user();
+        if (! $actor instanceof TeamMember) {
+            abort(403, 'Batch item status is only available to staff actors.');
+        }
+
+        $data = $request->validate([
+            'commands' => ['required', 'array', 'min:1', 'max:50'],
+            'commands.*.idempotency_key' => ['required', 'uuid', 'distinct:strict'],
+            'commands.*.order_id' => ['required', 'string', 'max:64'],
+            'commands.*.cart_item_id' => ['required', 'integer'],
+            'commands.*.status' => ['required', 'string', 'in:new,preparing,ready,served'],
+        ]);
+
+        $prepared = [];
+        foreach ($data['commands'] as $entry) {
+            $this->authorizeItemStatus($request, $entry['status']);
+
+            $prepared[] = [
+                'idempotency_key' => strtolower($entry['idempotency_key']),
+                'payload' => [
+                    'order_id' => (string) $entry['order_id'],
+                    'cart_item_id' => (string) $entry['cart_item_id'],
+                    'status' => $entry['status'],
+                ],
+                'resources' => $this->staffCommandResourcesForOrderRoute($request, (string) $entry['order_id']),
+            ];
+        }
+
+        if (! $this->staffCommands->enabled()) {
+            return response()->json([
+                'message' => 'Staff command processing is temporarily unavailable.',
+                'code' => 'staff_commands_unavailable',
+            ], 503);
+        }
+
+        $accepted = [];
+        foreach ($prepared as $entry) {
+            try {
+                $status = $this->staffCommands->dispatch(
+                    $actor,
+                    $entry['idempotency_key'],
+                    'order.item_status',
+                    $entry['payload'],
+                    $entry['resources'],
+                    $request->header('Accept-Language'),
+                );
+                $accepted[] = $this->staffCommandAcceptedPayload($status);
+            } catch (StaffCommandConflictException $exception) {
+                return response()->json([
+                    'message' => $exception->getMessage(),
+                    'code' => 'idempotency_key_reused',
+                    'command_id' => $exception->commandId,
+                    'accepted_commands' => $accepted,
+                ], 409);
+            } catch (Throwable $exception) {
+                report($exception);
+
+                return response()->json([
+                    'message' => 'Staff command processing is temporarily unavailable.',
+                    'code' => 'staff_commands_unavailable',
+                    'accepted_commands' => $accepted,
+                ], 503);
+            }
+        }
+
+        return response()->json(['commands' => $accepted], 202);
+    }
+
+    /**
      * PATCH /api/orders/{orderId}/picked-up
      */
     public function markPickedUp(Request $request, string $orderId): JsonResponse
@@ -444,6 +576,16 @@ class OrderController extends Controller
      */
     public function markServed(Request $request, string $orderId): JsonResponse
     {
+        if ($queued = $this->queuedStaffCommand(
+            $request,
+            $this->staffCommands,
+            'order.served',
+            ['order_id' => $orderId],
+            $this->staffCommandResourcesForOrderRoute($request, $orderId),
+        )) {
+            return $queued;
+        }
+
         $order = $this->resolveOrder($orderId, $request);
 
         $now = now();
@@ -1163,6 +1305,15 @@ class OrderController extends Controller
         if ($user->role === 'waiter' && $status !== 'served') {
             abort(403, 'Waiters can only mark items served.');
         }
+    }
+
+    /** @return array<int, string> */
+    private function staffCommandResourcesForOrderRoute(Request $request, string $orderId): array
+    {
+        $actor = $request->user();
+        $vendorId = $actor instanceof TeamMember ? $actor->vendor_id : $actor->id;
+
+        return ["vendor:{$vendorId}:order:{$orderId}"];
     }
 
     private function syncOrderStatusFromCartItems(Order $order): void

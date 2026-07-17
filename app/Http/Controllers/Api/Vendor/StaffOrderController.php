@@ -2,16 +2,17 @@
 
 namespace App\Http\Controllers\Api\Vendor;
 
+use App\Http\Controllers\Api\Vendor\Concerns\QueuesStaffCommands;
 use App\Http\Controllers\Controller;
 use App\Models\CartItem;
 use App\Models\MenuItem;
 use App\Models\Order;
-use App\Models\RestaurantTable;
 use App\Models\TableScanSession;
 use App\Models\TeamMember;
 use App\Models\Vendor;
 use App\Services\MenuCustomizationService;
 use App\Services\NotificationService;
+use App\Services\StaffCommandBus;
 use App\Services\TaxCalculationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -21,19 +22,15 @@ use Illuminate\Validation\ValidationException;
 
 class StaffOrderController extends Controller
 {
+    use QueuesStaffCommands;
+
     public function __construct(
         private readonly MenuCustomizationService $customizations,
+        private readonly StaffCommandBus $staffCommands,
     ) {}
 
     public function store(Request $request, string $vendorId, string $tableId): JsonResponse
     {
-        $vendor = Vendor::where('vendor_public_id', $vendorId)
-            ->when(ctype_digit($vendorId), fn ($q) => $q->orWhere('id', $vendorId))
-            ->firstOrFail();
-        $this->authorizeVendor($request, $vendor);
-
-        $table = $vendor->restaurantTables()->findOrFail($tableId);
-
         $data = $request->validate([
             'items' => ['required', 'array', 'min:1'],
             'items.*.menu_item_id' => ['required', 'integer'],
@@ -47,6 +44,27 @@ class StaffOrderController extends Controller
             'items.*.removed_items' => ['sometimes', 'array'],
             'items.*.selected_modifiers' => ['sometimes', 'array'],
         ]);
+
+        if ($queued = $this->queuedStaffCommand(
+            $request,
+            $this->staffCommands,
+            'table.staff_order',
+            [
+                'vendor_id' => $vendorId,
+                'table_id' => $tableId,
+                ...$data,
+            ],
+            [$this->staffCommandTableResource($request, $tableId)],
+        )) {
+            return $queued;
+        }
+
+        $vendor = Vendor::where('vendor_public_id', $vendorId)
+            ->when(ctype_digit($vendorId), fn ($q) => $q->orWhere('id', $vendorId))
+            ->firstOrFail();
+        $this->authorizeVendor($request, $vendor);
+
+        $table = $vendor->restaurantTables()->findOrFail($tableId);
 
         $menuItemIds = collect($data['items'])->pluck('menu_item_id')->unique();
         $menuItems = MenuItem::where('vendor_id', $vendor->id)
@@ -62,7 +80,7 @@ class StaffOrderController extends Controller
         $missing = $menuItemIds->diff($menuItems->keys());
         if ($missing->isNotEmpty()) {
             throw ValidationException::withMessages([
-                'items' => ['Some menu items are not available: ' . $missing->implode(', ')],
+                'items' => ['Some menu items are not available: '.$missing->implode(', ')],
             ]);
         }
 
@@ -109,7 +127,7 @@ class StaffOrderController extends Controller
 
             if (! $order) {
                 $order = Order::create([
-                    'order_public_id' => 'ord-' . Str::random(12),
+                    'order_public_id' => 'ord-'.Str::random(12),
                     'customer_id' => null,
                     'vendor_id' => $vendor->id,
                     'table_scan_session_id' => $session->id,
@@ -200,6 +218,14 @@ class StaffOrderController extends Controller
         ], 201);
     }
 
+    private function staffCommandTableResource(Request $request, string $tableId): string
+    {
+        $actor = $request->user();
+        $vendorId = $actor instanceof TeamMember ? $actor->vendor_id : $actor->id;
+
+        return "vendor:{$vendorId}:table:{$tableId}";
+    }
+
     private function normalizeCustomizations(MenuItem $menuItem, array $data): array
     {
         return [
@@ -254,6 +280,7 @@ class StaffOrderController extends Controller
                 if (! is_array($optionIds)) {
                     $optionIds = [$optionIds];
                 }
+
                 return $groupId > 0 ? [$groupId => $optionIds] : [];
             });
 

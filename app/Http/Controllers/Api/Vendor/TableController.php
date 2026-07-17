@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api\Vendor;
 
+use App\Http\Controllers\Api\Vendor\Concerns\QueuesStaffCommands;
 use App\Http\Controllers\Controller;
 use App\Models\CartItem;
 use App\Models\Order;
@@ -11,6 +12,7 @@ use App\Models\TeamMember;
 use App\Models\Vendor;
 use App\Models\VendorTakeawayQr;
 use App\Services\NotificationService;
+use App\Services\StaffCommandBus;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
@@ -19,6 +21,10 @@ use Illuminate\Support\Str;
 
 class TableController extends Controller
 {
+    use QueuesStaffCommands;
+
+    public function __construct(private readonly StaffCommandBus $staffCommands) {}
+
     /**
      * GET /api/vendor/{vendorId}/tables
      */
@@ -48,8 +54,7 @@ class TableController extends Controller
             ->flip()
             ->all();
 
-        $result = $tables->map(fn (RestaurantTable $t) =>
-            $this->formatTable($t, $this->deriveStatus($t->id, $activeTableIds, $unpaidTableIds))
+        $result = $tables->map(fn (RestaurantTable $t) => $this->formatTable($t, $this->deriveStatus($t->id, $activeTableIds, $unpaidTableIds))
         );
 
         return response()->json($result);
@@ -65,14 +70,14 @@ class TableController extends Controller
 
         $data = $request->validate([
             'number' => ['required', 'integer', 'min:1'],
-            'name'   => ['nullable', 'string', 'max:100'],
+            'name' => ['nullable', 'string', 'max:100'],
         ]);
 
         $table = $vendor->restaurantTables()->create([
-            'number'       => $data['number'],
-            'name'         => $data['name'] ?? ("Table " . $data['number']),
-            'qr_token'     => RestaurantTable::generateQrToken(),
-            'is_active'    => true,
+            'number' => $data['number'],
+            'name' => $data['name'] ?? ('Table '.$data['number']),
+            'qr_token' => RestaurantTable::generateQrToken(),
+            'is_active' => true,
             'qr_created_at' => now(),
         ]);
         $this->notifyTableChanged($request, $vendor, $table);
@@ -91,7 +96,7 @@ class TableController extends Controller
         $table = $vendor->restaurantTables()->findOrFail($tableId);
 
         $data = $request->validate([
-            'name'      => ['sometimes', 'string', 'max:100'],
+            'name' => ['sometimes', 'string', 'max:100'],
             'is_active' => ['sometimes', 'boolean'],
         ]);
 
@@ -197,10 +202,10 @@ class TableController extends Controller
         $table->update(['last_scanned_at' => now()]);
 
         return response()->json([
-            'message'     => 'Scan recorded',
-            'vendorId'    => $vendor->vendor_public_id,
-            'tableId'     => (string) $table->id,
-            'tableName'   => $table->name,
+            'message' => 'Scan recorded',
+            'vendorId' => $vendor->vendor_public_id,
+            'tableId' => (string) $table->id,
+            'tableName' => $table->name,
             'tableNumber' => $table->number,
         ]);
     }
@@ -228,7 +233,7 @@ class TableController extends Controller
 
         $qr = $this->getOrCreateTakeawayQr($vendor);
         $qr->update([
-            'qr_token'            => $this->generateTakeawayToken(),
+            'qr_token' => $this->generateTakeawayToken(),
             'last_regenerated_at' => now(),
         ]);
 
@@ -251,9 +256,9 @@ class TableController extends Controller
         $qr->update(['last_scanned_at' => now()]);
 
         return response()->json([
-            'message'  => 'Scan recorded',
+            'message' => 'Scan recorded',
             'vendorId' => $vendor->vendor_public_id,
-            'type'     => 'takeaway',
+            'type' => 'takeaway',
         ]);
     }
 
@@ -267,10 +272,10 @@ class TableController extends Controller
         $this->authorizeVendor($request, $vendor);
 
         $desired = $request->validate([
-            'count'  => ['required', 'integer', 'min:0', 'max:500'],
+            'count' => ['required', 'integer', 'min:0', 'max:500'],
             'prefix' => ['sometimes', 'nullable', 'string', 'max:10'],
         ]);
-        $count  = $desired['count'];
+        $count = $desired['count'];
         $prefix = $desired['prefix'] ?? 'T';
 
         $existing = $vendor->restaurantTables()->orderBy('number')->get();
@@ -280,10 +285,10 @@ class TableController extends Controller
             // Add missing tables
             for ($n = $currentCount + 1; $n <= $count; $n++) {
                 $vendor->restaurantTables()->create([
-                    'number'        => $n,
-                    'name'          => "{$prefix}{$n}",
-                    'qr_token'      => RestaurantTable::generateQrToken(),
-                    'is_active'     => true,
+                    'number' => $n,
+                    'name' => "{$prefix}{$n}",
+                    'qr_token' => RestaurantTable::generateQrToken(),
+                    'is_active' => true,
                     'qr_created_at' => now(),
                 ]);
             }
@@ -309,13 +314,26 @@ class TableController extends Controller
      */
     public function closeSession(Request $request, string $vendorId, string $tableId): JsonResponse
     {
-        $vendor = $this->resolveVendor($vendorId);
-        $this->authorizeVendor($request, $vendor);
-
         $data = $request->validate([
             'force' => ['sometimes', 'boolean'],
         ]);
 
+        if ($queued = $this->queuedStaffCommand(
+            $request,
+            $this->staffCommands,
+            'table.close',
+            [
+                'vendor_id' => $vendorId,
+                'table_id' => $tableId,
+                ...$data,
+            ],
+            [$this->staffCommandTableResource($request, $tableId)],
+        )) {
+            return $queued;
+        }
+
+        $vendor = $this->resolveVendor($vendorId);
+        $this->authorizeVendor($request, $vendor);
         $table = $vendor->restaurantTables()->findOrFail($tableId);
 
         $result = DB::transaction(function () use ($vendor, $table, $data) {
@@ -455,9 +473,18 @@ class TableController extends Controller
      */
     public function createSession(Request $request, string $vendorId, string $tableId): JsonResponse
     {
+        if ($queued = $this->queuedStaffCommand(
+            $request,
+            $this->staffCommands,
+            'table.create_session',
+            ['vendor_id' => $vendorId, 'table_id' => $tableId],
+            [$this->staffCommandTableResource($request, $tableId)],
+        )) {
+            return $queued;
+        }
+
         $vendor = $this->resolveVendor($vendorId);
         $this->authorizeVendor($request, $vendor);
-
         $table = $vendor->restaurantTables()->findOrFail($tableId);
 
         if (! $table->is_active) {
@@ -509,6 +536,16 @@ class TableController extends Controller
 
     public function dismissCall(Request $request, string $vendorId, string $tableId): JsonResponse
     {
+        if ($queued = $this->queuedStaffCommand(
+            $request,
+            $this->staffCommands,
+            'table.dismiss_call',
+            ['vendor_id' => $vendorId, 'table_id' => $tableId],
+            [$this->staffCommandTableResource($request, $tableId)],
+        )) {
+            return $queued;
+        }
+
         $vendor = $this->resolveVendor($vendorId);
         $this->authorizeVendor($request, $vendor);
         $table = $vendor->restaurantTables()->findOrFail($tableId);
@@ -520,9 +557,6 @@ class TableController extends Controller
 
     public function transfer(Request $request, string $vendorId, string $tableId): JsonResponse
     {
-        $vendor = $this->resolveVendor($vendorId);
-        $this->authorizeVendor($request, $vendor);
-
         $data = $request->validate([
             'target_table_id' => ['required', 'integer'],
         ]);
@@ -533,6 +567,26 @@ class TableController extends Controller
                 'code' => 'same_table',
             ], 422);
         }
+
+        if ($queued = $this->queuedStaffCommand(
+            $request,
+            $this->staffCommands,
+            'table.transfer',
+            [
+                'vendor_id' => $vendorId,
+                'table_id' => $tableId,
+                'target_table_id' => $data['target_table_id'],
+            ],
+            [
+                $this->staffCommandTableResource($request, $tableId),
+                $this->staffCommandTableResource($request, (string) $data['target_table_id']),
+            ],
+        )) {
+            return $queued;
+        }
+
+        $vendor = $this->resolveVendor($vendorId);
+        $this->authorizeVendor($request, $vendor);
 
         $result = DB::transaction(function () use ($vendor, $tableId, $data) {
             $tables = $vendor->restaurantTables()
@@ -683,6 +737,14 @@ class TableController extends Controller
     // Private helpers
     // ----------------------------------------------------------------
 
+    private function staffCommandTableResource(Request $request, string $tableId): string
+    {
+        $actor = $request->user();
+        $vendorId = $actor instanceof TeamMember ? $actor->vendor_id : $actor->id;
+
+        return "vendor:{$vendorId}:table:{$tableId}";
+    }
+
     private function paymentSummary(Collection $orders): array
     {
         $total = round((float) $orders->sum(fn (Order $order) => (float) $order->amount), 2);
@@ -732,13 +794,13 @@ class TableController extends Controller
     private function formatTable(RestaurantTable $table, string $status = 'idle'): array
     {
         return [
-            'id'            => (string) $table->id,
-            'number'        => $table->number,
-            'name'          => $table->name,
-            'qrToken'       => $table->qr_token,
-            'isActive'      => (bool) $table->is_active,
-            'status'        => $status,
-            'qrCreatedAt'   => $table->qr_created_at?->toISOString(),
+            'id' => (string) $table->id,
+            'number' => $table->number,
+            'name' => $table->name,
+            'qrToken' => $table->qr_token,
+            'isActive' => (bool) $table->is_active,
+            'status' => $status,
+            'qrCreatedAt' => $table->qr_created_at?->toISOString(),
             'lastScannedAt' => $table->last_scanned_at?->toISOString(),
         ];
     }
@@ -746,20 +808,25 @@ class TableController extends Controller
     private function formatTakeawayQr(VendorTakeawayQr $qr): array
     {
         return [
-            'id'                => (string) $qr->id,
-            'qrToken'           => $qr->qr_token,
-            'qrCreatedAt'       => $qr->created_at?->toISOString(),
+            'id' => (string) $qr->id,
+            'qrToken' => $qr->qr_token,
+            'qrCreatedAt' => $qr->created_at?->toISOString(),
             'lastRegeneratedAt' => $qr->last_regenerated_at?->toISOString(),
-            'lastScannedAt'     => $qr->last_scanned_at?->toISOString(),
-            'isActive'          => true,
+            'lastScannedAt' => $qr->last_scanned_at?->toISOString(),
+            'isActive' => true,
         ];
     }
 
     /** Derives status string from preloaded flip maps. */
     private function deriveStatus(int $tableId, array $activeFlip, array $unpaidFlip): string
     {
-        if (isset($unpaidFlip[$tableId])) return 'waiting_payment'; // red
-        if (isset($activeFlip[$tableId])) return 'active';          // yellow
+        if (isset($unpaidFlip[$tableId])) {
+            return 'waiting_payment';
+        } // red
+        if (isset($activeFlip[$tableId])) {
+            return 'active';
+        }          // yellow
+
         return 'idle';                                                   // green
     }
 
@@ -767,7 +834,7 @@ class TableController extends Controller
     {
         return VendorTakeawayQr::firstOrCreate(
             ['vendor_id' => $vendor->id],
-            ['qr_token'  => $this->generateTakeawayToken()]
+            ['qr_token' => $this->generateTakeawayToken()]
         );
     }
 

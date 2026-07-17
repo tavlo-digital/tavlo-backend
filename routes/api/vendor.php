@@ -4,6 +4,7 @@ use App\Http\Controllers\Api\Vendor\AllergenController;
 use App\Http\Controllers\Api\Vendor\AnalyticsController;
 use App\Http\Controllers\Api\Vendor\AuthController;
 use App\Http\Controllers\Api\Vendor\BillingController;
+use App\Http\Controllers\Api\Vendor\BroadcastAuthController;
 use App\Http\Controllers\Api\Vendor\DashboardController;
 use App\Http\Controllers\Api\Vendor\DietaryPreferenceController;
 use App\Http\Controllers\Api\Vendor\InventoryController;
@@ -13,13 +14,13 @@ use App\Http\Controllers\Api\Vendor\MenuItemController;
 use App\Http\Controllers\Api\Vendor\ModifierGroupController;
 use App\Http\Controllers\Api\Vendor\NotificationController;
 use App\Http\Controllers\Api\Vendor\OrderController;
-use App\Http\Controllers\Api\Vendor\RealtimeTokenController;
 use App\Http\Controllers\Api\Vendor\ReservationController;
 use App\Http\Controllers\Api\Vendor\ReviewController;
 use App\Http\Controllers\Api\Vendor\SpecialTagController;
+use App\Http\Controllers\Api\Vendor\StaffCommandController;
+use App\Http\Controllers\Api\Vendor\StaffOrderController;
 use App\Http\Controllers\Api\Vendor\StripeConnectController;
 use App\Http\Controllers\Api\Vendor\SubscriptionWebhookController;
-use App\Http\Controllers\Api\Vendor\StaffOrderController;
 use App\Http\Controllers\Api\Vendor\TableController;
 use App\Http\Controllers\Api\Vendor\TeamController;
 use App\Http\Controllers\Api\Vendor\VendorSettingsController;
@@ -47,10 +48,13 @@ Route::middleware(['auth:vendor,team_member', 'vendor.staff.access'])->group(fun
     Route::get('me', [AuthController::class, 'me'])->name('me');
     Route::post('logout', [AuthController::class, 'logout'])->name('logout');
     Route::post('profile/password', [AuthController::class, 'changePassword'])->name('profile.password');
-    Route::get('realtime/token', RealtimeTokenController::class)->name('realtime.token');
+    Route::post('broadcasting/auth', BroadcastAuthController::class)->name('broadcasting.auth');
     Route::get('notifications', [NotificationController::class, 'index'])->name('notifications.index');
     Route::patch('notifications/{id}/read', [NotificationController::class, 'markRead'])->name('notifications.read');
     Route::post('notifications/read-all', [NotificationController::class, 'markAllRead'])->name('notifications.readAll');
+    Route::get('commands/{commandId}', [StaffCommandController::class, 'show'])
+        ->whereUuid('commandId')
+        ->name('commands.show');
 
     // Menu (legacy endpoints kept for compatibility)
     Route::get('{vendorId}/menu', [MenuController::class, 'show'])->name('menu.show');
@@ -109,6 +113,7 @@ Route::middleware(['auth:vendor,team_member', 'vendor.staff.access'])->group(fun
     Route::patch('orders/{orderId}/confirm-cash', [OrderController::class, 'confirmCashPayment'])->name('orders.confirmCash');
     Route::patch('orders/{orderId}/ready', [OrderController::class, 'markReady'])->name('orders.ready');
     Route::patch('orders/{orderId}/items/{cartItemId}', [OrderController::class, 'updateItemStatus'])->name('orders.itemStatus');
+    Route::post('orders/items/status-batch', [OrderController::class, 'batchItemStatus'])->name('orders.itemStatusBatch');
     Route::patch('orders/{orderId}/picked-up', [OrderController::class, 'markPickedUp'])->name('orders.pickedUp');
     Route::patch('orders/{orderId}/served', [OrderController::class, 'markServed'])->name('orders.served');
     Route::patch('orders/{orderId}/cancel', [OrderController::class, 'cancel'])->name('orders.cancel');

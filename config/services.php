@@ -60,6 +60,10 @@ return [
     'realtime' => [
         'customer_enabled' => (bool) env('CUSTOMER_REALTIME_ENABLED', false),
         'queue' => env('REALTIME_QUEUE', 'realtime'),
+        'vendor_enabled' => (bool) env('VENDOR_REALTIME_ENABLED', false),
+        'vendor_connection' => env('VENDOR_QUEUE_CONNECTION', env('QUEUE_CONNECTION', 'redis')),
+        'vendor_notifications_queue' => env('VENDOR_NOTIFICATIONS_QUEUE', 'vendor-notifications'),
+        'vendor_queue' => env('VENDOR_REALTIME_QUEUE', 'vendor-realtime'),
     ],
 
     'customer_api_cache' => [
@@ -74,6 +78,14 @@ return [
         'queue' => env('CUSTOMER_COMMANDS_QUEUE', 'customer-commands'),
         'status_ttl' => (int) env('CUSTOMER_COMMAND_STATUS_TTL', 3600),
         'barrier_timeout_ms' => (int) env('CUSTOMER_COMMAND_BARRIER_TIMEOUT_MS', 2000),
+    ],
+
+    'staff_commands' => [
+        'enabled' => (bool) env('STAFF_ASYNC_COMMANDS_ENABLED', false),
+        'connection' => env('STAFF_COMMANDS_CONNECTION', 'redis'),
+        'queue' => env('STAFF_COMMANDS_QUEUE', 'staff-commands'),
+        'status_ttl' => (int) env('STAFF_COMMAND_STATUS_TTL', 3600),
+        'lock_seconds' => (int) env('STAFF_COMMAND_LOCK_SECONDS', 120),
     ],
 
     'supabase' => [

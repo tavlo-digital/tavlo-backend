@@ -8,6 +8,7 @@ use App\Models\TeamMember;
 use App\Models\Vendor;
 use App\Services\NotificationService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Defer\DeferredCallbackCollection;
 use Tests\TestCase;
 
 class VendorNotificationTest extends TestCase
@@ -53,6 +54,7 @@ class VendorNotificationTest extends TestCase
                 'sound' => 'new_order',
             ],
         );
+        $this->invokeDeferredCallbacks();
 
         $vendorResponse = $this->getJson('/api/vendor/notifications', $this->headers($this->vendor));
         $vendorResponse->assertOk()
@@ -90,6 +92,7 @@ class VendorNotificationTest extends TestCase
             ['resources' => ['orders', 'tables']],
             true,
         );
+        $this->invokeDeferredCallbacks();
 
         $this->getJson('/api/vendor/notifications', $this->headers($this->vendor))
             ->assertOk()
@@ -102,34 +105,6 @@ class VendorNotificationTest extends TestCase
             'is_silent' => true,
             'read' => true,
         ]);
-    }
-
-    public function test_realtime_token_contains_actor_scope_and_es256_header(): void
-    {
-        $key = openssl_pkey_new([
-            'private_key_type' => OPENSSL_KEYTYPE_EC,
-            'curve_name' => 'prime256v1',
-        ]);
-        openssl_pkey_export($key, $privateKey);
-
-        config()->set('services.supabase.url', 'https://example.supabase.co');
-        config()->set('services.supabase.realtime_signing_key', $privateKey);
-        config()->set('services.supabase.realtime_signing_key_id', 'test-key');
-
-        $response = $this->getJson('/api/vendor/realtime/token', $this->headers($this->waiter));
-        $response->assertOk()->assertJsonStructure(['token', 'expires_at']);
-
-        [$header, $payload] = array_map(
-            fn (string $part) => json_decode($this->base64UrlDecode($part), true, flags: JSON_THROW_ON_ERROR),
-            array_slice(explode('.', $response->json('token')), 0, 2),
-        );
-
-        $this->assertSame('ES256', $header['alg']);
-        $this->assertSame('test-key', $header['kid']);
-        $this->assertSame('team_member', $payload['actor_type']);
-        $this->assertSame('waiter', $payload['actor_role']);
-        $this->assertSame((string) $this->waiter->id, $payload['actor_id']);
-        $this->assertSame((string) $this->vendor->id, $payload['vendor_id']);
     }
 
     private function member(string $role): TeamMember
@@ -153,8 +128,8 @@ class VendorNotificationTest extends TestCase
         return ['Authorization' => "Bearer {$token}", 'Accept' => 'application/json'];
     }
 
-    private function base64UrlDecode(string $value): string
+    private function invokeDeferredCallbacks(): void
     {
-        return (string) base64_decode(strtr($value, '-_', '+/'));
+        app(DeferredCallbackCollection::class)->invoke();
     }
 }
