@@ -41,7 +41,7 @@ class VendorPusherRealtimeTest extends TestCase
         $this->invokeDeferredCallbacks();
 
         Queue::assertPushedOn(
-            'vendor-notifications',
+            'vendornotifications',
             DeliverOperationalNotification::class,
             fn (DeliverOperationalNotification $job): bool => $job->type === 'operations'
                 && $job->payload['vendor_id'] === $vendor->id,
@@ -90,7 +90,7 @@ class VendorPusherRealtimeTest extends TestCase
         $this->invokeDeferredCallbacks();
 
         Queue::assertPushedOn(
-            'vendor-notifications',
+            'vendornotifications',
             DeliverOperationalNotification::class,
             fn (DeliverOperationalNotification $job): bool => $job->type === 'table'
                 && $job->deliveryId === Notification::query()
@@ -144,7 +144,7 @@ class VendorPusherRealtimeTest extends TestCase
         $this->invokeDeferredCallbacks();
 
         Queue::assertPushedOn(
-            'vendor-realtime',
+            'vendorrealtime',
             DeliverOperationalRealtime::class,
             fn (DeliverOperationalRealtime $realtime): bool => $realtime->deliveryId === 'operational-delivery-1'
                 && Notification::query()

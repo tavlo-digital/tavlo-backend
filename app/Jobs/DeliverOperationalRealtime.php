@@ -24,7 +24,7 @@ class DeliverOperationalRealtime implements ShouldBeUnique, ShouldQueue
         public readonly string $deliveryId,
     ) {
         $this->onConnection((string) config('services.realtime.vendor_connection', 'redis'));
-        $this->onQueue((string) config('services.realtime.vendor_queue', 'vendor-realtime'));
+        $this->onQueue((string) config('services.realtime.vendor_queue', 'vendorrealtime'));
     }
 
     public function uniqueId(): string

@@ -53,7 +53,7 @@ class StaffCommandTest extends TestCase
 
         config()->set('services.staff_commands.enabled', true);
         config()->set('services.staff_commands.connection', 'redis');
-        config()->set('services.staff_commands.queue', 'staff-commands');
+        config()->set('services.staff_commands.queue', 'staffcommands');
         config()->set('services.realtime.vendor_enabled', false);
 
         $this->vendor = Vendor::factory()->create();

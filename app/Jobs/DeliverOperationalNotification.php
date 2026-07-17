@@ -25,7 +25,7 @@ class DeliverOperationalNotification implements ShouldQueue
         public readonly array $payload,
     ) {
         $this->onConnection((string) config('services.realtime.vendor_connection', 'redis'));
-        $this->onQueue((string) config('services.realtime.vendor_notifications_queue', 'vendor-notifications'));
+        $this->onQueue((string) config('services.realtime.vendor_notifications_queue', 'vendornotifications'));
     }
 
     /** @return array<int, int> */

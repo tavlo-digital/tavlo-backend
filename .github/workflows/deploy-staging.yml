@@ -34,36 +34,6 @@ jobs:
           ENV_FILE_CONTENT: ${{ secrets.STAGING_ENV_FILE }}
         run: printenv ENV_FILE_CONTENT > .env
 
-      - name: Configure vendor realtime and staff command queues
-        run: |
-          for key in \
-            BROADCAST_CONNECTION \
-            QUEUE_CONNECTION \
-            VENDOR_REALTIME_ENABLED \
-            VENDOR_QUEUE_CONNECTION \
-            VENDOR_NOTIFICATIONS_QUEUE \
-            VENDOR_REALTIME_QUEUE \
-            STAFF_ASYNC_COMMANDS_ENABLED \
-            STAFF_COMMANDS_CONNECTION \
-            STAFF_COMMANDS_QUEUE \
-            STAFF_COMMAND_STATUS_TTL \
-            STAFF_COMMAND_LOCK_SECONDS; do
-            sed -i "/^${key}=/d" .env
-          done
-
-          printf '%s\n' \
-            'BROADCAST_CONNECTION=pusher' \
-            'QUEUE_CONNECTION=redis' \
-            'VENDOR_REALTIME_ENABLED=true' \
-            'VENDOR_QUEUE_CONNECTION=redis' \
-            'VENDOR_NOTIFICATIONS_QUEUE=vendor-notifications' \
-            'VENDOR_REALTIME_QUEUE=vendor-realtime' \
-            'STAFF_ASYNC_COMMANDS_ENABLED=true' \
-            'STAFF_COMMANDS_CONNECTION=redis' \
-            'STAFF_COMMANDS_QUEUE=staff-commands' \
-            'STAFF_COMMAND_STATUS_TTL=3600' \
-            'STAFF_COMMAND_LOCK_SECONDS=120' >> .env
-
       - name: Build frontend assets
         run: |
           npm ci --no-audit --no-fund

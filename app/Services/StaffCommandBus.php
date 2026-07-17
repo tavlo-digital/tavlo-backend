@@ -133,7 +133,7 @@ LUA;
                 $locale,
             )
                 ->onConnection((string) config('services.staff_commands.connection', 'redis'))
-                ->onQueue((string) config('services.staff_commands.queue', 'staff-commands'));
+                ->onQueue((string) config('services.staff_commands.queue', 'staffcommands'));
         } catch (Throwable $exception) {
             $this->finish($commandId, $resourceSequences, 'failed', [
                 'http_status' => 503,

@@ -51,7 +51,7 @@ class CustomerCommandBus
                 $locale,
             )
                 ->onConnection((string) config('services.customer_commands.connection', 'redis'))
-                ->onQueue((string) config('services.customer_commands.queue', 'customer-commands'));
+                ->onQueue((string) config('services.customer_commands.queue', 'customercommands'));
         } catch (Throwable $exception) {
             $this->finish($commandId, (int) $session->id, $sequence, 'enqueue_failed', [
                 'message' => $exception->getMessage(),

@@ -8,18 +8,37 @@ Pusher exclusively; their notification persistence and broadcast delivery have d
 ## Deploy
 
 1. Run `php artisan migrate`.
-2. Configure persistent workers for customer delivery and isolated vendor operations:
+2. Configure persistent workers for customer delivery and isolated vendor operations. Supervisor
+   names and queue names below use lowercase alphanumeric characters only:
+
+   | Supervisor name | Queue | Command |
+   | --- | --- | --- |
+   | `customerrealtime` | `realtime` | `php artisan queue:work redis --queue=realtime --sleep=1 --tries=3 --timeout=60` |
+   | `customernotifications` | `notifications` | `php artisan queue:work redis --queue=notifications --sleep=1 --tries=3 --timeout=60` |
+   | `customeractivity` | `activity` | `php artisan queue:work redis --queue=activity --sleep=1 --tries=3 --timeout=60` |
+   | `customercommands` | `customercommands` | `php artisan queue:work redis --queue=customercommands --sleep=1 --tries=3 --timeout=90` |
+   | `staffcommands` | `staffcommands` | `php artisan queue:work redis --queue=staffcommands --sleep=1 --tries=0 --timeout=90` |
+   | `vendornotifications` | `vendornotifications` | `php artisan queue:work redis --queue=vendornotifications --sleep=1 --tries=3 --timeout=60` |
+   | `vendorrealtime` | `vendorrealtime` | `php artisan queue:work redis --queue=vendorrealtime --sleep=1 --tries=3 --timeout=60` |
 
    ```bash
    php artisan queue:work redis --queue=realtime --sleep=1 --tries=3 --timeout=60
-   php artisan queue:work redis --queue=notifications,activity --sleep=1 --tries=3 --timeout=60
-   php artisan queue:work redis --queue=staff-commands --sleep=1 --tries=0 --timeout=90
-   php artisan queue:work redis --queue=vendor-notifications --sleep=1 --tries=3 --timeout=60
-   php artisan queue:work redis --queue=vendor-realtime --sleep=1 --tries=3 --timeout=60
+   php artisan queue:work redis --queue=notifications --sleep=1 --tries=3 --timeout=60
+   php artisan queue:work redis --queue=activity --sleep=1 --tries=3 --timeout=60
+   php artisan queue:work redis --queue=customercommands --sleep=1 --tries=3 --timeout=90
+   php artisan queue:work redis --queue=staffcommands --sleep=1 --tries=0 --timeout=90
+   php artisan queue:work redis --queue=vendornotifications --sleep=1 --tries=3 --timeout=60
+   php artisan queue:work redis --queue=vendorrealtime --sleep=1 --tries=3 --timeout=60
    ```
 
    Run all workers under Supervisor, systemd, or the hosting provider's persistent worker manager.
    Restart them after every deployment with `php artisan queue:restart`.
+
+   When upgrading an environment that used the previous hyphenated queue names, either let those
+   queues drain before changing the environment values or temporarily run a Supervisor named
+   `legacyqueues` for `customer-commands,staff-commands,vendor-notifications,vendor-realtime` until
+   Redis reports no pending jobs on them. The Supervisor name remains lowercase alphanumeric even
+   though its temporary queue arguments use the legacy names.
 3. Create a Pusher Channels application and enable queues and Pusher in the deployed backend
    environment:
 
@@ -35,11 +54,12 @@ Pusher exclusively; their notification persistence and broadcast delivery have d
    REALTIME_QUEUE=realtime
    VENDOR_REALTIME_ENABLED=true
    VENDOR_QUEUE_CONNECTION=redis
-   VENDOR_NOTIFICATIONS_QUEUE=vendor-notifications
-   VENDOR_REALTIME_QUEUE=vendor-realtime
+   VENDOR_NOTIFICATIONS_QUEUE=vendornotifications
+   VENDOR_REALTIME_QUEUE=vendorrealtime
+   CUSTOMER_COMMANDS_QUEUE=customercommands
    STAFF_ASYNC_COMMANDS_ENABLED=true
    STAFF_COMMANDS_CONNECTION=redis
-   STAFF_COMMANDS_QUEUE=staff-commands
+   STAFF_COMMANDS_QUEUE=staffcommands
    STAFF_COMMAND_STATUS_TTL=3600
    STAFF_COMMAND_LOCK_SECONDS=120
 
@@ -65,7 +85,7 @@ Pusher exclusively; their notification persistence and broadcast delivery have d
 5. Monitor all queues and Pusher delivery:
 
    ```bash
-   php artisan queue:monitor realtime,notifications,activity,staff-commands,vendor-notifications,vendor-realtime --max=100
+   php artisan queue:monitor realtime,notifications,activity,customercommands,staffcommands,vendornotifications,vendorrealtime --max=100
    ```
 
    Also monitor `failed_jobs`, worker logs, the Pusher dashboard, and end-to-end event latency.
@@ -77,8 +97,8 @@ duplicates. The initiating customer still applies the mutation response immediat
 performs one history recovery request only after a genuine realtime reconnect.
 
 Vendor operational work is enqueued only after the domain transaction commits. The
-`vendor-notifications` worker inserts recipient-scoped rows with an idempotent delivery key, then
-the `vendor-realtime` worker broadcasts those persisted rows. Clients deduplicate retries with
+`vendornotifications` worker inserts recipient-scoped rows with an idempotent delivery key, then
+the `vendorrealtime` worker broadcasts those persisted rows. Clients deduplicate retries with
 `metadata.event_id` and recover role-visible resources after a genuine reconnect.
 
 ## Request lifecycle
@@ -90,7 +110,7 @@ queries later. Disabled flags keep the synchronous compatibility path and theref
 Staff mutations use a Redis-first command lifecycle when `STAFF_ASYNC_COMMANDS_ENABLED=true`.
 During the request, a Redis Lua script atomically reserves the actor-scoped idempotency key, assigns
 monotonic sequences to every affected resource, and stores the initial command status. Tavlo then
-enqueues `ProcessStaffCommand` on `staff-commands` and returns `202 Accepted` with a command ID and
+enqueues `ProcessStaffCommand` on `staffcommands` and returns `202 Accepted` with a command ID and
 status URL. Reusing the same key and payload returns the existing command; reusing it for a different
 payload returns `409 Conflict`. If Redis or enqueueing is unavailable, the request fails closed with
 `503` instead of running the mutation synchronously.
@@ -99,7 +119,7 @@ The worker waits for earlier sequences on all affected resources, revalidates th
 role, and performs the domain mutation in a database transaction. It persists a terminal
 `staff_commands` row before updating the Redis terminal status. It then schedules the initiating
 waiter or kitchen actor's silent `staff_command_completed` or `staff_command_failed` notification on
-`vendor-notifications`; that queue persists the notification before `vendor-realtime` broadcasts it.
+`vendornotifications`; that queue persists the notification before `vendorrealtime` broadcasts it.
 Clients may poll `GET /api/vendor/commands/{commandId}` and should also treat the terminal Pusher
 event as a prompt to reconcile the command status. Redis status and sequencing keys expire after
 `STAFF_COMMAND_STATUS_TTL`; the database row remains the status fallback. Normal sequence and
