@@ -410,6 +410,7 @@ class TableScanController extends Controller
                 'sound' => null,
                 'source_actor_type' => 'customer',
                 'source_actor_id' => $request->user()?->id,
+                'table_action' => 'closed',
             ],
         );
 

@@ -207,14 +207,18 @@ class StaffOrderController extends Controller
                 'sound' => 'new_order',
                 'source_actor_type' => $actor instanceof TeamMember ? 'team_member' : 'vendor',
                 'source_actor_id' => $actor?->id,
+                'order' => NotificationService::operationalOrderSnapshot($result['order']),
             ],
         );
+
+        $orderSnapshot = NotificationService::operationalOrderSnapshot($result['order']);
 
         return response()->json([
             'message' => 'Order placed successfully.',
             'order_id' => $result['order']->order_public_id,
             'amount' => $result['order']->amount,
             'session_id' => $result['session']->id,
+            'order' => $orderSnapshot,
         ], 201);
     }
 

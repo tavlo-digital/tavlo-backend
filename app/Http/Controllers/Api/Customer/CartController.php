@@ -1029,6 +1029,7 @@ class CartController extends Controller
                 'sound' => 'new_order',
                 'source_actor_type' => 'customer',
                 'source_actor_id' => $request->user()->id,
+                'order' => NotificationService::operationalOrderSnapshot($order),
             ],
         );
 

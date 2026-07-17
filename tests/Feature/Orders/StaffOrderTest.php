@@ -204,7 +204,12 @@ class StaffOrderTest extends TestCase
                 $this->staffOrderItems()
             );
 
-        $response->assertStatus(201);
+        $response->assertStatus(201)
+            ->assertJsonPath('order.id', fn ($id) => is_string($id) && $id !== '')
+            ->assertJsonPath('order.tableId', (string) $this->table->id)
+            ->assertJsonPath('order.displayStatus', 'received')
+            ->assertJsonPath('order.items.0.name', $this->menuItem->name)
+            ->assertJsonPath('order.items.0.status', 'received');
 
         $order = Order::where('order_public_id', $response->json('order_id'))->firstOrFail();
 

@@ -417,6 +417,92 @@ class NotificationService
         return $snapshot;
     }
 
+    /**
+     * Complete enough for the vendor kitchen/waiter UI to reconcile an order
+     * directly from Pusher without following the event with an orders GET.
+     */
+    public static function operationalOrderSnapshot(Order $order): array
+    {
+        $order->loadMissing([
+            'customer:id,first_name,last_name,email,phone',
+            'vendor:id,country',
+            'tableScanSession.restaurantTable:id,number,name',
+        ]);
+
+        $items = CartItem::with(['menuItem.category'])
+            ->where(function ($query) use ($order) {
+                $query->where('order_id', $order->id)
+                    ->orWhereJsonContains('shared_order_ids', $order->id);
+            })
+            ->get()
+            ->unique('id')
+            ->values();
+
+        $country = $order->vendor?->country ?? 'AT';
+        $table = $order->tableScanSession?->restaurantTable;
+        $customerName = $order->customer
+            ? trim(($order->customer->first_name ?? '').' '.($order->customer->last_name ?? ''))
+            : null;
+        $displayStatus = match ($order->status) {
+            'confirmed' => 'received',
+            'picked_up' => 'picked-up',
+            default => $order->status,
+        };
+
+        return [
+            'id' => (string) $order->id,
+            'orderPublicId' => $order->order_public_id,
+            'orderNumber' => $order->order_number ?? $order->id,
+            'orderType' => $order->order_type ?? 'dine-in',
+            'tableId' => $table ? (string) $table->id : null,
+            'tableNumber' => $order->table_number ?? $table?->number ?? 'TAKEAWAY',
+            'tableScanSessionId' => $order->table_scan_session_id ? (string) $order->table_scan_session_id : null,
+            'placedBy' => $order->placed_by ?? ($order->customer_id ? 'customer' : 'waiter'),
+            'customerName' => $customerName !== '' ? $customerName : null,
+            'status' => $order->status,
+            'displayStatus' => $displayStatus,
+            'items' => $items->map(function (CartItem $item) use ($order, $country) {
+                $quantity = max(1, (int) $item->quantity);
+                $unitPrice = round(TaxCalculationService::cartItemLineTotalGross($item, $country) / $quantity, 2);
+                $sharedOrderIds = collect($item->shared_order_ids ?? [])->map(fn ($id) => (int) $id);
+
+                return [
+                    'cartItemId' => $item->id,
+                    'cart_item_id' => $item->id,
+                    'menuItemId' => $item->menu_item_id,
+                    'menu_item_id' => $item->menu_item_id,
+                    'name' => $item->menuItem?->name ?? 'Item',
+                    'category' => strtolower((string) ($item->menuItem?->category?->display_name ?? 'other')),
+                    'quantity' => $quantity,
+                    'notes' => $item->notes,
+                    'specialInstructions' => $item->notes,
+                    'price' => $unitPrice,
+                    'unitPrice' => $unitPrice,
+                    'status' => $item->status(),
+                    'sharedBetween' => 1 + $sharedOrderIds->count(),
+                    'isSharedCopy' => (int) $item->order_id !== (int) $order->id,
+                    'is_shared_copy' => (int) $item->order_id !== (int) $order->id,
+                    'receivedAt' => $item->received_at?->toISOString(),
+                    'received_at' => $item->received_at?->toISOString(),
+                    'preparingStartAt' => $item->preparing_start_at?->toISOString(),
+                    'preparing_start_at' => $item->preparing_start_at?->toISOString(),
+                    'readyAt' => $item->ready_at?->toISOString(),
+                    'ready_at' => $item->ready_at?->toISOString(),
+                    'servedAt' => $item->served_at?->toISOString(),
+                    'served_at' => $item->served_at?->toISOString(),
+                ];
+            })->all(),
+            'total' => (float) $order->amount,
+            'amount' => (float) $order->amount,
+            'tip' => (float) ($order->tip_amount ?? 0),
+            'paymentMethod' => $order->payment_method,
+            'paymentPending' => (bool) $order->payment_pending,
+            'paymentReceived' => (bool) $order->payment_received,
+            'createdAt' => $order->created_at->toISOString(),
+            'updatedAt' => $order->updated_at->toISOString(),
+        ];
+    }
+
     private static function deliverOperationsForTableEvent(
         string $deliveryId,
         RestaurantTable $table,
@@ -430,6 +516,7 @@ class NotificationService
         $sound = null;
         $severity = 'info';
         $silent = true;
+        $tableAction = null;
 
         if ($template === 'order.confirmed') {
             $audiences[] = self::KITCHEN;
@@ -448,10 +535,12 @@ class NotificationService
             $event = 'table_session_changed';
             $staffTemplate = 'staff.table_session_changed';
             $silent = false;
+            $tableAction = 'closed';
         } elseif ($template === 'participant.added') {
             $audiences[] = self::KITCHEN;
             $event = 'table_session_changed';
             $staffTemplate = 'staff.table_session_changed';
+            $tableAction = 'opened';
         }
 
         self::deliverOperations(
@@ -470,6 +559,7 @@ class NotificationService
                 'sound' => $sound,
                 'source_actor_type' => 'customer',
                 'source_actor_id' => $metadata['customer_id'] ?? null,
+                'table_action' => $tableAction,
             ],
             $silent,
         );

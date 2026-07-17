@@ -1241,6 +1241,7 @@ class OrderController extends Controller
                 'sound' => $sound,
                 'source_actor_type' => $actor instanceof TeamMember ? 'team_member' : 'vendor',
                 'source_actor_id' => $actor?->id,
+                'order' => NotificationService::operationalOrderSnapshot($order),
                 ...$extra,
             ],
             $silent,

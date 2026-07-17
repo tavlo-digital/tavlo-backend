@@ -456,7 +456,9 @@ class TableController extends Controller
             ],
         );
 
-        $this->notifyTableChanged($request, $vendor, $table, false);
+        $this->notifyTableChanged($request, $vendor, $table, false, 'closed', [
+            'closed_session_ids' => $result['sessions']->pluck('id')->map(fn ($id) => (string) $id)->values()->all(),
+        ]);
 
         return response()->json([
             'message' => 'Table session closed',
@@ -523,7 +525,10 @@ class TableController extends Controller
         });
 
         if ($result['created']) {
-            $this->notifyTableChanged($request, $vendor, $table);
+            $this->notifyTableChanged($request, $vendor, $table, true, 'opened', [
+                'session_id' => (string) $result['session']->id,
+                'pin' => $result['session']->pin,
+            ]);
         }
 
         return response()->json([
@@ -720,6 +725,11 @@ class TableController extends Controller
                 'sound' => null,
                 'source_actor_type' => $request->user() instanceof TeamMember ? 'team_member' : 'vendor',
                 'source_actor_id' => $request->user()?->id,
+                'table_action' => 'transferred',
+                'source_table_id' => (string) $sourceTable->id,
+                'source_table_number' => (string) $sourceTable->number,
+                'target_table_id' => (string) $targetTable->id,
+                'target_table_number' => (string) $targetTable->number,
             ],
         );
 
@@ -770,6 +780,8 @@ class TableController extends Controller
         Vendor $vendor,
         ?RestaurantTable $table = null,
         bool $silent = true,
+        string $action = 'updated',
+        array $extra = [],
     ): void {
         $actor = $request->user();
         NotificationService::notifyOperations(
@@ -786,6 +798,9 @@ class TableController extends Controller
                 'sound' => null,
                 'source_actor_type' => $actor instanceof TeamMember ? 'team_member' : 'vendor',
                 'source_actor_id' => $actor?->id,
+                'table_action' => $action,
+                'table' => $table ? $this->formatTable($table) : null,
+                ...$extra,
             ],
             $silent,
         );
