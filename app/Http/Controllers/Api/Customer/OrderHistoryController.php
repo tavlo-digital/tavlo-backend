@@ -182,7 +182,7 @@ class OrderHistoryController extends Controller
         $customer = $request->user();
 
         $order = Order::where('order_public_id', $orderPublicId)
-            ->where(fn (Builder $query) => $this->scopeCustomerOrders($query, $customer->id))
+            ->where(fn (Builder $query) => $this->scopeCustomerAccessibleOrders($query, $customer->id))
             ->with([
                 'vendor.vendorSetting:id,vendor_id,logo_url,service_fee_rate,date_format,time_format,supported_languages',
                 'tableScanSession:id,customer_id',
@@ -201,7 +201,7 @@ class OrderHistoryController extends Controller
         $customer = $request->user();
 
         $order = Order::where('order_public_id', $orderPublicId)
-            ->where(fn (Builder $query) => $this->scopeCustomerOrders($query, $customer->id))
+            ->where(fn (Builder $query) => $this->scopeCustomerAccessibleOrders($query, $customer->id))
             ->with([
                 'vendor.vendorSetting:id,vendor_id,estimated_prep_time,service_fee_rate,date_format,time_format,supported_languages',
                 'tableScanSession:id,customer_id',
@@ -217,7 +217,7 @@ class OrderHistoryController extends Controller
         $customer = $request->user();
 
         $order = Order::where('order_public_id', $orderPublicId)
-            ->where(fn (Builder $query) => $this->scopeCustomerOrders($query, $customer->id))
+            ->where(fn (Builder $query) => $this->scopeCustomerReceiptOrders($query, $customer->id))
             ->with([
                 'vendor.vendorSetting',
                 'tableScanSession.restaurantTable:id,number,name',
@@ -598,6 +598,86 @@ class OrderHistoryController extends Controller
             );
     }
 
+    /**
+     * Order detail and tracking are available to the customer who placed the
+     * order and to the customer who is paying (or has paid) for it.
+     */
+    private function scopeCustomerAccessibleOrders(Builder $query, int $customerId): void
+    {
+        $query
+            ->where(fn (Builder $owner) => $this->scopeCustomerOrders($owner, $customerId))
+            ->orWhere('paid_by', $customerId)
+            ->orWhereHas(
+                'coveredPayments',
+                fn (Builder $payment) => $payment->where('customer_id', $customerId)
+            )
+            ->orWhereHas(
+                'payments',
+                fn (Builder $payment) => $payment->where('customer_id', $customerId)
+            );
+    }
+
+    /**
+     * A receipt belongs to the payer, not necessarily to the customer who
+     * placed the order. The final branch preserves old self-paid orders that
+     * predate payment attribution while preventing an owner from reading a
+     * receipt backed by another customer's completed payment.
+     */
+    private function scopeCustomerReceiptOrders(Builder $query, int $customerId): void
+    {
+        $query
+            ->where('paid_by', $customerId)
+            ->orWhereHas(
+                'coveredPayments',
+                fn (Builder $payment) => $this->scopeCompletedCustomerPayments($payment, $customerId)
+            )
+            ->orWhereHas(
+                'payments',
+                fn (Builder $payment) => $this->scopeCompletedCustomerPayments($payment, $customerId)
+            )
+            ->orWhere(function (Builder $legacy) use ($customerId) {
+                $legacy
+                    ->whereNull('paid_by')
+                    ->where(fn (Builder $owner) => $this->scopeCustomerOrders($owner, $customerId))
+                    ->whereDoesntHave(
+                        'coveredPayments',
+                        fn (Builder $payment) => $this->scopeCompletedPayments($payment)
+                    )
+                    ->whereDoesntHave(
+                        'payments',
+                        fn (Builder $payment) => $this->scopeCompletedPayments($payment)
+                    );
+            });
+    }
+
+    private function scopeCompletedCustomerPayments(Builder $query, int $customerId): void
+    {
+        $query
+            ->where('customer_id', $customerId)
+            ->where(fn (Builder $completed) => $this->scopeCompletedPayments($completed));
+    }
+
+    private function scopeCompletedPayments(Builder $query): void
+    {
+        $query->where(function (Builder $completed) {
+            $completed
+                ->where('status', 'succeeded')
+                ->orWhereNotNull('paid_at');
+        });
+    }
+
+    private function customerCanViewReceipt(Order $order, int $customerId): bool
+    {
+        if (! $order->payment_received) {
+            return false;
+        }
+
+        return Order::query()
+            ->whereKey($order->id)
+            ->where(fn (Builder $query) => $this->scopeCustomerReceiptOrders($query, $customerId))
+            ->exists();
+    }
+
     private function paidByPayload(Order $order): ?array
     {
         if (! $order->relationLoaded('paidBy')) {
@@ -804,6 +884,7 @@ class OrderHistoryController extends Controller
             'payment_status' => $this->paymentStatus($order),
             'payment_method' => $order->payment_method,
             'paid_by' => $this->paidByPayload($order),
+            'can_view_receipt' => $this->customerCanViewReceipt($order, (int) $request->user()->id),
             'tip_amount' => $tipAmount,
             'items' => $items->map(fn (CartItem $item) => $this->formatHistoryItem($item, $order, $ordersById, $sessionCustomerNames, $vendorCountry, $vendor, $locale))->values()->all(),
             'tax_groups' => $this->translateTaxGroups($taxGroups, $vendorCountry, $locale),
@@ -845,6 +926,7 @@ class OrderHistoryController extends Controller
             'paid_by' => $this->paidByPayload($order),
             'payment_pending' => (bool) $order->payment_pending,
             'payment_received' => (bool) $order->payment_received,
+            'can_view_receipt' => $this->customerCanViewReceipt($order, (int) $request->user()->id),
             'items' => $ownedItems
                 ->map(fn (CartItem $item) => $this->formatTrackingItem($item, $vendorCountry, $vendor, $locale))
                 ->values()
@@ -1065,5 +1147,4 @@ class OrderHistoryController extends Controller
 
         return $totals;
     }
-
 }

@@ -209,7 +209,12 @@ class StaffOrderTest extends TestCase
             ->assertJsonPath('order.tableId', (string) $this->table->id)
             ->assertJsonPath('order.displayStatus', 'received')
             ->assertJsonPath('order.items.0.name', $this->menuItem->name)
-            ->assertJsonPath('order.items.0.status', 'received');
+            ->assertJsonPath('order.items.0.status', 'received')
+            ->assertJsonPath('participant.name', 'Waiter')
+            ->assertJsonPath('participant.customer_id', null)
+            ->assertJsonPath('state_patch.operation', 'order.staff_created')
+            ->assertJsonPath('state_patch.orders.upsert.0.table_scan_session_id', fn ($id) => is_int($id))
+            ->assertJsonPath('state_patch.items.upsert.0.name', $this->menuItem->name);
 
         $order = Order::where('order_public_id', $response->json('order_id'))->firstOrFail();
 
@@ -242,7 +247,9 @@ class StaffOrderTest extends TestCase
         $orderId = $first->json('order_id');
 
         $second = $this->withHeaders($headers)->postJson($url, $this->staffOrderItems(1));
-        $second->assertStatus(201);
+        $second->assertStatus(201)
+            ->assertJsonPath('state_patch.operation', 'order.staff_updated')
+            ->assertJsonCount(2, 'state_patch.items.upsert');
         $this->assertSame($orderId, $second->json('order_id'));
 
         $this->assertSame(1, Order::count());

@@ -1532,6 +1532,102 @@ class CustomerPaymentsTest extends TestCase
         );
     }
 
+    public function test_payer_without_an_own_order_can_view_receipt_and_track_the_paid_order(): void
+    {
+        [$owner, $ownerSession] = $this->tablemate();
+        $order = $this->order([
+            'amount' => 7,
+            'table_scan_session_id' => $ownerSession->id,
+            'payment_pending' => false,
+        ], $owner);
+
+        $this->postJson('/api/customer/payments/pay-for', [
+            'order_id' => $order->order_public_id,
+        ], $this->headers)->assertOk();
+
+        $this->postJson('/api/customer/payments/create-intent', [], $this->headers)
+            ->assertOk()
+            ->assertJsonPath('paymentIntentId', 'pi_fake_1');
+
+        $payment = OrderPayment::where('stripe_payment_intent_id', 'pi_fake_1')->firstOrFail();
+        $this->stripe->events[] = [
+            'type' => 'payment_intent.succeeded',
+            'payment_intent' => [
+                'id' => 'pi_fake_1',
+                'client_secret' => null,
+                'status' => 'succeeded',
+                'metadata' => [
+                    'order_id' => (string) $payment->order_id,
+                    'customer_id' => (string) $this->customer->id,
+                ],
+                'payment_method' => 'pm_card_visa',
+            ],
+        ];
+
+        $this->postJson('/api/customer/payments/webhook', [], [
+            'Stripe-Signature' => 'valid',
+        ])->assertOk();
+
+        $this->assertTrue($order->fresh()->payment_received);
+        $this->assertSame($this->customer->id, $order->fresh()->paid_by);
+
+        $this->getJson('/api/customer/receipts', $this->headers)
+            ->assertOk()
+            ->assertJsonPath('receipts_count', 1)
+            ->assertJsonPath('receipts.0.receipt_id', $payment->id)
+            ->assertJsonPath('receipts.0.orders.0.order_public_id', $order->order_public_id);
+
+        $this->getJson("/api/customer/receipts/{$payment->id}", $this->headers)
+            ->assertOk()
+            ->assertJsonPath('data.receipt.order_ids.0', $order->order_public_id);
+
+        $this->getJson("/api/customer/orders/{$order->order_public_id}/receipt", $this->headers)
+            ->assertOk()
+            ->assertJsonPath('data.receipt.order_id', $order->order_public_id)
+            ->assertJsonPath('data.order.paid_by.id', $this->customer->id);
+
+        $this->getJson("/api/customer/orders/{$order->order_public_id}/tracking", $this->headers)
+            ->assertOk()
+            ->assertJsonPath('order_public_id', $order->order_public_id)
+            ->assertJsonPath('can_view_receipt', true)
+            ->assertJsonPath('paid_by.id', $this->customer->id);
+
+        $this->getJson("/api/customer/orders/{$order->order_public_id}", $this->headers)
+            ->assertOk()
+            ->assertJsonPath('order_public_id', $order->order_public_id)
+            ->assertJsonPath('can_view_receipt', true)
+            ->assertJsonPath('paid_by.id', $this->customer->id);
+
+        $ownerToken = $owner->createToken('owner-history', ['role:customer'])->plainTextToken;
+        $ownerHeaders = [
+            'Authorization' => "Bearer {$ownerToken}",
+            'Accept' => 'application/json',
+        ];
+        $this->app['auth']->forgetGuards();
+
+        $this->getJson('/api/customer/orders/history', $ownerHeaders)
+            ->assertOk()
+            ->assertJsonPath('summary.orders_count', 1)
+            ->assertJsonPath('history.0.orders.0.order_public_id', $order->order_public_id);
+
+        $this->getJson('/api/customer/receipts', $ownerHeaders)
+            ->assertOk()
+            ->assertJsonPath('receipts_count', 0);
+
+        $this->getJson("/api/customer/orders/{$order->order_public_id}/receipt", $ownerHeaders)
+            ->assertNotFound();
+
+        $this->getJson("/api/customer/orders/{$order->order_public_id}/tracking", $ownerHeaders)
+            ->assertOk()
+            ->assertJsonPath('order_public_id', $order->order_public_id)
+            ->assertJsonPath('can_view_receipt', false);
+
+        $this->getJson("/api/customer/orders/{$order->order_public_id}", $ownerHeaders)
+            ->assertOk()
+            ->assertJsonPath('order_public_id', $order->order_public_id)
+            ->assertJsonPath('can_view_receipt', false);
+    }
+
     public function test_receipt_show_rejects_incomplete_or_foreign_payments(): void
     {
         $order = $this->order(['payment_pending' => false]);

@@ -432,6 +432,86 @@ class StaffCommandTest extends TestCase
         );
     }
 
+    public function test_waiter_staff_order_worker_pushes_an_authoritative_customer_update(): void
+    {
+        Queue::fake();
+        config()->set('services.realtime.customer_enabled', true);
+        config()->set('services.notifications.queue_enabled', true);
+
+        $category = MenuCategory::create([
+            'vendor_id' => $this->vendor->id,
+            'name' => 'Mains',
+            'slug' => 'mains',
+        ]);
+        $menuItem = MenuItem::create([
+            'vendor_id' => $this->vendor->id,
+            'menu_category_id' => $category->id,
+            'name' => 'Soup',
+            'price' => 8,
+            'is_active' => true,
+            'available' => true,
+        ]);
+
+        $commandId = (string) Str::uuid();
+        $commands = Mockery::mock(StaffCommandBus::class);
+        $commands->shouldReceive('sequenceState')->once()->andReturn('ready');
+        $commands->shouldReceive('markProcessing')->once()->with($commandId);
+        $commands->shouldReceive('finish')->once()->withArgs(
+            fn (string $id, array $sequences, string $status, array $result): bool => $id === $commandId
+                && $status === 'completed'
+                && $result['http_status'] === 201
+                && ($result['response']['participant']['name'] ?? null) === 'Waiter'
+                && ($result['response']['state_patch']['operation'] ?? null) === 'order.staff_created'
+        )->andReturn([
+            'http_status' => 201,
+            'response' => ['message' => 'Order placed successfully.'],
+        ]);
+        $this->app->instance(StaffCommandBus::class, $commands);
+
+        $job = new ProcessStaffCommand(
+            $commandId,
+            (string) Str::uuid(),
+            $this->waiter->id,
+            $this->vendor->id,
+            'waiter',
+            'table.staff_order',
+            [
+                'vendor_id' => $this->vendor->vendor_public_id,
+                'table_id' => (string) $this->table->id,
+                'items' => [[
+                    'menu_item_id' => $menuItem->id,
+                    'quantity' => 1,
+                ]],
+            ],
+            ["vendor:{$this->vendor->id}:table:{$this->table->id}" => 1],
+        );
+        $this->runJob($job, $commands);
+        app(DeferredCallbackCollection::class)->invoke();
+
+        $customerDeliveryId = null;
+        Queue::assertPushed(DeliverCustomerRealtime::class, function (DeliverCustomerRealtime $queued) use (&$customerDeliveryId): bool {
+            $metadata = $queued->payload['metadata'] ?? [];
+            $matches = $queued->type === 'table'
+                && $queued->payload['event'] === 'order_updated'
+                && ($metadata['template'] ?? null) === 'order.staff_created'
+                && ($metadata['participant']['name'] ?? null) === 'Waiter'
+                && array_key_exists('customer_id', $metadata['participant'] ?? [])
+                && $metadata['participant']['customer_id'] === null
+                && count($metadata['state_patch']['orders']['upsert'] ?? []) === 1
+                && count($metadata['state_patch']['items']['upsert'] ?? []) === 1;
+            if ($matches) {
+                $customerDeliveryId = $queued->deliveryId;
+            }
+
+            return $matches;
+        });
+        Queue::assertPushed(
+            DeliverNotification::class,
+            fn (DeliverNotification $queued): bool => $queued->deliveryId === $customerDeliveryId
+                && $queued->type === 'table',
+        );
+    }
+
     public function test_sequence_waits_use_a_time_deadline_instead_of_a_small_attempt_cap(): void
     {
         $job = new ProcessStaffCommand(

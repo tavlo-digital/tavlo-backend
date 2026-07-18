@@ -13,6 +13,7 @@ use App\Models\Vendor;
 use App\Services\MenuCustomizationService;
 use App\Services\NotificationService;
 use App\Services\StaffCommandBus;
+use App\Services\TableStatePatchService;
 use App\Services\TaxCalculationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -27,6 +28,7 @@ class StaffOrderController extends Controller
     public function __construct(
         private readonly MenuCustomizationService $customizations,
         private readonly StaffCommandBus $staffCommands,
+        private readonly TableStatePatchService $tableStatePatches,
     ) {}
 
     public function store(Request $request, string $vendorId, string $tableId): JsonResponse
@@ -125,7 +127,9 @@ class StaffOrderController extends Controller
                 ->lockForUpdate()
                 ->first();
 
-            if (! $order) {
+            $orderCreated = ! $order;
+
+            if ($orderCreated) {
                 $order = Order::create([
                     'order_public_id' => 'ord-'.Str::random(12),
                     'customer_id' => null,
@@ -187,10 +191,24 @@ class StaffOrderController extends Controller
                 'payment_pending' => false,
             ]);
 
-            return ['order' => $order, 'session' => $session, 'itemCount' => $itemCount];
+            return [
+                'order' => $order,
+                'session' => $session,
+                'itemCount' => $itemCount,
+                'orderCreated' => $orderCreated,
+            ];
         });
 
         $tableLabel = $table->name ?? "#{$table->number}";
+        $operation = $result['orderCreated'] ? 'order.staff_created' : 'order.staff_updated';
+        $statePatch = $this->tableStatePatches->build($operation, [$result['order']->id]);
+        $participant = [
+            'session_id' => (int) $result['session']->id,
+            'customer_id' => null,
+            'name' => 'Waiter',
+            'scanned_at' => $result['session']->scanned_at?->toISOString(),
+            'status' => (string) $result['session']->status,
+        ];
 
         NotificationService::notifyOperations(
             $vendor->id,
@@ -211,6 +229,27 @@ class StaffOrderController extends Controller
             ],
         );
 
+        // A waiter order belongs to a dedicated customer-less table participant.
+        // Push that participant together with an authoritative state patch so
+        // customers can insert or update the order locally without a GET/refetch.
+        NotificationService::notifyTableCustomers(
+            $table->id,
+            'order_updated',
+            $result['orderCreated']
+                ? "A waiter added an order to Table {$tableLabel}."
+                : "A waiter updated an order at Table {$tableLabel}.",
+            [
+                'resources' => ['orders', 'table_history'],
+                'template' => $operation,
+                'order_id' => (int) $result['order']->id,
+                'table_id' => (int) $table->id,
+                'customer_id' => null,
+                'participant' => $participant,
+                'state_patch' => $statePatch,
+            ],
+            false,
+        );
+
         $orderSnapshot = NotificationService::operationalOrderSnapshot($result['order']);
 
         return response()->json([
@@ -219,6 +258,8 @@ class StaffOrderController extends Controller
             'amount' => $result['order']->amount,
             'session_id' => $result['session']->id,
             'order' => $orderSnapshot,
+            'participant' => $participant,
+            'state_patch' => $statePatch,
         ], 201);
     }
 
