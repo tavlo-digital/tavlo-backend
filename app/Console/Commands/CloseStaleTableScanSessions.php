@@ -75,7 +75,9 @@ class CloseStaleTableScanSessions extends Command
                     'sound' => null,
                     'source_actor_type' => 'system',
                     'source_actor_id' => null,
+                    'table_action' => 'closed',
                 ],
+                true,
             );
 
             $closed += $sessions->count();

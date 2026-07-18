@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Console;
 
+use App\Jobs\DeliverOperationalNotification;
 use App\Models\CartItem;
 use App\Models\Customer;
 use App\Models\MenuCategory;
@@ -11,6 +12,8 @@ use App\Models\RestaurantTable;
 use App\Models\TableScanSession;
 use App\Models\Vendor;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Defer\DeferredCallbackCollection;
+use Illuminate\Support\Facades\Queue;
 use Tests\TestCase;
 
 class CloseStaleTableScanSessionsTest extends TestCase
@@ -69,6 +72,25 @@ class CloseStaleTableScanSessionsTest extends TestCase
             'id' => $session->id,
             'status' => 'closed',
         ]);
+    }
+
+    public function test_expired_session_push_is_silent_and_closes_the_waiter_table(): void
+    {
+        Queue::fake();
+        $this->tableScanSession([
+            'scanned_at' => now()->subMinutes(11),
+            'created_at' => now()->subMinutes(11),
+            'updated_at' => now()->subMinutes(11),
+        ]);
+
+        $this->artisan('table-sessions:close-stale')->assertSuccessful();
+        app(DeferredCallbackCollection::class)->invoke();
+
+        Queue::assertPushed(DeliverOperationalNotification::class, fn (DeliverOperationalNotification $job): bool => $job->payload['event'] === 'table_session_changed'
+            && $job->payload['silent'] === true
+            && ($job->payload['metadata']['table_action'] ?? null) === 'closed'
+            && (int) ($job->payload['metadata']['table_id'] ?? 0) === $this->table->id
+        );
     }
 
     public function test_keeps_session_with_no_order_before_ten_minutes(): void
