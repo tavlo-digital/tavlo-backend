@@ -220,6 +220,7 @@ class OrderController extends Controller
     {
         $data = $request->validate([
             'paymentNote' => ['sometimes', 'nullable', 'string', 'max:500'],
+            'tipAmount' => ['sometimes', 'numeric', 'min:0', 'max:999999.99'],
         ]);
 
         if ($queued = $this->queuedStaffCommand(
@@ -238,9 +239,12 @@ class OrderController extends Controller
             'payment_received' => true,
             'payment_confirmed_at' => now(),
             'payment_pending' => false,
-            // Waiters can collect unpaid orders even when the customer never
-            // requested cash — record the in-person payment as cash.
-            'payment_method' => $order->payment_method ?? 'cash',
+            // This endpoint records an in-person cash collection regardless
+            // of whether the customer previously selected another method.
+            'payment_method' => 'cash',
+            ...(array_key_exists('tipAmount', $data)
+                ? ['tip_amount' => round((float) $data['tipAmount'], 2)]
+                : []),
             ...(array_key_exists('paymentNote', $data)
                 ? ['payment_note' => $data['paymentNote']]
                 : []),
@@ -976,6 +980,8 @@ class OrderController extends Controller
             'items' => $items,
             'amount' => $total,
             'total' => $total,
+            'tip' => (float) ($order->tip_amount ?? 0),
+            'tipAmount' => (float) ($order->tip_amount ?? 0),
             'taxGroups' => $taxGroups,
             'tax_groups' => $taxGroups,
             'totals' => $totals,

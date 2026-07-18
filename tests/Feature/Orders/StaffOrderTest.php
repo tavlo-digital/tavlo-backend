@@ -480,19 +480,23 @@ class StaffOrderTest extends TestCase
             'amount' => 30.91,
             'currency' => 'EUR',
             'order_type' => 'dine-in',
-            'payment_method' => null,
+            'payment_method' => 'card',
             'payment_pending' => true,
             'payment_received' => false,
         ]);
 
         $this->withHeaders($this->staffHeaders('waiter'))
-            ->patchJson("/api/vendor/orders/{$order->id}/confirm-cash")
-            ->assertSuccessful();
+            ->patchJson("/api/vendor/orders/{$order->id}/confirm-cash", [
+                'tipAmount' => 4.25,
+            ])
+            ->assertSuccessful()
+            ->assertJsonPath('tip', 4.25);
 
         $order->refresh();
         $this->assertTrue((bool) $order->payment_received);
         $this->assertFalse((bool) $order->payment_pending);
         $this->assertSame('cash', $order->payment_method);
+        $this->assertSame(4.25, (float) $order->tip_amount);
     }
 
     public function test_orders_index_flags_waiter_orders(): void
