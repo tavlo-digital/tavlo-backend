@@ -761,49 +761,42 @@ class PaymentController extends Controller
     public function requestCash(Request $request): JsonResponse
     {
         $data = $request->validate([
-            'order_id' => [
-                'required',
-                function (string $attribute, mixed $value, Closure $fail): void {
-                    if (! is_string($value) && ! is_int($value)) {
-                        $fail("The {$attribute} field must be a string or integer.");
-
-                        return;
-                    }
-
-                    if (mb_strlen((string) $value) > 255) {
-                        $fail("The {$attribute} field must not be greater than 255 characters.");
-                    }
-                },
-            ],
-            'customer_id' => ['required', 'integer'],
             'notes' => ['nullable', 'string', 'max:500'],
         ]);
 
         $customer = $request->user();
-        $customerId = (int) $data['customer_id'];
-
-        if ($customerId !== (int) $customer->id) {
-            throw ValidationException::withMessages([
-                'customer_id' => ['The provided customer identifier does not match the authenticated customer.'],
-            ]);
+        $payerSession = $this->activeSession((int) $customer->id);
+        if (! $payerSession) {
+            return response()->json(['message' => 'No active table session found.'], 422);
+        }
+        if ($pending = $this->pendingCommandResponse($payerSession)) {
+            return $pending;
         }
 
-        $order = $this->customerOrder((string) $data['order_id'], $customer->id);
-        $ownerCustomerId = $this->orderOwnerCustomerId($order);
+        // Match createIntent(): the authenticated payer and their active table
+        // visit are authoritative. This includes the payer's own eligible
+        // orders plus tablemate orders explicitly assigned to them.
+        $orders = $this->payableSessionOrders($payerSession, (int) $customer->id);
 
-        if ($order->payment_received) {
-            return response()->json(['message' => 'Order is already paid.'], 422);
+        if ($orders->isEmpty()) {
+            $assignedElsewhere = Order::where('table_scan_session_id', $payerSession->id)
+                ->whereNotIn('status', [Order::STATUS_DRAFT, Order::STATUS_CANCELLED])
+                ->where('payment_received', false)
+                ->whereNotNull('paid_by')
+                ->where('paid_by', '!=', $customer->id)
+                ->exists();
+
+            if ($assignedElsewhere) {
+                return response()->json([
+                    'message' => 'This order is assigned to another payer.',
+                ], 409);
+            }
+
+            return response()->json(['message' => 'You have no unpaid orders to pay for.'], 422);
         }
 
-        if ($ownerCustomerId === (int) $customer->id
-            && $order->paid_by !== null
-            && (int) $order->paid_by !== (int) $customer->id) {
-            return response()->json([
-                'message' => 'This order is assigned to another payer.',
-            ], 409);
-        }
-
-        $orders = $this->groupedOrdersForPayment($order, (int) $customer->id);
+        $order = $orders->first(fn (Order $candidate) => $this->orderOwnerCustomerId($candidate) === (int) $customer->id)
+            ?? $orders->first();
         $orderIds = $orders->pluck('id');
         $orderIdsArray = $orderIds->map(fn ($id) => (int) $id)->values()->all();
 
@@ -835,6 +828,16 @@ class PaymentController extends Controller
 
             if ($lockedOrders->contains(fn (Order $locked) => $locked->payment_received)) {
                 abort(409, 'One or more orders are already paid.');
+            }
+
+            if ($lockedOrders->contains(function (Order $locked) use ($customer) {
+                if ($locked->paid_by !== null) {
+                    return (int) $locked->paid_by !== (int) $customer->id;
+                }
+
+                return $this->orderOwnerCustomerId($locked) !== (int) $customer->id;
+            })) {
+                abort(409, 'One or more orders are no longer assigned to this payer.');
             }
 
             $payment = OrderPayment::create([
@@ -1253,43 +1256,6 @@ class PaymentController extends Controller
             ->orderBy('id')
             ->get()
             ->values();
-    }
-
-    private function groupedOrdersForPayment(Order $anchor, int $payerId): EloquentCollection
-    {
-        $orders = new EloquentCollection([$anchor]);
-
-        if (! $anchor->table_scan_session_id) {
-            return $orders;
-        }
-
-        $anchorSession = $anchor->tableScanSession;
-        $payerSession = $this->activeSession($payerId);
-
-        if (! $anchorSession || ! $payerSession
-            || (int) $payerSession->vendor_id !== (int) $anchorSession->vendor_id
-            || (int) $payerSession->restaurant_table_id !== (int) $anchorSession->restaurant_table_id) {
-            abort(409, 'The order is not part of your active table visit.');
-        }
-
-        $activeSessionIds = TableScanSession::where('vendor_id', $payerSession->vendor_id)
-            ->where('restaurant_table_id', $payerSession->restaurant_table_id)
-            ->where('status', 'active')
-            ->pluck('id');
-
-        $assignedOrders = Order::with([
-            'vendor.vendorSetting',
-            'vendor.countryRecord',
-            'tableScanSession',
-            'paidBy:id,first_name,last_name',
-        ])
-            ->where('paid_by', $payerId)
-            ->whereIn('table_scan_session_id', $activeSessionIds)
-            ->whereNotIn('status', [Order::STATUS_DRAFT, Order::STATUS_CANCELLED])
-            ->where('payment_received', false)
-            ->get();
-
-        return $orders->merge($assignedOrders)->unique('id')->values();
     }
 
     /**

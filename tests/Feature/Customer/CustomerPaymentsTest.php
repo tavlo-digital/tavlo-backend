@@ -316,10 +316,7 @@ class CustomerPaymentsTest extends TestCase
         ], $tablemate);
 
         $this->withHeaders($this->headers)
-            ->postJson('/api/customer/payments/request-cash', [
-                'order_id' => $first->order_public_id,
-                'customer_id' => $this->customer->id,
-            ])
+            ->postJson('/api/customer/payments/request-cash')
             ->assertOk();
 
         $payment = OrderPayment::where('status', 'cash_requested')->firstOrFail();
@@ -334,6 +331,39 @@ class CustomerPaymentsTest extends TestCase
         );
         $this->assertTrue((bool) $first->fresh()->payment_pending);
         $this->assertTrue((bool) $second->fresh()->payment_pending);
+    }
+
+    public function test_payer_without_an_own_order_can_request_cash_for_an_assigned_order(): void
+    {
+        [$owner, $ownerSession] = $this->tablemate();
+        $coveredOrder = $this->order([
+            'amount' => 7,
+            'table_scan_session_id' => $ownerSession->id,
+            'payment_pending' => false,
+        ], $owner);
+
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/payments/pay-for', [
+                'order_id' => $coveredOrder->order_public_id,
+            ])
+            ->assertOk();
+
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/payments/request-cash', [
+                'notes' => 'Please bring change.',
+            ])
+            ->assertOk()
+            ->assertJsonPath('amount', 7)
+            ->assertJsonPath('currency', 'EUR')
+            ->assertJsonPath('state_patch.operation', 'payment.cash_requested');
+
+        $payment = OrderPayment::where('status', 'cash_requested')->firstOrFail();
+        $this->assertSame($this->customer->id, (int) $payment->customer_id);
+        $this->assertSame($coveredOrder->id, (int) $payment->order_id);
+        $this->assertSame([$coveredOrder->id], array_map('intval', $payment->order_ids));
+        $this->assertSame('Please bring change.', $payment->metadata['notes']);
+        $this->assertTrue((bool) $coveredOrder->fresh()->payment_pending);
+        $this->assertSame('cash', $coveredOrder->fresh()->payment_method);
     }
 
     public function test_update_intent_adds_tip_and_updates_payable_amount(): void
