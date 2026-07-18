@@ -5,11 +5,11 @@ namespace App\Http\Controllers\Api\Vendor;
 use App\Http\Controllers\Controller;
 use App\Models\MenuItem;
 use App\Models\Order;
+use App\Models\TableScanSession;
 use App\Models\Vendor;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\DB;
 
 class DashboardController extends Controller
 {
@@ -24,34 +24,56 @@ class DashboardController extends Controller
         $today = Carbon::today();
         $yesterday = Carbon::yesterday();
 
-        // ---- Orders for today / yesterday ---
-        $todayOrders     = $vendor->orders()->whereDate('created_at', $today)->get();
-        $yesterdayOrders = $vendor->orders()->whereDate('created_at', $yesterday)->get();
+        // Keep dashboard aggregates in the database; hydrating every order for
+        // two whole days made this endpoint grow with restaurant traffic.
+        $revenueToday = (float) $vendor->orders()
+            ->whereDate('created_at', $today)
+            ->where('payment_received', true)
+            ->sum('amount');
+        $revenueYesterday = (float) $vendor->orders()
+            ->whereDate('created_at', $yesterday)
+            ->where('payment_received', true)
+            ->sum('amount');
+        $tipsToday = round((float) $vendor->orders()
+            ->whereDate('created_at', $today)
+            ->where('payment_received', true)
+            ->sum('tip_amount'), 2);
+        $tipsYesterday = round((float) $vendor->orders()
+            ->whereDate('created_at', $yesterday)
+            ->where('payment_received', true)
+            ->sum('tip_amount'), 2);
+        $ordersToday = $vendor->orders()->whereDate('created_at', $today)->count();
+        $ordersYesterday = $vendor->orders()->whereDate('created_at', $yesterday)->count();
 
-        $paidToday     = $todayOrders->where('payment_received', true);
-        $paidYesterday = $yesterdayOrders->where('payment_received', true);
-
-        $revenueToday     = $paidToday->sum('amount');
-        $revenueYesterday = $paidYesterday->sum('amount');
-
-        $tipsToday     = round((float) $paidToday->sum('tip_amount'), 2);
-        $tipsYesterday = round((float) $paidYesterday->sum('tip_amount'), 2);
-
-        $ordersToday     = $todayOrders->count();
-        $ordersYesterday = $yesterdayOrders->count();
-
-        $avgToday     = $ordersToday     ? round($revenueToday / $ordersToday, 2)     : 0;
+        $avgToday = $ordersToday ? round($revenueToday / $ordersToday, 2) : 0;
         $avgYesterday = $ordersYesterday ? round($revenueYesterday / $ordersYesterday, 2) : 0;
 
-        // ---- Rating ---
-        $ratingData     = $vendor->reviews()->selectRaw('AVG(rating) as avg, COUNT(*) as total')->first();
-        $ratingToday    = $vendor->reviews()->whereDate('created_at', $today)->avg('rating');
+        // A daily KPI must not silently fall back to an all-time average.
+        $ratingToday = $vendor->reviews()->whereDate('created_at', $today)->avg('rating');
         $ratingYesterday = $vendor->reviews()->whereDate('created_at', $yesterday)->avg('rating');
 
         // ---- Active orders ---
         $activeOrders = $vendor->orders()
             ->whereIn('status', Order::ACTIVE_STATUSES)
             ->count();
+
+        $kitchenLoad = match (true) {
+            $activeOrders >= 15 => 'high',
+            $activeOrders >= 5 => 'medium',
+            default => 'low',
+        };
+
+        // Current dine-in orders are linked through table_scan_sessions; the
+        // legacy orders.table_number column is often null. Count distinct
+        // restaurant tables so multiple participants/orders do not inflate it.
+        $occupiedTables = TableScanSession::query()
+            ->where('vendor_id', $vendor->id)
+            ->where('status', 'active')
+            ->whereNotNull('restaurant_table_id')
+            ->whereHas('orders', fn ($query) => $query->whereIn('status', Order::ACTIVE_STATUSES))
+            ->distinct()
+            ->count('restaurant_table_id');
+        $totalTables = $vendor->restaurantTables()->where('is_active', true)->count();
 
         // ---- Tables waiting to pay ---
         $tablesWaitingToPay = $vendor->orders()
@@ -70,9 +92,9 @@ class DashboardController extends Controller
         $alerts = [];
         if ($unpaidOld > 0) {
             $alerts[] = [
-                'id'         => 'unpaid-old',
-                'severity'   => 'warning',
-                'message'    => "{$unpaidOld} " . ($unpaidOld === 1 ? 'table has' : 'tables have') . " unpaid orders outstanding for over 10 minutes",
+                'id' => 'unpaid-old',
+                'severity' => 'warning',
+                'message' => "{$unpaidOld} ".($unpaidOld === 1 ? 'table has' : 'tables have').' unpaid orders outstanding for over 10 minutes',
                 'navigateTo' => 'orders',
             ];
         }
@@ -84,9 +106,9 @@ class DashboardController extends Controller
             ->count();
         if ($criticalInventory > 0) {
             $alerts[] = [
-                'id'         => 'critical-inventory',
-                'severity'   => 'danger',
-                'message'    => "{$criticalInventory} " . ($criticalInventory === 1 ? 'item is' : 'items are') . " out of stock",
+                'id' => 'critical-inventory',
+                'severity' => 'danger',
+                'message' => "{$criticalInventory} ".($criticalInventory === 1 ? 'item is' : 'items are').' out of stock',
                 'navigateTo' => 'inventory',
             ];
         }
@@ -99,9 +121,9 @@ class DashboardController extends Controller
             ->count();
         if ($lowInventory > 0) {
             $alerts[] = [
-                'id'         => 'low-inventory',
-                'severity'   => 'warning',
-                'message'    => "{$lowInventory} " . ($lowInventory === 1 ? 'item is' : 'items are') . " running low on stock",
+                'id' => 'low-inventory',
+                'severity' => 'warning',
+                'message' => "{$lowInventory} ".($lowInventory === 1 ? 'item is' : 'items are').' running low on stock',
                 'navigateTo' => 'inventory',
             ];
         }
@@ -124,10 +146,11 @@ class DashboardController extends Controller
                         ->where('product_uid', $row->product_uid)
                         ->latest()
                         ->first();
+
                 return [
-                    'id'           => (string) ($current?->id ?? 0),
-                    'name'         => $current?->name ?? 'Unknown',
-                    'price'        => (float) ($current?->price ?? 0),
+                    'id' => (string) ($current?->id ?? 0),
+                    'name' => $current?->name ?? 'Unknown',
+                    'price' => (float) ($current?->price ?? 0),
                     'orderedCount' => (int) $row->total_ordered,
                 ];
             });
@@ -139,56 +162,58 @@ class DashboardController extends Controller
             ->limit(10)
             ->get()
             ->map(fn (Order $order) => [
-                'id'           => (string) $order->id,
-                'orderNumber'  => $order->order_number ?? "#{$order->id}",
-                'orderType'    => $order->order_type ?? 'dine-in',
-                'tableNumber'  => $order->table_number,
-                'status'       => $order->status,
-                'amount'       => (float) $order->amount,
-                'currency'     => $order->currency,
+                'id' => (string) $order->id,
+                'orderNumber' => $order->order_number ?? "#{$order->id}",
+                'orderType' => $order->order_type ?? 'dine-in',
+                'tableNumber' => $order->table_number,
+                'status' => $order->status,
+                'amount' => (float) $order->amount,
+                'currency' => $order->currency,
                 'paymentPending' => (bool) $order->payment_pending,
-                'createdAt'    => $order->created_at->toISOString(),
-                'customer'     => $order->customer ? [
-                    'name'  => trim($order->customer->first_name . ' ' . $order->customer->last_name),
+                'paymentReceived' => (bool) $order->payment_received,
+                'createdAt' => $order->created_at->toISOString(),
+                'customer' => $order->customer ? [
+                    'name' => trim($order->customer->first_name.' '.$order->customer->last_name),
                     'phone' => $order->customer->phone,
                 ] : null,
             ]);
 
         // ---- Revenue at risk (unpaid ready/delivered orders) ---
-        $revenueAtRisk = $vendor->orders()
+        $revenueAtRisk = (float) $vendor->orders()
             ->where('payment_pending', true)
             ->where('payment_received', false)
             ->whereIn('status', array_merge(['in_progress'], Order::COMPLETED_STATUSES))
             ->sum('amount');
 
-        // ---- Open tables count ---
-        $totalTables = $vendor->restaurantTables()->where('is_active', true)->count();
+        $currency = $vendor->currency ?? 'EUR';
 
         return response()->json([
             'liveStatus' => [
-                'openTables'          => $totalTables,
-                'activeOrders'        => $activeOrders,
-                'tablesWaitingToPay'  => $tablesWaitingToPay,
+                'occupiedTables' => $occupiedTables,
+                'totalTables' => $totalTables,
+                'activeOrders' => $activeOrders,
+                'tablesWaitingToPay' => $tablesWaitingToPay,
+                'kitchenLoad' => $kitchenLoad,
             ],
             'todayKPIs' => [
-                'ordersToday'          => $ordersToday,
-                'ordersYesterday'      => $ordersYesterday,
-                'revenueToday'         => round($revenueToday, 2),
-                'revenueYesterday'     => round($revenueYesterday, 2),
-                'tipsToday'            => $tipsToday,
-                'tipsYesterday'        => $tipsYesterday,
-                'avgOrderValue'        => $avgToday,
+                'ordersToday' => $ordersToday,
+                'ordersYesterday' => $ordersYesterday,
+                'revenueToday' => round($revenueToday, 2),
+                'revenueYesterday' => round($revenueYesterday, 2),
+                'tipsToday' => $tipsToday,
+                'tipsYesterday' => $tipsYesterday,
+                'avgOrderValue' => $avgToday,
                 'avgOrderValueYesterday' => $avgYesterday,
-                'customerRating'       => round($ratingToday ?? $ratingData->avg ?? 0, 1),
+                'customerRating' => round($ratingToday ?? 0, 1),
                 'customerRatingYesterday' => round($ratingYesterday ?? 0, 1),
+                'currency' => $currency,
             ],
-            'alerts'        => $alerts,
-            'recentOrders'  => $recentOrders,
-            'topItems'      => $topItems,
+            'alerts' => $alerts,
+            'recentOrders' => $recentOrders,
+            'topItems' => $topItems,
             'revenueAtRisk' => [
-                'total'        => round($revenueAtRisk, 2),
-                'unpaidTables' => $tablesWaitingToPay,
-                'currency'     => $vendor->currency ?? 'EUR',
+                'total' => round($revenueAtRisk, 2),
+                'currency' => $currency,
             ],
         ]);
     }
@@ -205,7 +230,12 @@ class DashboardController extends Controller
     private function authorizeVendor(Request $request, Vendor $vendor): void
     {
         $user = $request->user();
-        if ($user && $user->getTable() === 'vendors' && $user->id !== $vendor->id) {
+
+        if (! $user) {
+            abort(401, 'Unauthenticated');
+        }
+
+        if ($user->getTable() === 'vendors' && $user->id !== $vendor->id) {
             abort(403, 'Unauthorized');
         }
     }
