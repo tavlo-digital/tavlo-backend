@@ -225,6 +225,10 @@ class ProcessStaffCommand implements ShouldQueue
                 (string) $this->payload['order_id'],
                 (string) $this->payload['cart_item_id'],
             ),
+            'order.items_serve_ready' => $orders->serveReadyItems(
+                $request,
+                (string) $this->payload['order_id'],
+            ),
             'order.served' => $orders->markServed($request, (string) $this->payload['order_id']),
             'table.close' => $tables->closeSession(
                 $request,
@@ -291,6 +295,7 @@ class ProcessStaffCommand implements ShouldQueue
                 'order.confirm',
                 'order.confirm_cash',
                 'order.item_status',
+                'order.items_serve_ready',
                 'order.served',
                 'table.close',
                 'table.dismiss_call',

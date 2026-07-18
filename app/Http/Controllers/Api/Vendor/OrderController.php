@@ -480,6 +480,157 @@ class OrderController extends Controller
     }
 
     /**
+     * PATCH /api/vendor/orders/{orderId}/items/serve-ready
+     * Marks multiple ready items served in one ordered staff command.
+     */
+    public function serveReadyItems(Request $request, string $orderId): JsonResponse
+    {
+        $data = $request->validate([
+            'cartItemIds' => ['required', 'array', 'min:1', 'max:50'],
+            'cartItemIds.*' => ['required', 'integer', 'distinct:strict'],
+        ]);
+
+        $this->authorizeItemStatus($request, 'served');
+
+        $cartItemIds = collect($data['cartItemIds'])
+            ->map(fn ($id) => (int) $id)
+            ->values()
+            ->all();
+
+        if ($queued = $this->queuedStaffCommand(
+            $request,
+            $this->staffCommands,
+            'order.items_serve_ready',
+            [
+                'order_id' => $orderId,
+                'cartItemIds' => $cartItemIds,
+            ],
+            $this->staffCommandResourcesForOrderRoute($request, $orderId),
+        )) {
+            return $queued;
+        }
+
+        $order = $this->resolveOrder($orderId, $request);
+
+        $transition = DB::transaction(function () use ($order, $cartItemIds): array {
+            $items = $this->linkedCartItemsQuery($order)
+                ->whereKey($cartItemIds)
+                ->lockForUpdate()
+                ->get();
+
+            if ($items->count() !== count($cartItemIds)) {
+                return ['outcome' => 'not_found'];
+            }
+
+            $notReady = $items->first(function (CartItem $item): bool {
+                return $this->itemStatusRank($item->status()) < $this->itemStatusRank(CartItem::STATUS_READY);
+            });
+            if ($notReady) {
+                return [
+                    'outcome' => 'conflict',
+                    'cart_item_id' => (int) $notReady->id,
+                    'current_status' => $notReady->status(),
+                ];
+            }
+
+            $readyItemIds = $items
+                ->filter(fn (CartItem $item) => $item->status() === CartItem::STATUS_READY)
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->values();
+
+            if ($readyItemIds->isEmpty()) {
+                return [
+                    'outcome' => 'unchanged',
+                    'served_item_ids' => [],
+                ];
+            }
+
+            CartItem::query()
+                ->whereKey($readyItemIds)
+                ->whereNull('served_at')
+                ->update(['served_at' => now()]);
+
+            $this->syncOrderStatusFromCartItems($order);
+
+            return [
+                'outcome' => 'updated',
+                'served_item_ids' => $readyItemIds->all(),
+            ];
+        });
+
+        if ($transition['outcome'] === 'not_found') {
+            return response()->json(['message' => 'One or more cart items are not linked to this order.'], 404);
+        }
+
+        if ($transition['outcome'] === 'conflict') {
+            return response()->json([
+                'message' => 'All selected items must be ready before they can be served.',
+                'cart_item_id' => $transition['cart_item_id'],
+                'current_status' => $transition['current_status'],
+            ], 409);
+        }
+
+        $order = $order->fresh()->load(['customer', 'tableScanSession.restaurantTable']);
+        $servedItemIds = $transition['served_item_ids'];
+
+        if ($servedItemIds !== []) {
+            $affectedItems = CartItem::query()->whereKey($servedItemIds)->get();
+            $affectedOrderIds = $affectedItems
+                ->flatMap(fn (CartItem $item) => [
+                    $order->id,
+                    $item->order_id,
+                    ...($item->shared_order_ids ?? []),
+                ])
+                ->filter()
+                ->map(fn ($id) => (int) $id)
+                ->unique()
+                ->values();
+            $snapshots = Order::with('paidBy:id,first_name,last_name')
+                ->whereIn('id', $affectedOrderIds)
+                ->get()
+                ->map(fn (Order $affectedOrder) => NotificationService::orderSnapshot($affectedOrder, true))
+                ->values()
+                ->all();
+            $statePatch = $this->statePatches->build(
+                'order.items_served',
+                $affectedOrderIds,
+                $servedItemIds,
+            );
+            $servedCount = count($servedItemIds);
+
+            $this->notifySessionCustomers(
+                $order,
+                'cart_items_updated',
+                "{$servedCount} ready item".($servedCount === 1 ? ' was' : 's were').' served.',
+                [
+                    'template' => 'cart.items_served',
+                    'order_id' => $order->id,
+                    'cart_item_ids' => $servedItemIds,
+                    'served_count' => $servedCount,
+                    'order_snapshots' => $snapshots,
+                    'state_patch' => $statePatch,
+                ],
+            );
+            $this->notifyOperations(
+                $request,
+                $order,
+                'order_items_status_changed',
+                "{$servedCount} ready item".($servedCount === 1 ? ' was' : 's were').' served.',
+                silent: true,
+                extra: [
+                    'cart_item_ids' => $servedItemIds,
+                    'item_status' => 'served',
+                    'served_count' => $servedCount,
+                    'state_patch' => $statePatch,
+                ],
+            );
+        }
+
+        return response()->json($this->formatOrder($order));
+    }
+
+    /**
      * POST /api/vendor/orders/items/status-batch
      * Each item is an independent ordered/idempotent staff command.
      */

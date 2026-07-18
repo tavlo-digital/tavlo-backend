@@ -343,6 +343,130 @@ class StaffCommandTest extends TestCase
         $items->each(fn (CartItem $item) => $this->assertNull($item->fresh()->ready_at));
     }
 
+    public function test_waiter_serve_ready_dispatches_one_command_for_all_items_in_an_order(): void
+    {
+        $category = MenuCategory::create([
+            'vendor_id' => $this->vendor->id,
+            'name' => 'Mains',
+            'slug' => 'mains',
+        ]);
+        $menuItem = MenuItem::create([
+            'vendor_id' => $this->vendor->id,
+            'menu_category_id' => $category->id,
+            'name' => 'Soup',
+            'price' => 8,
+        ]);
+        $items = collect(range(1, 2))->map(fn () => CartItem::create([
+            'table_scan_session_id' => $this->session->id,
+            'menu_item_id' => $menuItem->id,
+            'order_id' => $this->order->id,
+            'quantity' => 1,
+            'received_at' => now()->subMinutes(5),
+            'preparing_start_at' => now()->subMinutes(4),
+            'ready_at' => now()->subMinute(),
+        ]));
+        $idempotencyKey = (string) Str::uuid();
+        $commandId = (string) Str::uuid();
+        $itemIds = $items->pluck('id')->all();
+
+        $commands = Mockery::mock(StaffCommandBus::class);
+        $commands->shouldReceive('enabled')->once()->andReturnTrue();
+        $commands->shouldReceive('dispatch')->once()->withArgs(
+            fn (TeamMember $actor, string $key, string $operation, array $payload, array $resources) => $actor->is($this->waiter)
+                && $key === $idempotencyKey
+                && $operation === 'order.items_serve_ready'
+                && $payload === [
+                    'order_id' => $this->order->order_public_id,
+                    'cartItemIds' => $itemIds,
+                ]
+                && $resources === ["vendor:{$this->vendor->id}:order:{$this->order->order_public_id}"]
+        )->andReturn([
+            'command_id' => $commandId,
+            'idempotency_key' => $idempotencyKey,
+            'operation' => 'order.items_serve_ready',
+            'status' => 'accepted',
+        ]);
+        $this->app->instance(StaffCommandBus::class, $commands);
+
+        $this->patchJson(
+            "/api/vendor/orders/{$this->order->order_public_id}/items/serve-ready",
+            ['cartItemIds' => $itemIds],
+            [...$this->headers($this->waiter), 'Idempotency-Key' => $idempotencyKey],
+        )->assertAccepted()
+            ->assertJsonPath('command_id', $commandId)
+            ->assertJsonPath('operation', 'order.items_serve_ready');
+
+        $items->each(fn (CartItem $item) => $this->assertNull($item->fresh()->served_at));
+    }
+
+    public function test_waiter_serve_ready_worker_updates_all_items_with_one_customer_realtime_event(): void
+    {
+        Queue::fake();
+        config()->set('services.realtime.customer_enabled', true);
+        config()->set('services.notifications.queue_enabled', true);
+
+        $category = MenuCategory::create([
+            'vendor_id' => $this->vendor->id,
+            'name' => 'Mains',
+            'slug' => 'mains',
+        ]);
+        $menuItem = MenuItem::create([
+            'vendor_id' => $this->vendor->id,
+            'menu_category_id' => $category->id,
+            'name' => 'Soup',
+            'price' => 8,
+        ]);
+        $items = collect(range(1, 3))->map(fn () => CartItem::create([
+            'table_scan_session_id' => $this->session->id,
+            'menu_item_id' => $menuItem->id,
+            'order_id' => $this->order->id,
+            'quantity' => 1,
+            'received_at' => now()->subMinutes(5),
+            'preparing_start_at' => now()->subMinutes(4),
+            'ready_at' => now()->subMinute(),
+        ]));
+        $itemIds = $items->pluck('id')->all();
+        $commandId = (string) Str::uuid();
+        $commands = Mockery::mock(StaffCommandBus::class);
+        $commands->shouldReceive('sequenceState')->once()->andReturn('ready');
+        $commands->shouldReceive('markProcessing')->once()->with($commandId);
+        $commands->shouldReceive('finish')->once()->withArgs(
+            fn (string $id, array $sequences, string $status, array $result): bool => $id === $commandId
+                && $status === 'completed'
+                && $result['http_status'] === 200
+                && collect($result['response']['items'] ?? [])->every(fn (array $item) => $item['status'] === 'served')
+        )->andReturn([
+            'http_status' => 200,
+            'response' => ['status' => 'served'],
+        ]);
+        $this->app->instance(StaffCommandBus::class, $commands);
+
+        $job = new ProcessStaffCommand(
+            $commandId,
+            (string) Str::uuid(),
+            $this->waiter->id,
+            $this->vendor->id,
+            'waiter',
+            'order.items_serve_ready',
+            [
+                'order_id' => $this->order->order_public_id,
+                'cartItemIds' => $itemIds,
+            ],
+            ["vendor:{$this->vendor->id}:order:{$this->order->order_public_id}" => 1],
+        );
+        $this->runJob($job, $commands);
+        app(DeferredCallbackCollection::class)->invoke();
+
+        $items->each(fn (CartItem $item) => $this->assertNotNull($item->fresh()->served_at));
+        $this->assertSame('served', $this->order->fresh()->status);
+        Queue::assertPushed(DeliverCustomerRealtime::class, 1);
+        Queue::assertPushed(DeliverCustomerRealtime::class, fn (DeliverCustomerRealtime $queued): bool => $queued->payload['event'] === 'cart_items_updated'
+            && ($queued->payload['metadata']['template'] ?? null) === 'cart.items_served'
+            && ($queued->payload['metadata']['cart_item_ids'] ?? []) === $itemIds
+            && ($queued->payload['metadata']['served_count'] ?? null) === 3
+        );
+    }
+
     public function test_worker_reauthorizes_and_records_full_terminal_response(): void
     {
         $commandId = (string) Str::uuid();

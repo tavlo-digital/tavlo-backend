@@ -113,6 +113,7 @@ Route::middleware(['auth:vendor,team_member', 'vendor.staff.access'])->group(fun
     Route::patch('orders/{orderId}/confirm', [OrderController::class, 'confirm'])->name('orders.confirm');
     Route::patch('orders/{orderId}/confirm-cash', [OrderController::class, 'confirmCashPayment'])->name('orders.confirmCash');
     Route::patch('orders/{orderId}/ready', [OrderController::class, 'markReady'])->name('orders.ready');
+    Route::patch('orders/{orderId}/items/serve-ready', [OrderController::class, 'serveReadyItems'])->name('orders.serveReadyItems');
     Route::patch('orders/{orderId}/items/{cartItemId}', [OrderController::class, 'updateItemStatus'])->name('orders.itemStatus');
     Route::post('orders/items/status-batch', [OrderController::class, 'batchItemStatus'])->name('orders.itemStatusBatch');
     Route::patch('orders/{orderId}/picked-up', [OrderController::class, 'markPickedUp'])->name('orders.pickedUp');

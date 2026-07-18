@@ -50,6 +50,7 @@ class EnsureStaffCanAccessVendorRoute
                 'vendor.orders.confirm',
                 'vendor.orders.confirmCash',
                 'vendor.orders.served',
+                'vendor.orders.serveReadyItems',
                 'vendor.orders.itemStatusBatch',
                 'vendor.tables.index',
                 'vendor.tables.closeSession',

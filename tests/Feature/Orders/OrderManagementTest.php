@@ -22,8 +22,11 @@ class OrderManagementTest extends TestCase
     use RefreshDatabase;
 
     private Vendor $vendor;
+
     private Customer $customer;
+
     private RestaurantTable $table;
+
     private MenuItem $menuItem;
 
     protected function setUp(): void
@@ -36,7 +39,7 @@ class OrderManagementTest extends TestCase
             'vendor_id' => $this->vendor->id,
             'number' => 7,
             'name' => 'Table 7',
-            'qr_token' => 'qr-' . uniqid(),
+            'qr_token' => 'qr-'.uniqid(),
             'is_active' => true,
             'qr_created_at' => now(),
         ]);
@@ -67,7 +70,7 @@ class OrderManagementTest extends TestCase
         $member = TeamMember::create([
             'vendor_id' => $this->vendor->id,
             'name' => ucfirst($role),
-            'email' => $role . uniqid() . '@example.com',
+            'email' => $role.uniqid().'@example.com',
             'password' => Hash::make('password'),
             'role' => $role,
             'permissions' => TeamMember::defaultPermissions($role),
@@ -95,7 +98,7 @@ class OrderManagementTest extends TestCase
     private function order(TableScanSession $session, array $attrs = []): Order
     {
         return Order::create(array_merge([
-            'order_public_id' => 'ord-' . uniqid(),
+            'order_public_id' => 'ord-'.uniqid(),
             'customer_id' => $session->customer_id,
             'vendor_id' => $this->vendor->id,
             'table_scan_session_id' => $session->id,
@@ -373,6 +376,49 @@ class OrderManagementTest extends TestCase
         $this->assertNotNull($item->fresh()->served_at);
     }
 
+    public function test_serve_ready_items_is_atomic_and_restricted_to_waiters(): void
+    {
+        $session = $this->scanSession();
+        $order = $this->order($session);
+        $readyItems = collect(range(1, 3))->map(fn () => $this->cartItem($session, [
+            'order_id' => $order->id,
+            'preparing_start_at' => now()->subMinutes(2),
+            'ready_at' => now()->subMinute(),
+        ]));
+        $preparingItem = $this->cartItem($session, [
+            'order_id' => $order->id,
+            'preparing_start_at' => now()->subMinute(),
+        ]);
+
+        $this->patchJson(
+            "/api/vendor/orders/{$order->id}/items/serve-ready",
+            ['cartItemIds' => [$readyItems->first()->id]],
+            $this->staffHeaders('kitchen'),
+        )->assertForbidden();
+        $this->assertNull($readyItems->first()->fresh()->served_at);
+        $this->app['auth']->forgetGuards();
+
+        $this->patchJson(
+            "/api/vendor/orders/{$order->id}/items/serve-ready",
+            ['cartItemIds' => [$readyItems->first()->id, $preparingItem->id]],
+            $this->vendorHeaders(),
+        )->assertConflict()
+            ->assertJsonPath('cart_item_id', $preparingItem->id)
+            ->assertJsonPath('current_status', 'preparing');
+        $this->assertNull($readyItems->first()->fresh()->served_at);
+
+        $this->patchJson(
+            "/api/vendor/orders/{$order->id}/items/serve-ready",
+            ['cartItemIds' => $readyItems->pluck('id')->all()],
+            $this->vendorHeaders(),
+        )->assertOk()
+            ->assertJsonPath('status', 'in_progress')
+            ->assertJsonCount(4, 'items');
+
+        $readyItems->each(fn (CartItem $item) => $this->assertNotNull($item->fresh()->served_at));
+        $this->assertNull($preparingItem->fresh()->served_at);
+    }
+
     public function test_close_table_session_requires_force_when_unpaid_then_closes(): void
     {
         $session = $this->scanSession();
@@ -610,7 +656,7 @@ class OrderManagementTest extends TestCase
             'vendor_id' => $this->vendor->id,
             'number' => 12,
             'name' => 'Table 12',
-            'qr_token' => 'qr-' . uniqid(),
+            'qr_token' => 'qr-'.uniqid(),
             'is_active' => true,
             'qr_created_at' => now(),
         ]);
@@ -672,7 +718,7 @@ class OrderManagementTest extends TestCase
             'vendor_id' => $this->vendor->id,
             'number' => 12,
             'name' => 'Table 12',
-            'qr_token' => 'qr-' . uniqid(),
+            'qr_token' => 'qr-'.uniqid(),
             'is_active' => true,
             'qr_created_at' => now(),
         ]);
@@ -719,7 +765,7 @@ class OrderManagementTest extends TestCase
             'vendor_id' => $this->vendor->id,
             'number' => 12,
             'name' => 'Table 12',
-            'qr_token' => 'qr-' . uniqid(),
+            'qr_token' => 'qr-'.uniqid(),
             'is_active' => false,
             'qr_created_at' => now(),
         ]);
@@ -744,7 +790,7 @@ class OrderManagementTest extends TestCase
             'vendor_id' => $this->vendor->id,
             'number' => 12,
             'name' => 'Table 12',
-            'qr_token' => 'qr-' . uniqid(),
+            'qr_token' => 'qr-'.uniqid(),
             'is_active' => true,
             'qr_created_at' => now(),
         ]);
@@ -765,7 +811,7 @@ class OrderManagementTest extends TestCase
             'vendor_id' => $this->vendor->id,
             'number' => 12,
             'name' => 'Table 12',
-            'qr_token' => 'qr-' . uniqid(),
+            'qr_token' => 'qr-'.uniqid(),
             'is_active' => true,
             'qr_created_at' => now(),
         ]);
