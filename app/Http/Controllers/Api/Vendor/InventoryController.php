@@ -110,6 +110,132 @@ class InventoryController extends Controller
     }
 
     /**
+     * POST /api/vendor/{vendorId}/inventory/items/bulk
+     *
+     * Accepts a JSON array of items (already parsed + mapped by the frontend).
+     * Each item is upserted by name (case-insensitive): creates if new, updates if exists.
+     * Returns a summary of created / updated / skipped counts plus per-row errors.
+     */
+    public function bulkImport(Request $request, string $vendorId): JsonResponse
+    {
+        $vendor = $this->resolveVendor($vendorId);
+        $this->authorizeVendor($request, $vendor);
+
+        $data = $request->validate([
+            'items' => ['required', 'array', 'min:1', 'max:500'],
+            'items.*.ingredientName' => ['required', 'string', 'max:255'],
+            'items.*.unit' => ['required', 'string', 'max:20'],
+            'items.*.category' => ['nullable', 'string', 'max:255'],
+            'items.*.currentStock' => ['nullable', 'numeric', 'min:0'],
+            'items.*.reorderLevel' => ['nullable', 'numeric', 'min:0'],
+            'items.*.reorderQuantity' => ['nullable', 'numeric', 'min:0'],
+            'items.*.supplier' => ['nullable', 'string', 'max:255'],
+            'items.*.costPerUnit' => ['nullable', 'numeric', 'min:0'],
+        ]);
+
+        $created = 0;
+        $updated = 0;
+        $errors = [];
+
+        foreach ($data['items'] as $index => $row) {
+            try {
+                $result = DB::transaction(function () use ($vendor, $row): string {
+                    $name = trim($row['ingredientName']);
+                    $existing = $vendor->inventoryItems()
+                        ->whereRaw('LOWER(name) = ?', [mb_strtolower($name)])
+                        ->lockForUpdate()
+                        ->first();
+
+                    $fields = [
+                        'unit' => trim($row['unit']),
+                    ];
+
+                    if (array_key_exists('category', $row)) {
+                        $category = trim((string) ($row['category'] ?? '')) === ''
+                            ? null
+                            : $this->resolveCategoryFromPayload($vendor, $row);
+                        $fields['inventory_category_id'] = $category?->id;
+                        $fields['category'] = $category?->name;
+                    }
+
+                    $optionalFields = [
+                        'currentStock' => 'quantity',
+                        'reorderLevel' => 'min_stock',
+                        'reorderQuantity' => 'reorder_quantity',
+                        'costPerUnit' => 'cost_per_unit',
+                    ];
+                    foreach ($optionalFields as $input => $column) {
+                        if (array_key_exists($input, $row)) {
+                            $fields[$column] = (float) ($row[$input] ?? 0);
+                        }
+                    }
+
+                    if (array_key_exists('supplier', $row)) {
+                        $supplier = trim((string) ($row['supplier'] ?? ''));
+                        $fields['supplier'] = $supplier === '' ? null : $supplier;
+                    }
+
+                    $translation = ['name' => $name];
+                    if (array_key_exists('supplier', $fields) && $fields['supplier'] !== null) {
+                        $translation['supplier'] = $fields['supplier'];
+                    }
+
+                    if ($existing) {
+                        $existing->update(array_merge(['name' => $name], $fields));
+                        $this->locales->syncTranslations(
+                            $existing,
+                            'localizedTranslations',
+                            ['en' => $translation],
+                            ['name', 'supplier']
+                        );
+
+                        return 'updated';
+                    }
+
+                    $item = $vendor->inventoryItems()->create(array_merge([
+                        'name' => $name,
+                        'inventory_category_id' => null,
+                        'category' => null,
+                        'quantity' => 0,
+                        'min_stock' => 0,
+                        'reorder_quantity' => 0,
+                        'cost_per_unit' => 0,
+                        'supplier' => null,
+                    ], $fields));
+                    $this->locales->syncTranslations(
+                        $item,
+                        'localizedTranslations',
+                        ['en' => $translation],
+                        ['name', 'supplier']
+                    );
+
+                    return 'created';
+                });
+
+                if ($result === 'created') {
+                    $created++;
+                } else {
+                    $updated++;
+                }
+            } catch (\Throwable $exception) {
+                report($exception);
+                $errors[] = [
+                    'row' => $index + 1,
+                    'name' => $row['ingredientName'] ?? '',
+                    'message' => 'Unable to import this row.',
+                ];
+            }
+        }
+
+        return response()->json([
+            'created' => $created,
+            'updated' => $updated,
+            'skipped' => count($errors),
+            'errors' => $errors,
+        ]);
+    }
+
+    /**
      * PATCH /api/vendor/{vendorId}/inventory/items/{itemId}
      */
     public function update(Request $request, string $vendorId, int $itemId): JsonResponse
