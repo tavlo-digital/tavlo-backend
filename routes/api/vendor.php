@@ -72,6 +72,7 @@ Route::middleware(['auth:vendor,team_member', 'vendor.staff.access'])->group(fun
     // Menu Items
     Route::get('menu/items', [MenuItemController::class, 'index'])->name('menu.items.index');
     Route::post('menu/items', [MenuItemController::class, 'store'])->name('menu.items.store');
+    Route::post('menu/items/bulk', [MenuItemController::class, 'bulkImport'])->name('menu.items.bulk-import');
     Route::post('menu/items/upload-image', [MenuItemController::class, 'uploadImage'])->name('menu.items.uploadImage');
     Route::get('menu/items/{itemId}', [MenuItemController::class, 'show'])->name('menu.items.show');
     Route::patch('menu/items/{itemId}', [MenuItemController::class, 'update'])->name('menu.items.update');

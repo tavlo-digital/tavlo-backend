@@ -10,12 +10,13 @@ use App\Models\TaxCategory;
 use App\Models\TeamMember;
 use App\Models\Vendor;
 use App\Services\LocaleService;
-use App\Services\TaxCalculationService;
 use App\Services\MediaService;
 use App\Services\MenuCustomizationService;
+use App\Services\TaxCalculationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
@@ -173,6 +174,168 @@ class MenuItemController extends Controller
                 $this->locales->dashboardLanguage($vendor)
             ),
         ], 201);
+    }
+
+    /**
+     * POST /api/vendor/menu/items/bulk
+     *
+     * Creates or updates up to 500 menu items. Existing items are matched by
+     * case-insensitive name within their category. Each row has its own
+     * transaction so a bad row does not roll back successful rows.
+     */
+    public function bulkImport(Request $request): JsonResponse
+    {
+        $vendor = $this->actingVendor($request);
+        $data = $request->validate([
+            'items' => ['required', 'array', 'min:1', 'max:500'],
+        ]);
+        $rowRules = [
+            'name' => ['required', 'string', 'max:255'],
+            'category' => ['required', 'string', 'max:255'],
+            'price' => ['required', 'numeric', 'min:0'],
+            'description' => ['sometimes', 'nullable', 'string', 'max:5000'],
+            'available' => ['sometimes', 'boolean'],
+            'calories' => ['sometimes', 'integer', 'min:0'],
+            'fat' => ['sometimes', 'numeric', 'min:0'],
+            'carbs' => ['sometimes', 'numeric', 'min:0'],
+            'protein' => ['sometimes', 'numeric', 'min:0'],
+            'taxCategory' => ['sometimes', 'nullable', 'string', 'max:64'],
+            'dietaryPreference' => [
+                'sometimes',
+                'nullable',
+                'string',
+                'max:64',
+                Rule::exists('dietary_preferences', 'slug')->where('is_active', true),
+            ],
+            'allergies' => ['sometimes', 'array'],
+            'allergies.*' => ['string', 'max:64'],
+            'specialTags' => ['sometimes', 'array'],
+            'specialTags.*' => ['string', 'max:64'],
+            'discountPercent' => ['sometimes', 'numeric', 'min:0', 'max:100'],
+        ];
+
+        $categoryMap = [];
+        $categories = $vendor->menuCategories()
+            ->where('is_active', true)
+            ->with(['masterCategory', 'localizedTranslations'])
+            ->get();
+
+        foreach ($categories as $category) {
+            $names = collect([$category->display_name])
+                ->merge($category->localizedTranslations->pluck('name'))
+                ->filter();
+
+            foreach ($names as $name) {
+                $categoryMap[$this->normalizeImportKey((string) $name)] = $category;
+            }
+        }
+
+        $created = 0;
+        $updated = 0;
+        $errors = [];
+
+        foreach ($data['items'] as $index => $unvalidatedRow) {
+            $row = is_array($unvalidatedRow) ? $unvalidatedRow : [];
+            $rowValidator = Validator::make($row, $rowRules);
+            if ($rowValidator->fails()) {
+                $errors[] = [
+                    'row' => $index + 2,
+                    'name' => is_string($row['name'] ?? null) ? trim($row['name']) : '',
+                    'message' => $rowValidator->errors()->first(),
+                ];
+
+                continue;
+            }
+            $row = $rowValidator->validated();
+            $name = trim($row['name']);
+            $categoryName = trim($row['category']);
+            $category = $categoryMap[$this->normalizeImportKey($categoryName)] ?? null;
+
+            if (! $category) {
+                $errors[] = [
+                    'row' => $index + 2,
+                    'name' => $name,
+                    'message' => "Category \"{$categoryName}\" does not exist.",
+                ];
+
+                continue;
+            }
+
+            try {
+                $result = DB::transaction(function () use ($vendor, $category, $row, $name): string {
+                    $existing = $vendor->menuItems()
+                        ->where('is_active', true)
+                        ->where('menu_category_id', $category->id)
+                        ->whereRaw('LOWER(name) = ?', [mb_strtolower($name)])
+                        ->lockForUpdate()
+                        ->first();
+
+                    $payload = [
+                        'categoryId' => $category->id,
+                        'name' => $name,
+                        'price' => (float) $row['price'],
+                    ];
+
+                    foreach ([
+                        'description',
+                        'available',
+                        'calories',
+                        'fat',
+                        'carbs',
+                        'protein',
+                        'taxCategory',
+                        'dietaryPreference',
+                        'allergies',
+                        'specialTags',
+                        'discountPercent',
+                    ] as $field) {
+                        if (array_key_exists($field, $row)) {
+                            $payload[$field] = $row[$field];
+                        }
+                    }
+
+                    if (array_key_exists('discountPercent', $row)) {
+                        $payload['hasDiscount'] = (float) $row['discountPercent'] > 0;
+                    }
+
+                    $rowRequest = Request::create(
+                        '/api/vendor/menu/items'.($existing ? "/{$existing->id}" : ''),
+                        $existing ? 'PATCH' : 'POST',
+                        $payload
+                    );
+                    $rowRequest->setUserResolver(fn () => $vendor);
+
+                    if ($existing) {
+                        $this->update($rowRequest, $existing->id);
+
+                        return 'updated';
+                    }
+
+                    $this->store($rowRequest);
+
+                    return 'created';
+                });
+
+                $result === 'created' ? $created++ : $updated++;
+            } catch (\Throwable $exception) {
+                report($exception);
+                $message = $exception instanceof ValidationException
+                    ? (collect($exception->errors())->flatten()->first() ?? 'Unable to import this row.')
+                    : 'Unable to import this row.';
+                $errors[] = [
+                    'row' => $index + 2,
+                    'name' => $name,
+                    'message' => $message,
+                ];
+            }
+        }
+
+        return response()->json([
+            'created' => $created,
+            'updated' => $updated,
+            'skipped' => count($errors),
+            'errors' => $errors,
+        ]);
     }
 
     /**
@@ -891,5 +1054,10 @@ class MenuItemController extends Controller
         }
 
         return $name;
+    }
+
+    private function normalizeImportKey(string $value): string
+    {
+        return mb_strtolower(trim($value));
     }
 }
