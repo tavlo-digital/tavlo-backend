@@ -98,6 +98,35 @@ class CustomerAuthTest extends TestCase
     }
 
     // ----------------------------------------------------------------
+    // POST /api/customer/guest
+    // ----------------------------------------------------------------
+
+    public function test_guest_login_creates_new_customer(): void
+    {
+        $response = $this->postJson('/api/customer/guest', []);
+
+        $response->assertCreated()
+            ->assertJsonStructure(['user', 'token'])
+            ->assertJsonPath('user.account_type', 'guest');
+    }
+
+    /**
+     * Guest login has no email, so it must not share the strict per-email/IP
+     * `auth` limiter (5/min) — otherwise every device behind one IP (a
+     * restaurant's shared WiFi) collapses into a single bucket and only the
+     * first few guests can join during a rush. It has its own 60/min-per-IP
+     * limiter, so well over 5 requests from the same IP must succeed.
+     */
+    public function test_guest_login_is_not_limited_to_five_per_ip(): void
+    {
+        for ($i = 0; $i < 15; $i++) {
+            $this->postJson('/api/customer/guest', [])->assertCreated();
+        }
+
+        $this->assertEquals(15, Customer::where('account_type', 'guest')->count());
+    }
+
+    // ----------------------------------------------------------------
     // POST /api/customer/login
     // ----------------------------------------------------------------
 

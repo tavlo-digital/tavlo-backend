@@ -39,6 +39,14 @@ class AppServiceProvider extends ServiceProvider
             return Limit::perMinute(5)->by($email . '|' . $request->ip());
         });
 
+        // Guest login has no email to distinguish users, so keying it with the
+        // `auth` limiter collapses every device on a shared network (e.g. a
+        // restaurant's WiFi) into one 5/min bucket. There is nothing to
+        // brute-force here, so allow a much higher per-IP rate instead.
+        RateLimiter::for('guest', function (Request $request) {
+            return Limit::perMinute(60)->by('guest:' . $request->ip());
+        });
+
         RateLimiter::for('table-pin', function (Request $request) {
             $token = $request->input('token', '');
 
