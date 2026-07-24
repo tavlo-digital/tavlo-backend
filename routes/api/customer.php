@@ -41,10 +41,17 @@ Route::get('health', function () {
 // Auth (public)
 Route::middleware('throttle:auth')->group(function () {
     Route::post('register', [AuthController::class, 'register'])->name('register');
+    Route::post('register/verify-otp', [AuthController::class, 'verifyEmailOtp'])->name('register.verify-otp');
+    Route::post('register/resend-otp', [AuthController::class, 'resendEmailOtp'])->name('register.resend-otp');
     Route::post('guest', [AuthController::class, 'loginAsGuest'])->name('guest');
     Route::post('login', [AuthController::class, 'login'])->name('login');
     Route::post('social/register', [AuthController::class, 'socialRegister'])->name('social.register');
     Route::post('social/login', [AuthController::class, 'socialLogin'])->name('social.login');
+
+    // OTP-based password reset (send code, verify code, set new password)
+    Route::post('password/forgot', [AuthController::class, 'forgotPassword'])->name('password.forgot');
+    Route::post('password/verify-otp', [AuthController::class, 'verifyPasswordOtp'])->name('password.verify-otp');
+    Route::post('password/reset', [AuthController::class, 'resetPassword'])->name('password.reset');
 });
 
 // Public browsing (no auth required)

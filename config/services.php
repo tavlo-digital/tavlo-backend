@@ -46,6 +46,17 @@ return [
         'url' => env('VENDOR_FRONTEND_URL', 'http://localhost:3000'),
     ],
 
+    'customer_otp' => [
+        // Number of digits in the one-time code.
+        'length' => (int) env('CUSTOMER_OTP_LENGTH', 6),
+        // How long a code stays valid, in minutes.
+        'ttl_minutes' => (int) env('CUSTOMER_OTP_TTL_MINUTES', 10),
+        // Maximum wrong verification attempts before a code is burned.
+        'max_attempts' => (int) env('CUSTOMER_OTP_MAX_ATTEMPTS', 5),
+        // Minimum seconds between two "send" requests for the same email/purpose.
+        'resend_cooldown_seconds' => (int) env('CUSTOMER_OTP_RESEND_COOLDOWN', 60),
+    ],
+
     'notifications' => [
         'queue_enabled' => (bool) env('NOTIFICATIONS_QUEUE_ENABLED', false),
         'queue' => env('NOTIFICATIONS_QUEUE', 'notifications'),

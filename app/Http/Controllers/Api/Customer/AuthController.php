@@ -3,12 +3,16 @@
 namespace App\Http\Controllers\Api\Customer;
 
 use App\Http\Controllers\Controller;
+use App\Mail\CustomerOtpMail;
 use App\Models\Customer;
+use App\Models\CustomerOtp;
+use App\Services\OtpService;
 use App\Services\SocialAuthService;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
@@ -16,6 +20,7 @@ class AuthController extends Controller
 {
     public function __construct(
         protected SocialAuthService $socialAuthService,
+        protected OtpService $otpService,
     ) {}
 
     /**
@@ -42,12 +47,172 @@ class AuthController extends Controller
             'registration_source' => 'email',
         ]);
 
+        // Email verification is via OTP: the account is created unverified and
+        // a one-time code is emailed. The client verifies it with
+        // POST /register/verify-otp. Login is not blocked while unverified.
+        $this->sendOtp($customer->email, CustomerOtp::PURPOSE_REGISTRATION);
+
         $token = $customer->createToken('customer-token', ['role:customer'])->plainTextToken;
 
         return response()->json([
             'user'  => $customer,
             'token' => $token,
         ], 201);
+    }
+
+    /**
+     * Verify a customer's email address with the OTP sent at registration.
+     */
+    public function verifyEmailOtp(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'email' => ['required', 'email'],
+            'otp'   => ['required', 'string'],
+        ]);
+
+        $customer = Customer::where('email', $validated['email'])->first();
+
+        if (! $customer) {
+            throw ValidationException::withMessages([
+                'email' => ['No account found for this email address.'],
+            ]);
+        }
+
+        if ($customer->email_verified_at !== null) {
+            return response()->json([
+                'message' => 'Email address is already verified.',
+                'user'    => $customer,
+            ]);
+        }
+
+        $this->otpService->verify(
+            $validated['email'],
+            CustomerOtp::PURPOSE_REGISTRATION,
+            $validated['otp'],
+        );
+
+        $customer->update(['email_verified_at' => now()]);
+
+        return response()->json([
+            'message' => 'Email address verified.',
+            'user'    => $customer->fresh(),
+        ]);
+    }
+
+    /**
+     * Resend the registration OTP to a customer whose email is not yet verified.
+     */
+    public function resendEmailOtp(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'email' => ['required', 'email'],
+        ]);
+
+        $customer = Customer::where('email', $validated['email'])->first();
+
+        // Only send when there is an unverified account, but always return the
+        // same response so this endpoint does not reveal which emails exist.
+        if ($customer && $customer->email_verified_at === null) {
+            $this->sendOtp($customer->email, CustomerOtp::PURPOSE_REGISTRATION);
+        }
+
+        return response()->json([
+            'message' => 'If the account exists and is unverified, a verification code has been sent.',
+        ]);
+    }
+
+    /**
+     * Start the OTP-based password reset flow: email a one-time code.
+     */
+    public function forgotPassword(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'email' => ['required', 'email'],
+        ]);
+
+        $customer = Customer::where('email', $validated['email'])->first();
+
+        // Only registered (non-guest) accounts with a usable password receive a
+        // code. Always return the same response regardless, so the endpoint does
+        // not disclose whether an email is registered.
+        if ($customer && $customer->account_type !== 'guest') {
+            $this->sendOtp($customer->email, CustomerOtp::PURPOSE_PASSWORD_RESET);
+        }
+
+        return response()->json([
+            'message' => 'If an account exists for this email, a reset code has been sent.',
+        ]);
+    }
+
+    /**
+     * Verify a password-reset OTP without consuming it. Lets the client confirm
+     * the code before showing the new-password form.
+     */
+    public function verifyPasswordOtp(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'email' => ['required', 'email'],
+            'otp'   => ['required', 'string'],
+        ]);
+
+        $this->otpService->verify(
+            $validated['email'],
+            CustomerOtp::PURPOSE_PASSWORD_RESET,
+            $validated['otp'],
+            consume: false,
+        );
+
+        return response()->json([
+            'message' => 'Code verified.',
+        ]);
+    }
+
+    /**
+     * Complete the password reset: verify the OTP and set the new password.
+     */
+    public function resetPassword(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'email'    => ['required', 'email'],
+            'otp'      => ['required', 'string'],
+            'password' => ['required', 'string', 'min:8', 'confirmed'],
+        ]);
+
+        $customer = Customer::where('email', $validated['email'])->first();
+
+        if (! $customer || $customer->account_type === 'guest') {
+            throw ValidationException::withMessages([
+                'email' => ['No account found for this email address.'],
+            ]);
+        }
+
+        $this->otpService->verify(
+            $validated['email'],
+            CustomerOtp::PURPOSE_PASSWORD_RESET,
+            $validated['otp'],
+        );
+
+        $customer->update([
+            'password'          => $validated['password'],
+            'email_verified_at' => $customer->email_verified_at ?? now(),
+        ]);
+
+        // Invalidate every existing session — a reset should log out old tokens.
+        $customer->tokens()->delete();
+
+        return response()->json([
+            'message' => 'Password has been reset. Please log in with your new password.',
+        ]);
+    }
+
+    /**
+     * Generate an OTP for the given email/purpose and email it to the customer.
+     */
+    protected function sendOtp(string $email, string $purpose): void
+    {
+        $code = $this->otpService->issue($email, $purpose);
+
+        Mail::to($email)->send(new CustomerOtpMail($code, $purpose));
     }
 
     /**
