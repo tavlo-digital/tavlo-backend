@@ -188,8 +188,7 @@ class RestaurantController extends Controller
 
             $setting = $vendor->vendorSetting;
 
-            // Open/closed + today hours from business_hours
-            $isOpen = false;
+            // Open/closed + today hours from business_hours (handles overnight windows).
             $todayHours = null;
             $businessHours = $setting?->business_hours ?? [];
             if (is_string($businessHours)) {
@@ -197,14 +196,13 @@ class RestaurantController extends Controller
             }
             $vendorNow = $this->dateTimes->vendorNow($vendor);
             $dayKey = strtolower($vendorNow->format('l'));
+            $isOpen = $this->dateTimes->isOpenNow($businessHours, $vendor);
             if (isset($businessHours[$dayKey]) && ! ($businessHours[$dayKey]['closed'] ?? false)) {
                 $open = $businessHours[$dayKey]['open'] ?? null;
                 $close = $businessHours[$dayKey]['close'] ?? null;
                 if ($open && $close) {
                     $todayHours = $this->dateTimes->formatLocalTime($open, $vendor)
                         .' – '.$this->dateTimes->formatLocalTime($close, $vendor);
-                    $localTime = $vendorNow->format('H:i');
-                    $isOpen = $localTime >= $open && $localTime <= $close;
                 }
             }
 
@@ -269,8 +267,7 @@ class RestaurantController extends Controller
 
         $setting = $vendor->vendorSetting;
 
-        // Determine open/closed from business_hours
-        $isOpen = false;
+        // Determine open/closed from business_hours (handles overnight windows).
         $todayHours = null;
         $businessHours = $setting->business_hours ?? [];
         if (is_string($businessHours)) {
@@ -278,11 +275,14 @@ class RestaurantController extends Controller
         }
         $vendorNow = $this->dateTimes->vendorNow($vendor);
         $dayKey = strtolower($vendorNow->format('l'));
+        $isOpen = $this->dateTimes->isOpenNow($businessHours, $vendor);
         if (isset($businessHours[$dayKey]) && ! ($businessHours[$dayKey]['closed'] ?? false)) {
-            $todayHours = $this->dateTimes->formatLocalTime($businessHours[$dayKey]['open'], $vendor)
-                .' – '.$this->dateTimes->formatLocalTime($businessHours[$dayKey]['close'], $vendor);
-            $localTime = $vendorNow->format('H:i');
-            $isOpen = $localTime >= $businessHours[$dayKey]['open'] && $localTime <= $businessHours[$dayKey]['close'];
+            $open = $businessHours[$dayKey]['open'] ?? null;
+            $close = $businessHours[$dayKey]['close'] ?? null;
+            if ($open && $close) {
+                $todayHours = $this->dateTimes->formatLocalTime($open, $vendor)
+                    .' – '.$this->dateTimes->formatLocalTime($close, $vendor);
+            }
         }
 
         // Distance

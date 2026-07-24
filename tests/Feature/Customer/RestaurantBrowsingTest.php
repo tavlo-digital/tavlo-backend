@@ -17,6 +17,7 @@ use App\Models\TableScanSession;
 use App\Models\Vendor;
 use App\Models\VendorSetting;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use Tests\TestCase;
 
 class RestaurantBrowsingTest extends TestCase
@@ -39,6 +40,13 @@ class RestaurantBrowsingTest extends TestCase
             'is_live_and_discoverable' => true,
             'description' => 'A great restaurant',
         ]);
+    }
+
+    protected function tearDown(): void
+    {
+        Carbon::setTestNow();
+
+        parent::tearDown();
     }
 
     // ----------------------------------------------------------------
@@ -81,6 +89,90 @@ class RestaurantBrowsingTest extends TestCase
             ->assertOk()
             ->assertJsonPath("business_hours.{$day}.open", '10:45 AM')
             ->assertJsonPath("business_hours.{$day}.close", '8:45 PM');
+    }
+
+    /**
+     * Freeze the clock to a given wall-clock time in the vendor's own timezone
+     * and set the given weekly business hours, then return the is_open flag
+     * from the restaurant profile endpoint.
+     *
+     * @param  array<string, array<string, mixed>>  $hoursByRelativeDay  Keyed by 'today'/'yesterday'.
+     */
+    private function isOpenAt(string $localTime, array $hoursByRelativeDay): bool
+    {
+        $tz = $this->vendor->resolveTimezone();
+        Carbon::setTestNow(Carbon::parse("2026-07-24 {$localTime}", $tz));
+
+        $now = Carbon::now()->setTimezone($tz);
+        $dayFor = [
+            'today' => strtolower($now->format('l')),
+            'yesterday' => strtolower($now->copy()->subDay()->format('l')),
+        ];
+
+        $businessHours = [];
+        foreach ($hoursByRelativeDay as $relative => $hours) {
+            $businessHours[$dayFor[$relative]] = $hours;
+        }
+
+        $this->vendor->vendorSetting->update(['business_hours' => $businessHours]);
+
+        return $this->getJson("/api/customer/restaurants/{$this->vendor->vendor_public_id}")
+            ->assertOk()
+            ->json('is_open');
+    }
+
+    public function test_is_open_true_within_same_day_hours(): void
+    {
+        $this->assertTrue($this->isOpenAt('14:00:00', [
+            'today' => ['open' => '10:00', 'close' => '22:00', 'closed' => false],
+        ]));
+    }
+
+    public function test_is_open_false_before_opening(): void
+    {
+        $this->assertFalse($this->isOpenAt('09:00:00', [
+            'today' => ['open' => '10:00', 'close' => '22:00', 'closed' => false],
+        ]));
+    }
+
+    public function test_is_open_false_at_exact_closing_time(): void
+    {
+        $this->assertFalse($this->isOpenAt('22:00:00', [
+            'today' => ['open' => '10:00', 'close' => '22:00', 'closed' => false],
+        ]));
+    }
+
+    public function test_is_open_true_in_evening_of_overnight_window(): void
+    {
+        // Open 18:00 → 02:00. At 20:00 the venue must be reported open.
+        $this->assertTrue($this->isOpenAt('20:00:00', [
+            'today' => ['open' => '18:00', 'close' => '02:00', 'closed' => false],
+        ]));
+    }
+
+    public function test_is_open_true_after_midnight_of_overnight_window(): void
+    {
+        // Yesterday opened 18:00 → 02:00. At 01:00 today the venue is still open.
+        $this->assertTrue($this->isOpenAt('01:00:00', [
+            'today' => ['open' => '18:00', 'close' => '02:00', 'closed' => true],
+            'yesterday' => ['open' => '18:00', 'close' => '02:00', 'closed' => false],
+        ]));
+    }
+
+    public function test_is_open_false_after_overnight_window_closes(): void
+    {
+        // Yesterday's 18:00 → 02:00 window has ended by 03:00; today not yet open.
+        $this->assertFalse($this->isOpenAt('03:00:00', [
+            'today' => ['open' => '18:00', 'close' => '02:00', 'closed' => false],
+            'yesterday' => ['open' => '18:00', 'close' => '02:00', 'closed' => false],
+        ]));
+    }
+
+    public function test_is_open_false_when_day_marked_closed(): void
+    {
+        $this->assertFalse($this->isOpenAt('14:00:00', [
+            'today' => ['open' => '10:00', 'close' => '22:00', 'closed' => true],
+        ]));
     }
 
     public function test_restaurant_currency_comes_from_selected_country(): void
