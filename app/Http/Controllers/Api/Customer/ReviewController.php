@@ -267,6 +267,28 @@ class ReviewController extends Controller
         ]);
     }
 
+    /**
+     * GET /api/customer/reviews/vendor/{vendorPublicId}/eligibility
+     *
+     * Reports which kinds of reviews the vendor currently allows, based on the
+     * vendor's Reviews settings. Lets the customer app decide whether to surface
+     * the restaurant-review, per-item-review, and anonymous-review options.
+     */
+    public function eligibility(string $vendorPublicId): JsonResponse
+    {
+        $vendor = \App\Models\Vendor::where('vendor_public_id', $vendorPublicId)
+            ->with('vendorSetting:id,vendor_id,enable_reviews,enable_menu_reviews,allow_anonymous_reviews')
+            ->firstOrFail();
+
+        $settings = $vendor->vendorSetting;
+
+        return response()->json([
+            'enableReviews' => $settings->enable_reviews ?? true,
+            'enableMenuReviews' => $settings->enable_menu_reviews ?? true,
+            'allowAnonymousReviews' => (bool) ($settings->allow_anonymous_reviews ?? false),
+        ]);
+    }
+
     public function sessionByOrder(Request $request, string $orderPublicId): JsonResponse
     {
         $customer = $request->user();
