@@ -492,6 +492,54 @@ class VendorSettingsTest extends TestCase
         )->assertStatus(422);
     }
 
+    public function test_upload_cover_photo_accepts_16_9_image(): void
+    {
+        Storage::fake('public');
+
+        $file = UploadedFile::fake()->image('cover.jpg', 1600, 900);
+
+        $response = $this->postJson(
+            "/api/vendor/{$this->vendor->vendor_public_id}/settings/cover-photo",
+            ['cover' => $file],
+            $this->authHeaders()
+        );
+
+        $response->assertOk()
+            ->assertJsonStructure(['coverPhotoUrl']);
+
+        $this->assertNotEmpty($response->json('coverPhotoUrl'));
+    }
+
+    public function test_upload_cover_photo_rejects_non_16_9_ratio(): void
+    {
+        Storage::fake('public');
+
+        // 4:3 image at sufficient resolution — wrong aspect ratio.
+        $file = UploadedFile::fake()->image('cover.jpg', 1600, 1200);
+
+        $this->postJson(
+            "/api/vendor/{$this->vendor->vendor_public_id}/settings/cover-photo",
+            ['cover' => $file],
+            $this->authHeaders()
+        )->assertStatus(422)
+            ->assertJsonValidationErrors('cover');
+    }
+
+    public function test_upload_cover_photo_rejects_image_below_minimum_size(): void
+    {
+        Storage::fake('public');
+
+        // Correct 16:9 ratio but below the 1200×675 minimum.
+        $file = UploadedFile::fake()->image('cover.jpg', 800, 450);
+
+        $this->postJson(
+            "/api/vendor/{$this->vendor->vendor_public_id}/settings/cover-photo",
+            ['cover' => $file],
+            $this->authHeaders()
+        )->assertStatus(422)
+            ->assertJsonValidationErrors('cover');
+    }
+
     // ----------------------------------------------------------------
     // GET /api/vendor/{vendorId}/settings/export
     // ----------------------------------------------------------------
