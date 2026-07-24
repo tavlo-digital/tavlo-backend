@@ -1162,6 +1162,59 @@ class CustomerFeaturesTest extends TestCase
             ->assertJsonPath('data.0.created_at', $review->created_at->format('m/d/Y g:i A'));
     }
 
+    public function test_review_eligibility_returns_vendor_review_settings(): void
+    {
+        $this->vendor->vendorSetting()->update([
+            'enable_reviews' => true,
+            'enable_menu_reviews' => true,
+            'allow_anonymous_reviews' => true,
+        ]);
+
+        $response = $this->getJson(
+            "/api/customer/reviews/vendor/{$this->vendor->vendor_public_id}/eligibility",
+            $this->headers
+        );
+
+        $response->assertOk()
+            ->assertExactJson([
+                'enableReviews' => true,
+                'enableMenuReviews' => true,
+                'allowAnonymousReviews' => true,
+            ]);
+    }
+
+    public function test_review_eligibility_reflects_disabled_settings(): void
+    {
+        $this->vendor->vendorSetting()->update([
+            'enable_reviews' => false,
+            'enable_menu_reviews' => false,
+            'allow_anonymous_reviews' => false,
+        ]);
+
+        $this->getJson(
+            "/api/customer/reviews/vendor/{$this->vendor->vendor_public_id}/eligibility",
+            $this->headers
+        )->assertOk()
+            ->assertJsonPath('enableReviews', false)
+            ->assertJsonPath('enableMenuReviews', false)
+            ->assertJsonPath('allowAnonymousReviews', false);
+    }
+
+    public function test_review_eligibility_requires_authentication(): void
+    {
+        $this->getJson(
+            "/api/customer/reviews/vendor/{$this->vendor->vendor_public_id}/eligibility"
+        )->assertUnauthorized();
+    }
+
+    public function test_review_eligibility_returns_404_for_unknown_vendor(): void
+    {
+        $this->getJson(
+            '/api/customer/reviews/vendor/UNKNOWN-VENDOR/eligibility',
+            $this->headers
+        )->assertNotFound();
+    }
+
     public function test_can_list_only_reviews_for_a_specific_menu_item(): void
     {
         $category = MenuCategory::create([
