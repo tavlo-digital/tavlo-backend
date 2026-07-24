@@ -92,6 +92,7 @@ class TableCartTest extends TestCase
     {
         $commands = Mockery::mock(CustomerCommandBus::class);
         $commands->shouldReceive('enabled')->once()->andReturnTrue();
+        $commands->shouldReceive('workerAlive')->once()->andReturnTrue();
         $commands->shouldReceive('dispatch')->once()->andReturn([
             'command_id' => '0190f26e-7c87-7def-8e46-111111111111',
             'sequence' => 1,
@@ -109,6 +110,29 @@ class TableCartTest extends TestCase
             ->assertJsonPath('sequence', 1);
 
         $this->assertDatabaseCount('cart_items', 0);
+    }
+
+    public function test_cart_add_falls_back_to_sync_when_no_worker_is_alive(): void
+    {
+        // Async enabled, but no worker draining the queue: the command must NOT
+        // be enqueued (where it would be silently lost). Instead the item is
+        // written synchronously and the normal 201 cart response is returned.
+        $commands = Mockery::mock(CustomerCommandBus::class);
+        $commands->shouldReceive('enabled')->andReturnTrue();
+        $commands->shouldReceive('workerAlive')->andReturnFalse();
+        $commands->shouldReceive('dispatch')->never();
+        $this->app->instance(CustomerCommandBus::class, $commands);
+
+        $this->postJson('/api/customer/cart/items', [
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 2,
+        ], $this->headers)->assertCreated();
+
+        $this->assertDatabaseHas('cart_items', [
+            'table_scan_session_id' => $this->session->id,
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 2,
+        ]);
     }
 
     public function test_customer_get_cache_hits_and_mutations_invalidate_it(): void

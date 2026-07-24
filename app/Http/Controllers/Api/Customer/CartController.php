@@ -40,7 +40,12 @@ class CartController extends Controller
         string $operation,
         array $payload,
     ): ?JsonResponse {
-        if (! $this->commands->enabled() || $request->attributes->get('customer_command_sync')) {
+        // Only queue when the async system is enabled AND a worker is actually
+        // draining the queue. If no worker is alive, fall through to synchronous
+        // processing so the write is not silently lost in an undrained queue.
+        if (! $this->commands->enabled()
+            || ! $this->commands->workerAlive()
+            || $request->attributes->get('customer_command_sync')) {
             return null;
         }
 

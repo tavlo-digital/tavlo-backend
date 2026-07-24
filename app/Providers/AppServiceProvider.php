@@ -2,11 +2,15 @@
 
 namespace App\Providers;
 
+use App\Services\CustomerCommandBus;
 use Carbon\CarbonImmutable;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
+use Illuminate\Queue\Events\JobProcessed;
+use Illuminate\Queue\Events\Looping;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Str;
@@ -29,6 +33,37 @@ class AppServiceProvider extends ServiceProvider
     {
         $this->configureDefaults();
         $this->configureRateLimiting();
+        $this->configureCommandWorkerHeartbeat();
+    }
+
+    /**
+     * Let a queue worker consuming the customer command queue advertise that it
+     * is alive. `Looping` fires on every daemon poll (even while idle), so the
+     * heartbeat stays fresh whenever a worker is up; `JobProcessed` keeps it
+     * fresh during busy bursts. The producer side checks this heartbeat before
+     * enqueuing cart writes and falls back to synchronous processing when no
+     * worker is draining the queue — preventing silently lost cart items.
+     */
+    protected function configureCommandWorkerHeartbeat(): void
+    {
+        $configuredQueue = (string) config('services.customer_commands.queue', 'customercommands');
+
+        $touch = function (?string $eventQueue) use ($configuredQueue): void {
+            if ($eventQueue === null) {
+                return;
+            }
+
+            // A worker may listen to a comma-separated list of queues.
+            $queues = array_map('trim', explode(',', $eventQueue));
+            if (! in_array($configuredQueue, $queues, true)) {
+                return;
+            }
+
+            app(CustomerCommandBus::class)->heartbeat();
+        };
+
+        Event::listen(Looping::class, fn (Looping $event) => $touch($event->queue));
+        Event::listen(JobProcessed::class, fn (JobProcessed $event) => $touch($event->job->getQueue()));
     }
 
     protected function configureRateLimiting(): void

@@ -89,6 +89,13 @@ return [
         'queue' => env('CUSTOMER_COMMANDS_QUEUE', 'customercommands'),
         'status_ttl' => (int) env('CUSTOMER_COMMAND_STATUS_TTL', 3600),
         'barrier_timeout_ms' => (int) env('CUSTOMER_COMMAND_BARRIER_TIMEOUT_MS', 2000),
+        // Liveness guard: a running queue worker refreshes a heartbeat every
+        // poll. If the newest heartbeat is older than max_age seconds we treat
+        // the worker as down and process cart writes synchronously instead of
+        // queuing them into a queue nobody is draining. Set max_age to 0 to
+        // disable the guard (always queue when enabled).
+        'worker_heartbeat_ttl' => (int) env('CUSTOMER_COMMAND_WORKER_HEARTBEAT_TTL', 30),
+        'worker_heartbeat_max_age' => (int) env('CUSTOMER_COMMAND_WORKER_MAX_AGE', 15),
     ],
 
     'staff_commands' => [

@@ -16,6 +16,53 @@ class CustomerCommandBus
         return (bool) config('services.customer_commands.enabled', false);
     }
 
+    /**
+     * Whether a queue worker is currently consuming the customer command queue.
+     *
+     * A running worker refreshes a heartbeat on every poll (see the queue event
+     * listeners in AppServiceProvider). If the newest heartbeat is stale — or
+     * absent — there is nothing draining the queue, so callers should process
+     * the command synchronously rather than enqueue it into a dead queue where
+     * it would be silently lost. Fails safe (returns false) if Redis is
+     * unreachable, since we cannot enqueue reliably in that case either.
+     */
+    public function workerAlive(): bool
+    {
+        $maxAge = (int) config('services.customer_commands.worker_heartbeat_max_age', 15);
+
+        // A non-positive max age disables the liveness guard entirely.
+        if ($maxAge <= 0) {
+            return true;
+        }
+
+        try {
+            $last = Redis::get($this->heartbeatKey());
+        } catch (Throwable $exception) {
+            return false;
+        }
+
+        if (! is_numeric($last)) {
+            return false;
+        }
+
+        return (time() - (int) $last) <= $maxAge;
+    }
+
+    /**
+     * Record that a worker consuming the customer command queue is alive right
+     * now. Called from queue lifecycle events; best-effort.
+     */
+    public function heartbeat(): void
+    {
+        $ttl = max(1, (int) config('services.customer_commands.worker_heartbeat_ttl', 30));
+
+        try {
+            Redis::setex($this->heartbeatKey(), $ttl, (string) time());
+        } catch (Throwable $exception) {
+            // Best-effort: a missed heartbeat only costs a synchronous fallback.
+        }
+    }
+
     /** @param array<string, mixed> $payload */
     public function dispatch(
         Customer $customer,
@@ -117,6 +164,11 @@ class CustomerCommandBus
     public function expectedSequence(int $sessionId): int
     {
         return ((int) (Redis::get($this->completedKey($sessionId)) ?? 0)) + 1;
+    }
+
+    private function heartbeatKey(): string
+    {
+        return 'customer-command:worker:heartbeat';
     }
 
     private function statusKey(string $commandId): string
