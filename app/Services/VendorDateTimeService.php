@@ -70,6 +70,86 @@ class VendorDateTimeService
             ->all();
     }
 
+    /**
+     * Determine whether the vendor is currently open, based on its weekly
+     * business_hours map ({ monday: { open, close, closed }, ... }).
+     *
+     * Correctly handles windows that span midnight: an 18:00–02:00 Friday
+     * window counts as open both late Friday evening and in the early hours
+     * of Saturday. The closing time is treated as exclusive (a venue closing
+     * at 22:00 is not "open" at exactly 22:00).
+     */
+    public function isOpenNow(mixed $businessHours, Vendor|VendorSetting|null $source = null): bool
+    {
+        if (is_string($businessHours)) {
+            $businessHours = json_decode($businessHours, true);
+        }
+
+        if (! is_array($businessHours) || $businessHours === []) {
+            return false;
+        }
+
+        $now = $this->vendorNow($source);
+        $time = $now->format('H:i');
+
+        // Today's window — same-day hours or the opening side of an overnight window.
+        $today = $businessHours[strtolower($now->format('l'))] ?? null;
+        if ($this->windowContains($today, $time, false)) {
+            return true;
+        }
+
+        // Yesterday's overnight window may still be running after midnight.
+        $yesterday = $businessHours[strtolower($now->copy()->subDay()->format('l'))] ?? null;
+
+        return $this->windowContains($yesterday, $time, true);
+    }
+
+    /**
+     * Whether a single day's window contains the given HH:MM time.
+     *
+     * @param  bool  $overnightTailOnly  When true, only the post-midnight tail of
+     *                                    an overnight window matches (used when
+     *                                    evaluating the previous day's hours).
+     */
+    private function windowContains(mixed $window, string $time, bool $overnightTailOnly): bool
+    {
+        if (! is_array($window) || ($window['closed'] ?? false)) {
+            return false;
+        }
+
+        $open = $window['open'] ?? null;
+        $close = $window['close'] ?? null;
+        if (! $open || ! $close) {
+            return false;
+        }
+
+        // Tolerate stored values with seconds ("18:00:00") by comparing HH:MM.
+        $open = substr((string) $open, 0, 5);
+        $close = substr((string) $close, 0, 5);
+
+        // Overnight window (e.g. 18:00–02:00) is split across midnight: the
+        // evening part [open, 24:00) falls on this entry's own day, while the
+        // post-midnight tail [00:00, close) falls on the *following* day and is
+        // therefore matched when this entry is evaluated as "yesterday".
+        if ($close < $open) {
+            return $overnightTailOnly
+                ? $time < $close
+                : $time >= $open;
+        }
+
+        // Degenerate window (open === close) is treated as closed.
+        if ($close === $open) {
+            return false;
+        }
+
+        // Same-day window can never match the previous day's tail.
+        if ($overnightTailOnly) {
+            return false;
+        }
+
+        return $time >= $open && $time < $close;
+    }
+
     public function formatLocalTime(string $time, Vendor|VendorSetting|null $source = null): string
     {
         try {
