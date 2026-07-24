@@ -51,6 +51,7 @@ class RestaurantBrowsingTest extends TestCase
 
         $response->assertOk()
             ->assertJsonPath('data.0.restaurant_name', 'Test Restaurant')
+            ->assertJsonPath('data.0.description', 'A great restaurant')
             ->assertJsonPath('data.0.currency', 'EUR')
             ->assertJsonPath('data.0.payment_methods.on-site', true)
             ->assertJsonPath('data.0.payment_methods.stripe', false);
@@ -165,9 +166,10 @@ class RestaurantBrowsingTest extends TestCase
 
         $response->assertOk()
             ->assertJsonPath('restaurant_name', 'Test Restaurant')
+            ->assertJsonPath('description', 'A great restaurant')
             ->assertJsonPath('payment_methods.on-site', true)
             ->assertJsonPath('payment_methods.stripe', false)
-            ->assertJsonStructure(['vendor_public_id', 'restaurant_name', 'avg_rating', 'review_count']);
+            ->assertJsonStructure(['vendor_public_id', 'restaurant_name', 'description', 'avg_rating', 'review_count']);
     }
 
     public function test_restaurant_about_uses_simplified_payment_methods(): void
