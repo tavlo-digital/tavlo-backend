@@ -477,6 +477,35 @@ class TableCartTest extends TestCase
         ]);
     }
 
+    public function test_add_item_twice_merges_into_one_line_and_sums_quantity(): void
+    {
+        // Adding the same item (same customizations) again must increment the
+        // existing cart line rather than create a second row. This guards the
+        // find-or-increment path that is wrapped in a locked transaction to
+        // stay race-safe under concurrent add-to-cart requests.
+        foreach ([2, 3] as $qty) {
+            $this->withHeaders($this->headers)
+                ->postJson('/api/customer/cart/items', [
+                    'menu_item_id' => $this->menuItem->id,
+                    'quantity' => $qty,
+                ])->assertCreated();
+        }
+
+        $this->assertSame(
+            1,
+            \App\Models\CartItem::where('table_scan_session_id', $this->session->id)
+                ->where('menu_item_id', $this->menuItem->id)
+                ->whereNull('order_id')
+                ->count(),
+        );
+
+        $this->assertDatabaseHas('cart_items', [
+            'table_scan_session_id' => $this->session->id,
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 5,
+        ]);
+    }
+
     public function test_add_item_accepts_customization_options(): void
     {
         $response = $this->withHeaders($this->headers)

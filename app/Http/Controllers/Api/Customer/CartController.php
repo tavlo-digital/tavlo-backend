@@ -326,19 +326,31 @@ class CartController extends Controller
 
         $customizations = $this->normalizeCustomizations($menuItem, $data);
 
-        $existing = CartItem::where('table_scan_session_id', $mySession->id)
-            ->where('menu_item_id', $data['menu_item_id'])
-            ->whereNull('order_id')
-            ->get()
-            ->first(fn (CartItem $cartItem) => $this->cartCustomizationsMatch($cartItem, $customizations));
+        // Find-or-create-or-increment must be serialized: two near-simultaneous
+        // add-to-cart requests for the same session/item could otherwise both
+        // read an empty cart and each insert a duplicate row, or clobber each
+        // other's quantity. Locking the session row funnels concurrent adds for
+        // this session through one at a time; the candidate cart rows are also
+        // locked so the increment reads a committed quantity.
+        $item = DB::transaction(function () use ($mySession, $data, $customizations) {
+            TableScanSession::whereKey($mySession->id)->lockForUpdate()->first();
 
-        if ($existing) {
-            $existing->update([
-                'quantity' => $existing->quantity + ($data['quantity'] ?? 1),
-            ]);
-            $item = $existing;
-        } else {
-            $item = CartItem::create([
+            $existing = CartItem::where('table_scan_session_id', $mySession->id)
+                ->where('menu_item_id', $data['menu_item_id'])
+                ->whereNull('order_id')
+                ->lockForUpdate()
+                ->get()
+                ->first(fn (CartItem $cartItem) => $this->cartCustomizationsMatch($cartItem, $customizations));
+
+            if ($existing) {
+                $existing->update([
+                    'quantity' => $existing->quantity + ($data['quantity'] ?? 1),
+                ]);
+
+                return $existing;
+            }
+
+            return CartItem::create([
                 'table_scan_session_id' => $mySession->id,
                 'client_item_id' => $data['client_item_id'] ?? null,
                 'menu_item_id' => $data['menu_item_id'],
@@ -350,7 +362,7 @@ class CartController extends Controller
                 'removed_items' => $customizations['removed_items'],
                 'selected_modifiers' => $customizations['selected_modifiers'],
             ]);
-        }
+        });
 
         $item->load('menuItem:id,vendor_id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category,paid_addons,free_addons,removable_items,translations');
 
