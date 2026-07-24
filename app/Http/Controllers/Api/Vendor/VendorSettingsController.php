@@ -523,8 +523,14 @@ class VendorSettingsController extends Controller
         $vendor = $this->resolveVendor($vendorId);
         $this->authorizeVendor($request, $vendor);
 
+        // Cover photos must be 16:9 (recommended 1600×900, minimum 1200×675).
         $request->validate([
-            'cover' => ['required', 'file', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
+            'cover' => [
+                'required', 'file', 'mimes:jpg,jpeg,png,webp', 'max:5120',
+                Rule::dimensions()->ratio(16 / 9)->minWidth(1200)->minHeight(675),
+            ],
+        ], [
+            'cover.dimensions' => 'The cover image must have a 16:9 aspect ratio and be at least 1200×675 px (recommended 1600×900 px).',
         ]);
 
         $path = $this->mediaService->uploadCoverPhoto($vendor, $request->file('cover'));
