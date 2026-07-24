@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class SubscriptionPlan extends Model
 {
@@ -50,5 +51,10 @@ class SubscriptionPlan extends Model
     public function subscriptions()
     {
         return $this->hasMany(Subscription::class, 'plan_id');
+    }
+
+    public function localizedTranslations(): HasMany
+    {
+        return $this->hasMany(SubscriptionPlanTranslation::class);
     }
 }

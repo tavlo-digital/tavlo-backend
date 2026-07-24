@@ -196,6 +196,122 @@ class ReviewController extends Controller
         return response()->json(['data' => $data]);
     }
 
+    public function vendorReviewableSessions(Request $request, string $vendorPublicId): JsonResponse
+    {
+        $customer = $request->user();
+
+        $vendor = \App\Models\Vendor::where('vendor_public_id', $vendorPublicId)->firstOrFail();
+
+        $sessions = TableScanSession::where('customer_id', $customer->id)
+            ->where('vendor_id', $vendor->id)
+            ->orderByDesc('id')
+            ->get();
+
+        if ($sessions->isEmpty()) {
+            return response()->json(['data' => []]);
+        }
+
+        $sessionIds = $sessions->pluck('id');
+
+        $allOrders = Order::whereIn('table_scan_session_id', $sessionIds)
+            ->where('customer_id', $customer->id)
+            ->orderBy('id')
+            ->get()
+            ->groupBy('table_scan_session_id');
+
+        $reviewedSessionIds = Review::whereIn('table_scan_session_id', $sessionIds)
+            ->pluck('table_scan_session_id')
+            ->all();
+
+        $data = $sessions->map(function (TableScanSession $session) use ($allOrders, $reviewedSessionIds) {
+            if (in_array($session->id, $reviewedSessionIds, true)) {
+                return null;
+            }
+
+            $orders = $allOrders->get($session->id, collect());
+
+            if ($orders->isEmpty()) {
+                return null;
+            }
+
+            $activeOrders = $orders->filter(fn (Order $order) => ! in_array($order->status, ['cancelled', 'draft']));
+
+            $allPaid = $activeOrders->isNotEmpty() && ! $activeOrders->contains(fn (Order $order) => ! $order->payment_received);
+            $allServed = $activeOrders->isNotEmpty() && ! $activeOrders->contains(fn (Order $order) => ! in_array($order->status, ['served', 'picked_up']));
+
+            if (! $allPaid || ! $allServed) {
+                return null;
+            }
+
+            $cartItems = $this->cartItemsForOrders($orders)->load('menuItem:id,name,image_url');
+
+            return [
+                'session_scan_table_id' => $session->id,
+                'scanned_at' => $session->scanned_at?->toDateTimeString(),
+                'items' => $cartItems->map(fn (CartItem $item) => [
+                    'cart_item_id' => $item->id,
+                    'menu_item_id' => $item->menu_item_id,
+                    'menu_item_name' => $item->menuItem?->name,
+                    'menu_item_image' => $item->menuItem?->image_url,
+                    'quantity' => $item->quantity,
+                ])->values()->all(),
+            ];
+        })->filter()->values()->all();
+
+        return response()->json([
+            'vendor' => [
+                'vendor_public_id' => $vendor->vendor_public_id,
+                'restaurant_name' => $vendor->restaurant_name,
+            ],
+            'data' => $data,
+        ]);
+    }
+
+    public function sessionByOrder(Request $request, string $orderPublicId): JsonResponse
+    {
+        $customer = $request->user();
+
+        $order = Order::where('order_public_id', $orderPublicId)
+            ->where('customer_id', $customer->id)
+            ->firstOrFail();
+
+        if (! $order->table_scan_session_id) {
+            throw ValidationException::withMessages([
+                'order' => ['This order is not linked to a table session.'],
+            ]);
+        }
+
+        $session = TableScanSession::findOrFail($order->table_scan_session_id);
+
+        $orders = Order::where('table_scan_session_id', $session->id)
+            ->where('customer_id', $customer->id)
+            ->orderBy('id')
+            ->get();
+
+        $activeOrders = $orders->filter(fn (Order $o) => ! in_array($o->status, ['cancelled', 'draft']));
+        $cartItems = $this->cartItemsForOrders($orders)->load('menuItem:id,name,image_url');
+
+        $allPaid = $activeOrders->isNotEmpty() && ! $activeOrders->contains(fn (Order $o) => ! $o->payment_received);
+        $allServed = $activeOrders->isNotEmpty() && ! $activeOrders->contains(fn (Order $o) => ! in_array($o->status, ['served', 'picked_up']));
+
+        $existingReview = Review::where('table_scan_session_id', $session->id)->exists();
+
+        return response()->json([
+            'session_scan_table_id' => $session->id,
+            'reviewable' => $allPaid && $allServed && ! $existingReview,
+            'all_paid' => $allPaid,
+            'all_served' => $allServed,
+            'reviewed' => $existingReview,
+            'items' => $cartItems->map(fn (CartItem $item) => [
+                'cart_item_id' => $item->id,
+                'menu_item_id' => $item->menu_item_id,
+                'menu_item_name' => $item->menuItem?->name,
+                'menu_item_image' => $item->menuItem?->image_url,
+                'quantity' => $item->quantity,
+            ])->values()->all(),
+        ]);
+    }
+
     public function sessionOrders(Request $request, int $sessionScanTableId): JsonResponse
     {
         $customer = $request->user();
@@ -365,10 +481,18 @@ class ReviewController extends Controller
         $validated = $request->validate([
             'rating' => ['sometimes', 'integer', 'min:1', 'max:5'],
             'text' => ['nullable', 'string', 'max:2000'],
+            'photos' => ['nullable', 'array', 'max:5'],
+            'photos.*' => ['file', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
+            'remove_photos' => ['nullable', 'array'],
+            'remove_photos.*' => ['string'],
             'items' => ['sometimes', 'array'],
             'items.*.cart_item_id' => ['required_with:items', 'integer'],
             'items.*.rating' => ['required_with:items', 'integer', 'min:1', 'max:5'],
             'items.*.review' => ['nullable', 'string', 'max:1000'],
+            'items.*.photos' => ['nullable', 'array', 'max:5'],
+            'items.*.photos.*' => ['file', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
+            'items.*.remove_photos' => ['nullable', 'array'],
+            'items.*.remove_photos.*' => ['string'],
         ]);
 
         $review = Review::where('review_public_id', $reviewPublicId)
@@ -380,46 +504,106 @@ class ReviewController extends Controller
             ])
             ->firstOrFail();
 
-        DB::transaction(function () use ($review, $validated) {
-            $review->update([
-                'rating' => $validated['rating'] ?? $review->rating,
-                'text' => array_key_exists('text', $validated) ? $validated['text'] : $review->text,
-            ]);
+        $storedPaths = [];
+        $removedPaths = [];
 
-            if (isset($validated['items'])) {
-                $allowedCartItems = $this->cartItemsForReview($review);
-                $cartItemIds = $allowedCartItems->pluck('id')->all();
-                $submittedIds = collect($validated['items'])->pluck('cart_item_id')->all();
-                $invalid = array_diff($submittedIds, $cartItemIds);
-                if (! empty($invalid)) {
+        try {
+            DB::transaction(function () use ($review, $validated, &$storedPaths, &$removedPaths) {
+                $existingImages = $review->images ?? [];
+
+                $removeReviewPhotos = $validated['remove_photos'] ?? [];
+                if (! empty($removeReviewPhotos)) {
+                    $removedPaths = array_merge($removedPaths, array_intersect($existingImages, $removeReviewPhotos));
+                    $existingImages = array_values(array_diff($existingImages, $removeReviewPhotos));
+                }
+
+                $newReviewPhotos = $this->storePhotos(
+                    $validated['photos'] ?? [],
+                    "reviews/{$review->review_public_id}/photos",
+                    $storedPaths
+                );
+
+                $mergedImages = array_merge($existingImages, $newReviewPhotos);
+                if (count($mergedImages) > 5) {
                     throw ValidationException::withMessages([
-                        'items' => ['One or more item IDs do not belong to this session.'],
+                        'photos' => ['A review may have at most 5 photos.'],
                     ]);
                 }
 
-                $cartItemMap = $allowedCartItems->keyBy('id');
-                foreach ($validated['items'] as $itemData) {
-                    $cartItem = $cartItemMap->get($itemData['cart_item_id']);
+                $review->update([
+                    'rating' => $validated['rating'] ?? $review->rating,
+                    'text' => array_key_exists('text', $validated) ? $validated['text'] : $review->text,
+                    'images' => $mergedImages ?: null,
+                ]);
 
-                    ReviewItem::updateOrCreate(
-                        ['review_id' => $review->id, 'cart_item_id' => $cartItem->id],
-                        [
-                            'menu_item_id' => $cartItem->menu_item_id,
-                            'rating' => $itemData['rating'],
-                            'text' => $itemData['review'] ?? null,
-                        ],
+                if (isset($validated['items'])) {
+                    $allowedCartItems = $this->cartItemsForReview($review);
+                    $cartItemIds = $allowedCartItems->pluck('id')->all();
+                    $submittedIds = collect($validated['items'])->pluck('cart_item_id')->all();
+                    $invalid = array_diff($submittedIds, $cartItemIds);
+                    if (! empty($invalid)) {
+                        throw ValidationException::withMessages([
+                            'items' => ['One or more item IDs do not belong to this session.'],
+                        ]);
+                    }
+
+                    $cartItemMap = $allowedCartItems->keyBy('id');
+                    foreach ($validated['items'] as $itemData) {
+                        $cartItem = $cartItemMap->get($itemData['cart_item_id']);
+                        $existingItem = $review->items->firstWhere('cart_item_id', $cartItem->id);
+
+                        $itemExistingImages = $existingItem?->images ?? [];
+
+                        $removeItemPhotos = $itemData['remove_photos'] ?? [];
+                        if (! empty($removeItemPhotos)) {
+                            $removedPaths = array_merge($removedPaths, array_intersect($itemExistingImages, $removeItemPhotos));
+                            $itemExistingImages = array_values(array_diff($itemExistingImages, $removeItemPhotos));
+                        }
+
+                        $newItemPhotos = $this->storePhotos(
+                            $itemData['photos'] ?? [],
+                            "reviews/{$review->review_public_id}/items/{$cartItem->id}",
+                            $storedPaths
+                        );
+
+                        $mergedItemImages = array_merge($itemExistingImages, $newItemPhotos);
+                        if (count($mergedItemImages) > 5) {
+                            throw ValidationException::withMessages([
+                                'items' => ["Item {$cartItem->id} may have at most 5 photos."],
+                            ]);
+                        }
+
+                        ReviewItem::updateOrCreate(
+                            ['review_id' => $review->id, 'cart_item_id' => $cartItem->id],
+                            [
+                                'menu_item_id' => $cartItem->menu_item_id,
+                                'rating' => $itemData['rating'],
+                                'text' => $itemData['review'] ?? null,
+                                'images' => $mergedItemImages ?: null,
+                            ],
+                        );
+                    }
+
+                    $this->recalculateMenuItemRatings(
+                        collect($validated['items'])->pluck('cart_item_id')
+                            ->map(fn ($id) => CartItem::find($id)?->menu_item_id)
+                            ->filter()
+                            ->unique()
+                            ->all()
                     );
                 }
-
-                $this->recalculateMenuItemRatings(
-                    collect($validated['items'])->pluck('cart_item_id')
-                        ->map(fn ($id) => CartItem::find($id)?->menu_item_id)
-                        ->filter()
-                        ->unique()
-                        ->all()
-                );
+            });
+        } catch (Throwable $exception) {
+            foreach ($storedPaths as $path) {
+                $this->media->delete($path);
             }
-        });
+
+            throw $exception;
+        }
+
+        foreach ($removedPaths as $path) {
+            $this->media->delete($path);
+        }
 
         $review->load('items.menuItem:id,name,image_url');
 

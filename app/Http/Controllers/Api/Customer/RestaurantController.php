@@ -1168,7 +1168,9 @@ class RestaurantController extends Controller
             $contact['website'] = $vendor->website;
         }
 
-        $features = array_values(array_filter(array_map(function ($item) {
+        $locale = $this->locales->resolveCustomerLocale($request, $vendor);
+
+        $features = array_values(array_filter(array_map(function ($item) use ($locale) {
             if (is_string($item)) {
                 $title = trim($item);
 
@@ -1182,6 +1184,14 @@ class RestaurantController extends Controller
                 $description = isset($item['description']) && $item['description'] !== ''
                     ? (string) $item['description']
                     : null;
+
+                if ($locale !== 'en' && isset($item['translations'][$locale]) && is_array($item['translations'][$locale])) {
+                    $t = $item['translations'][$locale];
+                    $translatedTitle = isset($t['title']) && trim((string) $t['title']) !== '' ? trim((string) $t['title']) : $title;
+                    $translatedDesc = isset($t['description']) && trim((string) $t['description']) !== '' ? (string) $t['description'] : $description;
+
+                    return ['title' => $translatedTitle, 'description' => $translatedDesc];
+                }
 
                 return ['title' => $title, 'description' => $description];
             }

@@ -14,9 +14,13 @@ import {
     Lock,
 } from 'lucide-react';
 import AdminLayout from '@/layouts/admin-layout';
+import AdminLanguageTabs, { languageDirection } from '@/components/admin-language-tabs';
+import type { AdminLanguage } from '@/components/admin-language-tabs';
 import { useState } from 'react';
 
 type Tab = 'plans' | 'active' | 'overdue';
+
+type Translations = Record<string, { name?: string; description?: string }>;
 
 interface Plan {
     id: number;
@@ -37,6 +41,7 @@ interface Plan {
     featureNames: string[];
     stripeMonthlyPriceId: string | null;
     stripeYearlyPriceId: string | null;
+    translations: Translations;
 }
 
 interface Feature {
@@ -44,6 +49,7 @@ interface Feature {
     name: string;
     description: string;
     requires?: string;
+    translations: Translations;
 }
 
 interface FeatureCategory {
@@ -76,13 +82,14 @@ interface PageProps {
     tab: Tab;
     plans: Plan[];
     features: FeatureCategory[];
+    languages: AdminLanguage[];
     activeSubscriptions: SubscriptionRow[];
     overdueSubscriptions: SubscriptionRow[];
     metrics: Metrics;
 }
 
 export default function SubscriptionsIndex() {
-    const { tab, plans, features, activeSubscriptions, overdueSubscriptions, metrics } = usePage<PageProps>().props;
+    const { tab, plans, features, languages, activeSubscriptions, overdueSubscriptions, metrics } = usePage<PageProps>().props;
     const activeTab = tab || 'plans';
     const [showCreateModal, setShowCreateModal] = useState(false);
     const [editingPlan, setEditingPlan] = useState<Plan | null>(null);
@@ -180,8 +187,8 @@ export default function SubscriptionsIndex() {
                 {activeTab === 'overdue' && <SubscriptionsTable rows={overdueSubscriptions} />}
             </div>
 
-            {showCreateModal && <CreatePlanModal plans={plans} featureCategories={features} onClose={() => setShowCreateModal(false)} />}
-            {editingPlan && <EditPlanModal plan={editingPlan} plans={plans} featureCategories={features} onClose={() => setEditingPlan(null)} />}
+            {showCreateModal && <CreatePlanModal plans={plans} featureCategories={features} languages={languages} onClose={() => setShowCreateModal(false)} />}
+            {editingPlan && <EditPlanModal plan={editingPlan} plans={plans} featureCategories={features} languages={languages} onClose={() => setEditingPlan(null)} />}
         </AdminLayout>
     );
 }
@@ -348,14 +355,24 @@ function FeatureCheckboxList({
     onToggle,
     inheritedFeatures = [],
     inheritedFrom,
+    selectedLang = 'en',
+    languages,
+    featureTranslations,
+    onFeatureTranslationChange,
 }: {
     featureCategories: FeatureCategory[];
     selectedFeatures: Set<string>;
     onToggle: (name: string) => void;
     inheritedFeatures?: string[];
     inheritedFrom?: string;
+    selectedLang?: string;
+    languages?: AdminLanguage[];
+    featureTranslations?: Record<number, Translations>;
+    onFeatureTranslationChange?: (featureId: number, lang: string, field: string, value: string) => void;
 }) {
     const count = selectedFeatures.size;
+    const showTranslations = selectedLang !== 'en' && languages && featureTranslations && onFeatureTranslationChange;
+    const activeLang = languages?.find((l) => l.code === selectedLang);
 
     return (
         <div>
@@ -375,34 +392,62 @@ function FeatureCheckboxList({
                                 return (
                                     <div
                                         key={feature.name}
-                                        className={`flex items-start gap-3 rounded-lg p-2 ${
+                                        className={`rounded-lg p-2 ${
                                             isInherited ? 'bg-gray-50' : 'hover:bg-gray-50'
                                         }`}
                                     >
-                                        <input
-                                            type="checkbox"
-                                            className="checkbox-custom mt-1"
-                                            checked={isChecked || isInherited}
-                                            disabled={isInherited}
-                                            onChange={() => !isInherited && onToggle(feature.name)}
-                                        />
-                                        <div className="flex-1">
-                                            <div className="flex items-center gap-2">
-                                                <span className={`text-sm font-medium ${isInherited ? 'text-gray-600' : 'text-gray-900'}`}>
-                                                    {feature.name}
-                                                </span>
-                                                {isInherited && inheritedFrom && (
-                                                    <span className="flex items-center gap-1 rounded bg-gray-200 px-2 py-0.5 text-xs text-gray-700">
-                                                        <Lock className="h-3 w-3" />
-                                                        Included from {inheritedFrom}
+                                        <div className="flex items-start gap-3">
+                                            <input
+                                                type="checkbox"
+                                                className="checkbox-custom mt-1"
+                                                checked={isChecked || isInherited}
+                                                disabled={isInherited}
+                                                onChange={() => !isInherited && onToggle(feature.name)}
+                                            />
+                                            <div className="flex-1">
+                                                <div className="flex items-center gap-2">
+                                                    <span className={`text-sm font-medium ${isInherited ? 'text-gray-600' : 'text-gray-900'}`}>
+                                                        {feature.name}
                                                     </span>
+                                                    {isInherited && inheritedFrom && (
+                                                        <span className="flex items-center gap-1 rounded bg-gray-200 px-2 py-0.5 text-xs text-gray-700">
+                                                            <Lock className="h-3 w-3" />
+                                                            Included from {inheritedFrom}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <p className="mt-0.5 text-xs text-gray-500">{feature.description}</p>
+                                                {feature.requires && (
+                                                    <p className="mt-1 text-xs text-blue-600">Requires: {feature.requires}</p>
                                                 )}
                                             </div>
-                                            <p className="mt-0.5 text-xs text-gray-500">{feature.description}</p>
-                                            {feature.requires && (
-                                                <p className="mt-1 text-xs text-blue-600">Requires: {feature.requires}</p>
-                                            )}
                                         </div>
+                                        {showTranslations && (
+                                            <div className="ml-8 mt-2 grid grid-cols-2 gap-2">
+                                                <div>
+                                                    <label className="text-xs text-gray-500">Name ({activeLang?.name})</label>
+                                                    <input
+                                                        type="text"
+                                                        dir={languageDirection(activeLang)}
+                                                        className="mt-0.5 flex h-7 w-full rounded-md border border-gray-200 bg-white px-2 text-xs text-gray-900 placeholder:text-gray-400 focus:border-purple-500 focus:ring-1 focus:ring-purple-500/20 focus:outline-none"
+                                                        placeholder={feature.name}
+                                                        value={featureTranslations[feature.id]?.[selectedLang]?.name ?? ''}
+                                                        onChange={(e) => onFeatureTranslationChange(feature.id, selectedLang, 'name', e.target.value)}
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label className="text-xs text-gray-500">Description ({activeLang?.name})</label>
+                                                    <input
+                                                        type="text"
+                                                        dir={languageDirection(activeLang)}
+                                                        className="mt-0.5 flex h-7 w-full rounded-md border border-gray-200 bg-white px-2 text-xs text-gray-900 placeholder:text-gray-400 focus:border-purple-500 focus:ring-1 focus:ring-purple-500/20 focus:outline-none"
+                                                        placeholder={feature.description}
+                                                        value={featureTranslations[feature.id]?.[selectedLang]?.description ?? ''}
+                                                        onChange={(e) => onFeatureTranslationChange(feature.id, selectedLang, 'description', e.target.value)}
+                                                    />
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
                                 );
                             })}
@@ -414,7 +459,7 @@ function FeatureCheckboxList({
     );
 }
 
-function CreatePlanModal({ plans, featureCategories, onClose }: { plans: Plan[]; featureCategories: FeatureCategory[]; onClose: () => void }) {
+function CreatePlanModal({ plans, featureCategories, languages, onClose }: { plans: Plan[]; featureCategories: FeatureCategory[]; languages: AdminLanguage[]; onClose: () => void }) {
     const [name, setName] = useState('');
     const [monthlyPrice, setMonthlyPrice] = useState(0);
     const [yearlyPrice, setYearlyPrice] = useState(0);
@@ -425,6 +470,11 @@ function CreatePlanModal({ plans, featureCategories, onClose }: { plans: Plan[];
     const [stripeYearlyPriceId, setStripeYearlyPriceId] = useState('');
     const [selectedFeatures, setSelectedFeatures] = useState<Set<string>>(new Set());
     const [processing, setProcessing] = useState(false);
+    const [selectedLang, setSelectedLang] = useState('en');
+    const [translations, setTranslations] = useState<Translations>(
+        Object.fromEntries(languages.map((l) => [l.code, { name: '', description: '' }]))
+    );
+    const [featureTranslations, setFeatureTranslations] = useState<Record<number, Translations>>({});
 
     const allFeaturesByName = featureCategories.flatMap((c) => c.features);
 
@@ -438,6 +488,16 @@ function CreatePlanModal({ plans, featureCategories, onClose }: { plans: Plan[];
             }
             return next;
         });
+    };
+
+    const setTranslation = (lang: string, field: string, value: string) => {
+        if (lang === 'en') {
+            if (field === 'name') setName(value);
+        }
+        setTranslations((prev) => ({
+            ...prev,
+            [lang]: { ...(prev[lang] ?? {}), [field]: value },
+        }));
     };
 
     const handleSubmit = () => {
@@ -456,11 +516,15 @@ function CreatePlanModal({ plans, featureCategories, onClose }: { plans: Plan[];
             stripe_monthly_price_id: stripeMonthlyPriceId || null,
             stripe_yearly_price_id: stripeYearlyPriceId || null,
             feature_ids: featureIds,
+            translations,
+            feature_translations: featureTranslations,
         }, {
             onFinish: () => setProcessing(false),
             onSuccess: () => onClose(),
         });
     };
+
+    const activeLang = languages.find((l) => l.code === selectedLang);
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
@@ -472,15 +536,24 @@ function CreatePlanModal({ plans, featureCategories, onClose }: { plans: Plan[];
                     </button>
                 </div>
                 <div className="space-y-6">
+                    {/* Language Tabs */}
+                    <AdminLanguageTabs
+                        languages={languages}
+                        activeLanguage={selectedLang}
+                        onLanguageChange={setSelectedLang}
+                        values={Object.fromEntries(languages.map((l) => [l.code, l.code === 'en' ? name : translations[l.code]?.name]))}
+                    />
+
                     {/* Plan Name */}
                     <div>
-                        <label className="mb-2 block text-sm font-medium text-gray-900">Plan Name</label>
+                        <label className="mb-2 block text-sm font-medium text-gray-900">Plan Name ({activeLang?.name ?? selectedLang})</label>
                         <input
                             type="text"
+                            dir={languageDirection(activeLang)}
                             className="flex h-9 w-full rounded-md border border-gray-300 bg-white px-3 py-1 text-sm text-gray-900 placeholder:text-gray-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 focus:outline-none"
                             placeholder="Premium"
-                            value={name}
-                            onChange={(e) => setName(e.target.value)}
+                            value={selectedLang === 'en' ? name : (translations[selectedLang]?.name ?? '')}
+                            onChange={(e) => setTranslation(selectedLang, 'name', e.target.value)}
                         />
                     </div>
 
@@ -577,7 +650,23 @@ function CreatePlanModal({ plans, featureCategories, onClose }: { plans: Plan[];
                     </div>
 
                     {/* Features */}
-                    <FeatureCheckboxList featureCategories={featureCategories} selectedFeatures={selectedFeatures} onToggle={toggleFeature} />
+                    <FeatureCheckboxList
+                        featureCategories={featureCategories}
+                        selectedFeatures={selectedFeatures}
+                        onToggle={toggleFeature}
+                        selectedLang={selectedLang}
+                        languages={languages}
+                        featureTranslations={featureTranslations}
+                        onFeatureTranslationChange={(fId, lang, field, value) => {
+                            setFeatureTranslations((prev) => ({
+                                ...prev,
+                                [fId]: {
+                                    ...(prev[fId] ?? {}),
+                                    [lang]: { ...(prev[fId]?.[lang] ?? {}), [field]: value },
+                                },
+                            }));
+                        }}
+                    />
 
                     {/* Most Popular */}
                     <label className="flex items-center gap-2">
@@ -610,7 +699,7 @@ function CreatePlanModal({ plans, featureCategories, onClose }: { plans: Plan[];
     );
 }
 
-function EditPlanModal({ plan, plans, featureCategories, onClose }: { plan: Plan; plans: Plan[]; featureCategories: FeatureCategory[]; onClose: () => void }) {
+function EditPlanModal({ plan, plans, featureCategories, languages, onClose }: { plan: Plan; plans: Plan[]; featureCategories: FeatureCategory[]; languages: AdminLanguage[]; onClose: () => void }) {
     const [name, setName] = useState(plan.name);
     const [monthlyPrice, setMonthlyPrice] = useState(plan.monthlyPrice);
     const [yearlyPrice, setYearlyPrice] = useState(plan.yearlyPrice);
@@ -622,6 +711,34 @@ function EditPlanModal({ plan, plans, featureCategories, onClose }: { plan: Plan
         new Set(plan.featureNames)
     );
     const [processing, setProcessing] = useState(false);
+    const [selectedLang, setSelectedLang] = useState('en');
+    const [translations, setTranslations] = useState<Translations>(() => {
+        const init: Translations = {};
+        for (const l of languages) {
+            init[l.code] = {
+                name: plan.translations?.[l.code]?.name ?? '',
+                description: plan.translations?.[l.code]?.description ?? '',
+            };
+        }
+        return init;
+    });
+    const [featureTranslations, setFeatureTranslations] = useState<Record<number, Translations>>(() => {
+        const init: Record<number, Translations> = {};
+        for (const cat of featureCategories) {
+            for (const f of cat.features) {
+                if (f.translations && Object.keys(f.translations).length > 0) {
+                    init[f.id] = {};
+                    for (const l of languages) {
+                        init[f.id][l.code] = {
+                            name: f.translations[l.code]?.name ?? '',
+                            description: f.translations[l.code]?.description ?? '',
+                        };
+                    }
+                }
+            }
+        }
+        return init;
+    });
 
     const allFeaturesByName = featureCategories.flatMap((c) => c.features);
 
@@ -656,6 +773,16 @@ function EditPlanModal({ plan, plans, featureCategories, onClose }: { plan: Plan
 
     const allSelected = new Set([...selectedFeatures, ...computedInheritedFeatures]);
 
+    const setTranslation = (lang: string, field: string, value: string) => {
+        if (lang === 'en') {
+            if (field === 'name') setName(value);
+        }
+        setTranslations((prev) => ({
+            ...prev,
+            [lang]: { ...(prev[lang] ?? {}), [field]: value },
+        }));
+    };
+
     const handleSubmit = () => {
         const featureIds = allFeaturesByName
             .filter((f) => selectedFeatures.has(f.name))
@@ -672,11 +799,15 @@ function EditPlanModal({ plan, plans, featureCategories, onClose }: { plan: Plan
             stripe_monthly_price_id: stripeMonthlyPriceId || null,
             stripe_yearly_price_id: stripeYearlyPriceId || null,
             feature_ids: featureIds,
+            translations,
+            feature_translations: featureTranslations,
         }, {
             onFinish: () => setProcessing(false),
             onSuccess: () => onClose(),
         });
     };
+
+    const activeLang = languages.find((l) => l.code === selectedLang);
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
@@ -702,14 +833,23 @@ function EditPlanModal({ plan, plans, featureCategories, onClose }: { plan: Plan
                 )}
 
                 <div className="space-y-6">
+                    {/* Language Tabs */}
+                    <AdminLanguageTabs
+                        languages={languages}
+                        activeLanguage={selectedLang}
+                        onLanguageChange={setSelectedLang}
+                        values={Object.fromEntries(languages.map((l) => [l.code, l.code === 'en' ? name : translations[l.code]?.name]))}
+                    />
+
                     {/* Plan Name */}
                     <div>
-                        <label className="mb-2 block text-sm font-medium text-gray-900">Plan Name</label>
+                        <label className="mb-2 block text-sm font-medium text-gray-900">Plan Name ({activeLang?.name ?? selectedLang})</label>
                         <input
                             type="text"
+                            dir={languageDirection(activeLang)}
                             className="flex h-9 w-full rounded-md border border-gray-300 bg-white px-3 py-1 text-sm text-gray-900 placeholder:text-gray-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 focus:outline-none"
-                            value={name}
-                            onChange={(e) => setName(e.target.value)}
+                            value={selectedLang === 'en' ? name : (translations[selectedLang]?.name ?? '')}
+                            onChange={(e) => setTranslation(selectedLang, 'name', e.target.value)}
                         />
                     </div>
 
@@ -793,6 +933,18 @@ function EditPlanModal({ plan, plans, featureCategories, onClose }: { plan: Plan
                         onToggle={toggleFeature}
                         inheritedFeatures={computedInheritedFeatures}
                         inheritedFrom={inheritedFrom}
+                        selectedLang={selectedLang}
+                        languages={languages}
+                        featureTranslations={featureTranslations}
+                        onFeatureTranslationChange={(fId, lang, field, value) => {
+                            setFeatureTranslations((prev) => ({
+                                ...prev,
+                                [fId]: {
+                                    ...(prev[fId] ?? {}),
+                                    [lang]: { ...(prev[fId]?.[lang] ?? {}), [field]: value },
+                                },
+                            }));
+                        }}
                     />
 
                     {/* Most Popular */}

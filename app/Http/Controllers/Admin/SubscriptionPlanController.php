@@ -7,6 +7,7 @@ use App\Models\Feature;
 use App\Models\PlanFeature;
 use App\Models\Subscription;
 use App\Models\SubscriptionPlan;
+use App\Services\LocaleService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -16,12 +17,15 @@ use Inertia\Response;
 
 class SubscriptionPlanController extends Controller
 {
+    public function __construct(
+        private readonly LocaleService $locales,
+    ) {}
     public function index(Request $request): Response
     {
         $tab = $request->route('tab', 'plans');
 
         $plans = SubscriptionPlan::query()
-            ->with(['parentPlan:id,name', 'features'])
+            ->with(['parentPlan:id,name', 'features.localizedTranslations', 'localizedTranslations'])
             ->withCount(['subscriptions as active_subs_count' => function ($q) {
                 $q->where('status', 'active');
             }])
@@ -56,11 +60,17 @@ class SubscriptionPlanController extends Controller
                     'featureNames' => $directFeatures,
                     'stripeMonthlyPriceId' => $plan->stripe_monthly_price_id,
                     'stripeYearlyPriceId' => $plan->stripe_yearly_price_id,
+                    'translations' => $this->locales->translationMap(
+                        $plan,
+                        'localizedTranslations',
+                        ['name', 'description'],
+                        ['name' => $plan->name, 'description' => $plan->description ?? '']
+                    ),
                 ];
             });
 
         $features = Feature::query()
-            ->with('requiredFeature:id,name')
+            ->with(['requiredFeature:id,name', 'localizedTranslations'])
             ->orderBy('category')
             ->orderBy('name')
             ->get()
@@ -73,6 +83,12 @@ class SubscriptionPlanController extends Controller
                         'name' => $f->name,
                         'description' => $f->description,
                         'requires' => $f->requiredFeature?->name,
+                        'translations' => $this->locales->translationMap(
+                            $f,
+                            'localizedTranslations',
+                            ['name', 'description'],
+                            ['name' => $f->name, 'description' => $f->description ?? '']
+                        ),
                     ])->values()->toArray(),
                 ];
             })->values()->toArray();
@@ -131,6 +147,7 @@ class SubscriptionPlanController extends Controller
             'tab' => $tab,
             'plans' => $plans,
             'features' => $features,
+            'languages' => $this->locales->languageOptions(),
             'activeSubscriptions' => $activeSubscriptions,
             'overdueSubscriptions' => $overdueSubscriptions,
             'metrics' => [
@@ -157,6 +174,15 @@ class SubscriptionPlanController extends Controller
             'stripe_yearly_price_id' => ['nullable', 'string', 'max:255'],
             'feature_ids' => ['array'],
             'feature_ids.*' => ['exists:features,id'],
+            'translations' => ['nullable', 'array'],
+            'translations.*' => ['array'],
+            'translations.*.name' => ['nullable', 'string', 'max:255'],
+            'translations.*.description' => ['nullable', 'string'],
+            'feature_translations' => ['nullable', 'array'],
+            'feature_translations.*' => ['array'],
+            'feature_translations.*.*' => ['array'],
+            'feature_translations.*.*.name' => ['nullable', 'string', 'max:255'],
+            'feature_translations.*.*.description' => ['nullable', 'string'],
         ]);
 
         DB::transaction(function () use ($validated) {
@@ -171,6 +197,12 @@ class SubscriptionPlanController extends Controller
                 'stripe_monthly_price_id' => $validated['stripe_monthly_price_id'] ?? null,
                 'stripe_yearly_price_id' => $validated['stripe_yearly_price_id'] ?? null,
             ]);
+
+            $translations = $validated['translations'] ?? [];
+            $translations['en'] = ['name' => $validated['name'], 'description' => $validated['description'] ?? ''];
+            $this->locales->syncTranslations($plan, 'localizedTranslations', $translations, ['name', 'description']);
+
+            $this->syncFeatureTranslations($validated['feature_translations'] ?? []);
 
             $featureIds = $validated['feature_ids'] ?? [];
 
@@ -216,6 +248,15 @@ class SubscriptionPlanController extends Controller
             'stripe_yearly_price_id' => ['nullable', 'string', 'max:255'],
             'feature_ids' => ['array'],
             'feature_ids.*' => ['exists:features,id'],
+            'translations' => ['nullable', 'array'],
+            'translations.*' => ['array'],
+            'translations.*.name' => ['nullable', 'string', 'max:255'],
+            'translations.*.description' => ['nullable', 'string'],
+            'feature_translations' => ['nullable', 'array'],
+            'feature_translations.*' => ['array'],
+            'feature_translations.*.*' => ['array'],
+            'feature_translations.*.*.name' => ['nullable', 'string', 'max:255'],
+            'feature_translations.*.*.description' => ['nullable', 'string'],
         ]);
 
         DB::transaction(function () use ($plan, $validated) {
@@ -262,6 +303,12 @@ class SubscriptionPlanController extends Controller
 
             // Cascade inherited features to child plans
             $this->cascadeInheritedFeatures($plan);
+
+            $translations = $validated['translations'] ?? [];
+            $translations['en'] = ['name' => $validated['name'], 'description' => $validated['description'] ?? ''];
+            $this->locales->syncTranslations($plan, 'localizedTranslations', $translations, ['name', 'description']);
+
+            $this->syncFeatureTranslations($validated['feature_translations'] ?? []);
         });
 
         return redirect()->route('admin.subscriptions.plans')
@@ -350,6 +397,18 @@ class SubscriptionPlanController extends Controller
 
             // Recurse to grandchildren
             $this->cascadeInheritedFeatures($child);
+        }
+    }
+
+    private function syncFeatureTranslations(array $featureTranslations): void
+    {
+        foreach ($featureTranslations as $featureId => $translations) {
+            $feature = Feature::find($featureId);
+            if (! $feature) {
+                continue;
+            }
+            $translations['en'] = ['name' => $feature->name, 'description' => $feature->description ?? ''];
+            $this->locales->syncTranslations($feature, 'localizedTranslations', $translations, ['name', 'description']);
         }
     }
 

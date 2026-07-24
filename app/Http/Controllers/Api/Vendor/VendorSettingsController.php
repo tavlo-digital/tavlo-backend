@@ -143,6 +143,10 @@ class VendorSettingsController extends Controller
             'restaurantFeatures' => ['sometimes', 'nullable', 'array'],
             'restaurantFeatures.*.title' => ['required', 'string', 'max:100'],
             'restaurantFeatures.*.description' => ['nullable', 'string', 'max:500'],
+            'restaurantFeatures.*.translations' => ['nullable', 'array'],
+            'restaurantFeatures.*.translations.*' => ['array'],
+            'restaurantFeatures.*.translations.*.title' => ['nullable', 'string', 'max:100'],
+            'restaurantFeatures.*.translations.*.description' => ['nullable', 'string', 'max:500'],
             'showPhonePublic' => ['sometimes', 'nullable', 'boolean'],
             'showEmailPublic' => ['sometimes', 'nullable', 'boolean'],
             'showWebsitePublic' => ['sometimes', 'nullable', 'boolean'],
@@ -274,7 +278,7 @@ class VendorSettingsController extends Controller
                 ->all();
         }
 
-        // Normalise restaurant_features to a list of { title, description } objects.
+        // Normalise restaurant_features to a list of { title, description, translations? } objects.
         if (array_key_exists('restaurant_features', $settingsData)) {
             $features = $settingsData['restaurant_features'];
             if (! is_array($features)) {
@@ -295,7 +299,30 @@ class VendorSettingsController extends Controller
                             ? (string) $item['description']
                             : null;
 
-                        return ['title' => $title, 'description' => $description];
+                        $entry = ['title' => $title, 'description' => $description];
+
+                        if (isset($item['translations']) && is_array($item['translations'])) {
+                            $translations = [];
+                            foreach ($item['translations'] as $lang => $values) {
+                                if (! is_array($values)) {
+                                    continue;
+                                }
+                                $t = array_filter([
+                                    'title' => isset($values['title']) ? trim((string) $values['title']) : null,
+                                    'description' => isset($values['description']) && $values['description'] !== ''
+                                        ? (string) $values['description']
+                                        : null,
+                                ], fn ($v) => $v !== null && $v !== '');
+                                if ($t !== []) {
+                                    $translations[$lang] = $t;
+                                }
+                            }
+                            if ($translations !== []) {
+                                $entry['translations'] = $translations;
+                            }
+                        }
+
+                        return $entry;
                     }
 
                     return null;

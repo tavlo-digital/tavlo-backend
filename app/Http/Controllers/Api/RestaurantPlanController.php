@@ -5,20 +5,28 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Feature;
 use App\Models\SubscriptionPlan;
+use App\Services\LocaleService;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 
 class RestaurantPlanController extends Controller
 {
-    public function index(): JsonResponse
+    public function __construct(
+        private readonly LocaleService $locales,
+    ) {}
+
+    public function index(Request $request): JsonResponse
     {
+        $locale = $this->locales->resolveHeaderLocale($request);
+
         $vendorFrontendUrl = rtrim((string) config('app.vendor_frontend_url'), '/');
         $plans = SubscriptionPlan::query()
             ->where('is_active', true)
             ->with(['features' => function ($query) {
-                $query->orderBy('category')->orderBy('name');
-            }])
+                $query->with('localizedTranslations')->orderBy('category')->orderBy('name');
+            }, 'localizedTranslations'])
             ->orderBy('monthly_price')
             ->orderBy('id')
             ->get();
@@ -43,12 +51,13 @@ class RestaurantPlanController extends Controller
                         'yearlyBadge' => 'Save up to 30%',
                     ],
                 ],
-                'plans' => $plans->map(function (SubscriptionPlan $plan) use ($planKeys, $vendorFrontendUrl) {
+                'plans' => $plans->map(function (SubscriptionPlan $plan) use ($planKeys, $vendorFrontendUrl, $locale) {
                     $yearlyPrice = (float) $plan->yearly_price;
 
                     return [
                         'id' => $planKeys[$plan->id],
-                        'name' => $plan->name,
+                        'name' => $this->translatedField($plan, 'name', $locale),
+                        'description' => $this->translatedField($plan, 'description', $locale),
                         'link' => "{$vendorFrontendUrl}/activate?plan={$plan->id}",
                         'prices' => [
                             'monthly' => [
@@ -63,7 +72,7 @@ class RestaurantPlanController extends Controller
                                 'monthlyEquivalent' => round($yearlyPrice / 12, 2),
                             ],
                         ],
-                        'features' => $plan->features->pluck('name')->values()->all(),
+                        'features' => $plan->features->map(fn (Feature $f) => $this->translatedField($f, 'name', $locale))->values()->all(),
                     ];
                 })->values(),
                 'logoSection' => [
@@ -76,10 +85,10 @@ class RestaurantPlanController extends Controller
                 'comparison' => [
                     'title' => 'Compare Plans',
                     'plans' => $plans->map(fn (SubscriptionPlan $plan) => $planKeys[$plan->id])->values(),
-                    'features' => $comparisonFeatures->map(function (Feature $feature) use ($plans, $planKeys) {
+                    'features' => $comparisonFeatures->map(function (Feature $feature) use ($plans, $planKeys, $locale) {
                         return [
                             'id' => Str::slug($feature->name) ?: "feature-{$feature->id}",
-                            'label' => $feature->name,
+                            'label' => $this->translatedField($feature, 'name', $locale),
                             'availability' => $plans->mapWithKeys(fn (SubscriptionPlan $plan) => [
                                 $planKeys[$plan->id] => $plan->features->contains('id', $feature->id),
                             ])->all(),
@@ -88,6 +97,18 @@ class RestaurantPlanController extends Controller
                 ],
             ],
         ]);
+    }
+
+    private function translatedField($model, string $field, string $locale): mixed
+    {
+        if ($locale !== 'en') {
+            $value = $model->localizedTranslations->firstWhere('language', $locale)?->{$field};
+            if ($value !== null && $value !== '') {
+                return $value;
+            }
+        }
+
+        return $model->{$field};
     }
 
     private function planKeys(Collection $plans): array

@@ -1,0 +1,16 @@
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+
+class FeatureTranslation extends Model
+{
+    protected $fillable = ['feature_id', 'language', 'name', 'description'];
+
+    public function feature(): BelongsTo
+    {
+        return $this->belongsTo(Feature::class);
+    }
+}
