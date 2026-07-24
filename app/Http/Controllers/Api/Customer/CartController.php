@@ -43,9 +43,12 @@ class CartController extends Controller
         // Only queue when the async system is enabled AND a worker is actually
         // draining the queue. If no worker is alive, fall through to synchronous
         // processing so the write is not silently lost in an undrained queue.
+        // The sync flag is checked before workerAlive() so requests already
+        // running synchronously (e.g. the queue worker re-invoking this action)
+        // skip the redundant Redis heartbeat lookup.
         if (! $this->commands->enabled()
-            || ! $this->commands->workerAlive()
-            || $request->attributes->get('customer_command_sync')) {
+            || $request->attributes->get('customer_command_sync')
+            || ! $this->commands->workerAlive()) {
             return null;
         }
 
@@ -169,6 +172,9 @@ class CartController extends Controller
         $sessions = TableScanSession::with([
             'customer:id,first_name,last_name',
             'cartItems.menuItem:id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category,paid_addons,free_addons,removable_items,translations',
+            // Eager-load item name translations so menuItemName() resolves from
+            // memory instead of firing one query per cart item (N+1).
+            'cartItems.menuItem.itemTranslations:id,menu_item_id,language,name',
             'restaurantTable:id,number,name',
             'vendor:id,vendor_public_id,restaurant_name,country',
             'vendor.vendorSetting:id,vendor_id,service_fee_rate,supported_languages',
@@ -369,7 +375,10 @@ class CartController extends Controller
             ]);
         });
 
-        $item->load('menuItem:id,vendor_id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category,paid_addons,free_addons,removable_items,translations');
+        $item->load([
+            'menuItem:id,vendor_id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category,paid_addons,free_addons,removable_items,translations',
+            'menuItem.itemTranslations:id,menu_item_id,language,name',
+        ]);
 
         $customerName = $this->customerName($request->user());
         $vendor = $mySession->vendor;
@@ -485,7 +494,10 @@ class CartController extends Controller
         }
 
         $item->update($updates);
-        $item->load('menuItem:id,vendor_id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category,paid_addons,free_addons,removable_items,translations');
+        $item->load([
+            'menuItem:id,vendor_id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category,paid_addons,free_addons,removable_items,translations',
+            'menuItem.itemTranslations:id,menu_item_id,language,name',
+        ]);
 
         $customerName = $this->customerName($request->user());
         $vendor = $mySession->vendor;
@@ -607,6 +619,9 @@ class CartController extends Controller
             'customer:id,first_name,last_name',
             'restaurantTable:id,number,name',
             'cartItems.menuItem:id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category,paid_addons,free_addons,removable_items,translations',
+            // Eager-load item name translations so menuItemName() resolves from
+            // memory instead of firing one query per cart item (N+1).
+            'cartItems.menuItem.itemTranslations:id,menu_item_id,language,name',
             'vendor:id,vendor_public_id,restaurant_name,country',
             'vendor.vendorSetting:id,vendor_id,service_fee_rate,supported_languages',
         ])
