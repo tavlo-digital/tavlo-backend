@@ -142,6 +142,14 @@ class CustomerCommandBus
 
     public function waitForSession(int $sessionId): bool
     {
+        // Only a live worker can drain the queue and clear the pending counter.
+        // If none is draining it, cart writes were (or will be) applied
+        // synchronously, and blocking on a possibly-stale pending counter would
+        // wedge order confirmation for the whole status TTL. Proceed instead.
+        if (! $this->workerAlive()) {
+            return true;
+        }
+
         $timeoutMs = max(0, (int) config('services.customer_commands.barrier_timeout_ms', 2000));
         $deadline = microtime(true) + ($timeoutMs / 1000);
 
