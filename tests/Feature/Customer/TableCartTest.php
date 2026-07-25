@@ -8,6 +8,7 @@ use App\Models\CartItem;
 use App\Models\Customer;
 use App\Models\MenuCategory;
 use App\Models\MenuItem;
+use App\Models\MenuItemTranslation;
 use App\Models\ModifierGroup;
 use App\Models\ModifierOption;
 use App\Models\Notification;
@@ -86,6 +87,53 @@ class TableCartTest extends TestCase
             'status' => 'active',
             'scanned_at' => now(),
         ]);
+    }
+
+    public function test_cart_payload_eager_loads_name_translations_without_n_plus_one(): void
+    {
+        $category = MenuCategory::create([
+            'vendor_id' => $this->vendor->id,
+            'name' => 'Mains',
+            'slug' => 'mains-'.$this->vendor->id,
+        ]);
+
+        // Several distinct items in the cart. Each historically triggered its own
+        // itemTranslations lookup while the cart payload was built (N+1).
+        foreach (range(1, 4) as $i) {
+            $menuItem = MenuItem::create([
+                'vendor_id' => $this->vendor->id,
+                'menu_category_id' => $category->id,
+                'name' => "Dish {$i}",
+                'price' => 5 + $i,
+                'vat_rate' => 20,
+            ]);
+            MenuItemTranslation::create([
+                'menu_item_id' => $menuItem->id,
+                'language' => 'de',
+                'name' => "Gericht {$i}",
+            ]);
+            CartItem::create([
+                'table_scan_session_id' => $this->session->id,
+                'menu_item_id' => $menuItem->id,
+                'quantity' => 1,
+            ]);
+        }
+
+        $translationQueries = 0;
+        DB::listen(function ($query) use (&$translationQueries) {
+            if (str_contains($query->sql, 'menu_item_translations')) {
+                $translationQueries++;
+            }
+        });
+
+        $this->getJson('/api/customer/cart', $this->headers)->assertOk();
+
+        // A single eager-load query for all items, not one per cart item.
+        $this->assertLessThanOrEqual(
+            1,
+            $translationQueries,
+            "Expected item name translations to be eager-loaded in one query, got {$translationQueries}."
+        );
     }
 
     public function test_cart_add_can_be_accepted_as_an_ordered_redis_command(): void
