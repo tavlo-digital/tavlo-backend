@@ -65,6 +65,7 @@ Route::middleware(['auth:vendor,team_member', 'vendor.staff.access'])->group(fun
     Route::get('menu/category-options', [MenuCategoryController::class, 'categoryOptions'])->name('menu.categoryOptions');
     Route::get('menu/categories', [MenuCategoryController::class, 'index'])->name('menu.categories.index');
     Route::post('menu/categories', [MenuCategoryController::class, 'store'])->name('menu.categories.store');
+    Route::post('menu/categories/reorder', [MenuCategoryController::class, 'reorder'])->name('menu.categories.reorder');
     Route::patch('menu/categories/{categoryId}', [MenuCategoryController::class, 'update'])->name('menu.categories.update');
     Route::delete('menu/categories/{categoryId}', [MenuCategoryController::class, 'destroy'])->name('menu.categories.destroy');
     Route::get('menu/tax-categories', [MenuCategoryController::class, 'taxCategories'])->name('menu.taxCategories');
@@ -109,6 +110,7 @@ Route::middleware(['auth:vendor,team_member', 'vendor.staff.access'])->group(fun
 
     // Orders
     Route::get('{vendorId}/orders', [OrderController::class, 'index'])->name('orders.index');
+    Route::get('{vendorId}/orders/history', [OrderController::class, 'history'])->name('orders.history');
     Route::get('{vendorId}/orders/{orderId}', [OrderController::class, 'show'])->name('orders.show');
     Route::patch('orders/{orderId}', [OrderController::class, 'update'])->name('orders.update');
     Route::patch('orders/{orderId}/confirm', [OrderController::class, 'confirm'])->name('orders.confirm');

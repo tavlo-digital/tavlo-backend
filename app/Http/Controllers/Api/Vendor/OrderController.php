@@ -108,6 +108,63 @@ class OrderController extends Controller
     }
 
     /**
+     * GET /api/vendor/{vendorId}/orders/history
+     */
+    public function history(Request $request, string $vendorId): JsonResponse
+    {
+        $vendor = $this->resolveVendor($vendorId);
+        $this->authorizeVendor($request, $vendor);
+
+        $perPage = min((int) ($request->query('perPage') ?? 20), 50);
+
+        $query = $vendor->orders()
+            ->with(['customer:id,first_name,last_name,email,phone,customer_public_id', 'tableScanSession.restaurantTable:id,number,name'])
+            ->whereNotIn('status', ['draft'])
+            ->orderByDesc('created_at');
+
+        if ($status = $request->query('status')) {
+            $query->where('status', $status);
+        }
+        if ($orderType = $request->query('orderType')) {
+            $query->where('order_type', $orderType);
+        }
+        if ($payment = $request->query('payment')) {
+            if ($payment === 'paid') {
+                $query->where('payment_received', true);
+            } elseif ($payment === 'unpaid') {
+                $query->where('payment_received', false)->where(function ($q) {
+                    $q->where('payment_pending', false)->orWhereNull('payment_pending');
+                });
+            } elseif ($payment === 'pending-cash') {
+                $query->where('payment_pending', true)->where('payment_method', 'cash')->where('payment_received', false);
+            }
+        }
+        if ($search = $request->query('search')) {
+            $query->where(function ($q) use ($search) {
+                $q->where('order_number', 'like', "%{$search}%")
+                  ->orWhere('order_public_id', 'like', "%{$search}%");
+            });
+        }
+
+        $paginated = $query->paginate($perPage);
+
+        $orders = collect($paginated->items());
+        $orders->each(fn (Order $order) => $order->setRelation('vendor', $vendor));
+        $cartItemCache = $this->batchLoadLinkedCartItems($orders);
+        $this->customizations->preloadSelectedModifiers($cartItemCache->flatten(1));
+
+        return response()->json([
+            'data' => $orders->map(fn (Order $order) => $this->formatOrder($order, $cartItemCache))->values(),
+            'meta' => [
+                'currentPage' => $paginated->currentPage(),
+                'lastPage' => $paginated->lastPage(),
+                'perPage' => $paginated->perPage(),
+                'total' => $paginated->total(),
+            ],
+        ]);
+    }
+
+    /**
      * GET /api/vendor/{vendorId}/orders/{orderId}
      */
     public function show(Request $request, string $vendorId, string $orderId): JsonResponse

@@ -330,7 +330,10 @@ class VendorSettingsController extends Controller
             }
         }
 
-        if (($data['isLiveAndDiscoverable'] ?? false) === true) {
+        $currentlyLive = (bool) ($vendor->vendorSetting?->is_live_and_discoverable);
+        $requestingLive = ($data['isLiveAndDiscoverable'] ?? false) === true;
+
+        if ($requestingLive && ! $currentlyLive) {
             $hasApprovedLegal = $vendor->requestChanges()
                 ->where('status', 'approved')
                 ->exists();

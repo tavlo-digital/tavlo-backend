@@ -65,6 +65,12 @@ class VendorDashboardApiTest extends TestCase
             'updated_at' => now()->subDay(),
         ]);
 
+        $this->createOrder($vendor, $customer, $sessionOne, [
+            'status' => Order::STATUS_SERVED,
+            'amount' => 15,
+            'payment_received' => false,
+        ]);
+
         Review::create([
             'review_public_id' => 'rev_'.Str::random(12),
             'customer_id' => $customer->id,
@@ -91,9 +97,9 @@ class VendorDashboardApiTest extends TestCase
             ->assertJsonPath('liveStatus.totalTables', 2)
             ->assertJsonPath('liveStatus.activeOrders', 5)
             ->assertJsonPath('liveStatus.tablesWaitingToPay', 1)
-            ->assertJsonPath('liveStatus.ordersWaitingToPay', 2)
+            ->assertJsonPath('liveStatus.ordersWaitingToPay', 4)
             ->assertJsonPath('liveStatus.kitchenLoad', 'medium')
-            ->assertJsonPath('todayKPIs.ordersToday', 5)
+            ->assertJsonPath('todayKPIs.ordersToday', 6)
             ->assertJsonPath('todayKPIs.ordersYesterday', 1)
             ->assertJsonPath('todayKPIs.revenueToday', 30)
             ->assertJsonPath('todayKPIs.revenueYesterday', 10)
@@ -103,7 +109,7 @@ class VendorDashboardApiTest extends TestCase
             ->assertJsonPath('todayKPIs.avgOrderValue', 30)
             ->assertJsonPath('todayKPIs.customerRating', 4)
             ->assertJsonPath('todayKPIs.currency', 'GBP')
-            ->assertJsonPath('revenueAtRisk.total', 25)
+            ->assertJsonPath('revenueAtRisk.total', 15)
             ->assertJsonPath('revenueAtRisk.currency', 'GBP')
             ->assertJsonPath('timezone', 'Europe/London')
             ->assertJsonMissingPath('liveStatus.openTables')

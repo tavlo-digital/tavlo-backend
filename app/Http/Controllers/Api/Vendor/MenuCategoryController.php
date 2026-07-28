@@ -203,6 +203,29 @@ class MenuCategoryController extends Controller
         return response()->json(['message' => 'Category deleted']);
     }
 
+    public function reorder(Request $request): JsonResponse
+    {
+        $vendor = $request->user();
+
+        $data = $request->validate([
+            'orderedIds' => ['required', 'array', 'min:1'],
+            'orderedIds.*' => ['integer'],
+        ]);
+
+        $ids = $data['orderedIds'];
+        $existing = $vendor->menuCategories()->pluck('id')->toArray();
+        $invalid = array_diff($ids, $existing);
+        if ($invalid) {
+            return response()->json(['message' => 'One or more category IDs do not belong to this vendor.'], 422);
+        }
+
+        foreach ($ids as $index => $id) {
+            $vendor->menuCategories()->where('id', $id)->update(['sort_order' => $index]);
+        }
+
+        return response()->json(['message' => 'Categories reordered']);
+    }
+
     // ----------------------------------------------------------------
 
     private function formatCategory(MenuCategory $cat, $vendor, string $locale): array

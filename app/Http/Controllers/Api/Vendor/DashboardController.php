@@ -76,12 +76,11 @@ class DashboardController extends Controller
             ->count('restaurant_table_id');
         $totalTables = $vendor->restaurantTables()->where('is_active', true)->count();
 
-        // An unpaid payable order is outstanding whether or not the guest has
-        // already opened a Stripe intent or requested cash payment.
-        $unpaidPayable = $vendor->orders()
+        // Orders waiting to pay: not yet served and not paid.
+        $unpaidNotServed = $vendor->orders()
             ->where('payment_received', false)
-            ->whereIn('status', array_merge([Order::STATUS_IN_PROGRESS], Order::COMPLETED_STATUSES));
-        $ordersWaitingToPay = (clone $unpaidPayable)->count();
+            ->whereIn('status', Order::ACTIVE_STATUSES);
+        $ordersWaitingToPay = $unpaidNotServed->count();
 
         $tablesWaitingToPay = TableScanSession::query()
             ->where('vendor_id', $vendor->id)
@@ -207,8 +206,12 @@ class DashboardController extends Controller
                 ] : null,
             ]);
 
-        // ---- Revenue at risk (all currently outstanding payable orders) ---
-        $revenueAtRisk = (float) (clone $unpaidPayable)->sum('amount');
+        // ---- Revenue at risk: served/completed but not yet paid ---
+        $unpaidServed = $vendor->orders()
+            ->where('payment_received', false)
+            ->whereIn('status', Order::COMPLETED_STATUSES);
+        $revenueAtRisk = (float) $unpaidServed->sum('amount');
+        $unpaidServedCount = (int) $unpaidServed->count();
 
         $currency = $vendor->currency ?? 'EUR';
 
@@ -241,6 +244,7 @@ class DashboardController extends Controller
             'topItems' => $topItems,
             'revenueAtRisk' => [
                 'total' => round($revenueAtRisk, 2),
+                'unpaidServedCount' => $unpaidServedCount,
                 'currency' => $currency,
             ],
             'timezone' => $timezone,
