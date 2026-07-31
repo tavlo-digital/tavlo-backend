@@ -762,6 +762,7 @@ class PaymentController extends Controller
     {
         $data = $request->validate([
             'notes' => ['nullable', 'string', 'max:500'],
+            'tip_amount' => ['nullable', 'numeric', 'min:0', 'max:999999.99'],
         ]);
 
         $customer = $request->user();
@@ -815,7 +816,20 @@ class PaymentController extends Controller
         $amounts = $orders->mapWithKeys(fn (Order $coveredOrder) => [
             $coveredOrder->id => $this->finalOrderAmount($coveredOrder),
         ]);
-        $amount = round((float) $amounts->sum(), 2);
+        $baseAmount = round((float) $amounts->sum(), 2);
+        $tipAmount = round((float) ($data['tip_amount'] ?? 0), 2);
+
+        $tipOrder = $orders->first(
+            fn (Order $coveredOrder) => $this->orderOwnerCustomerId($coveredOrder) === (int) $customer->id
+        );
+
+        if ($tipAmount > 0 && ! $tipOrder) {
+            return response()->json([
+                'message' => 'A tip cannot be added when paying only for another customer\'s orders.',
+            ], 422);
+        }
+
+        $amount = round($baseAmount + $tipAmount, 2);
 
         if ($amount <= 0 || $amounts->contains(fn (float $orderAmount) => $orderAmount <= 0)) {
             return response()->json(['message' => 'Order amount must be greater than zero.'], 422);
@@ -823,7 +837,7 @@ class PaymentController extends Controller
 
         $currency = $order->vendor?->currency ?? $order->currency ?? 'EUR';
 
-        DB::transaction(function () use ($order, $orderIds, $orderIdsArray, $amounts, $customer, $amount, $currency, $data) {
+        DB::transaction(function () use ($order, $orderIds, $orderIdsArray, $amounts, $customer, $amount, $currency, $data, $tipAmount, $tipOrder) {
             $lockedOrders = Order::whereIn('id', $orderIds)->lockForUpdate()->get();
 
             if ($lockedOrders->contains(fn (Order $locked) => $locked->payment_received)) {
@@ -871,6 +885,7 @@ class PaymentController extends Controller
                 $lockedOrder->update([
                     'amount' => $amounts[$lockedOrder->id],
                     'service_fee' => $lockedOrder->service_fee ?? 0,
+                    'tip_amount' => $tipOrder && $lockedOrder->is($tipOrder) ? $tipAmount : 0,
                     'currency' => strtoupper($currency),
                     'payment_method' => 'cash',
                     'payment_pending' => true,
