@@ -21,12 +21,14 @@ class Review extends Model
         'vendor_replied_at',
         'flagged',
         'flag_reason',
+        'anonymous',
     ];
 
     protected function casts(): array
     {
         return [
             'flagged' => 'boolean',
+            'anonymous' => 'boolean',
             'vendor_replied_at' => 'datetime',
             'images' => 'array',
         ];

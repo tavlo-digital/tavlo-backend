@@ -69,7 +69,7 @@ class ReviewController extends Controller
             ->where('menu_item_id', $menuItem->id)
             ->whereHas('review', fn ($query) => $query->where('flagged', false))
             ->with([
-                'review:id,review_public_id,customer_id,vendor_id,order_id,table_scan_session_id,flagged,created_at,updated_at',
+                'review:id,review_public_id,customer_id,vendor_id,order_id,table_scan_session_id,anonymous,flagged,created_at,updated_at',
                 'review.customer:id,first_name,last_name,profile_picture',
             ])
             ->orderByDesc('created_at')
@@ -78,9 +78,15 @@ class ReviewController extends Controller
         $reviews->getCollection()->transform(function (ReviewItem $itemReview) use ($menuItem) {
             $review = $itemReview->review;
             $customer = $review?->customer;
-            $reviewerName = $customer
-                ? trim(($customer->first_name ?? '').' '.($customer->last_name ?? ''))
-                : '';
+            $isAnonymous = (bool) $review?->anonymous;
+
+            if ($isAnonymous) {
+                $reviewerName = $this->anonymousDisplayName($review->id);
+            } else {
+                $reviewerName = $customer
+                    ? trim(($customer->first_name ?? '').' '.($customer->last_name ?? ''))
+                    : '';
+            }
 
             return [
                 'review_public_id' => $review?->review_public_id,
@@ -91,8 +97,9 @@ class ReviewController extends Controller
                 'photos' => $this->mediaUrls($itemReview->images),
                 'reviewer' => [
                     'name' => $reviewerName !== '' ? $reviewerName : 'Anonymous',
-                    'profile_picture' => $customer?->profile_picture,
+                    'profile_picture' => $isAnonymous ? null : $customer?->profile_picture,
                 ],
+                'anonymous' => $isAnonymous,
                 'created_at' => $this->dateTimes->formatDateTime($itemReview->created_at, $menuItem->vendor),
                 'updated_at' => $this->dateTimes->formatDateTime($itemReview->updated_at, $menuItem->vendor),
             ];
@@ -156,18 +163,24 @@ class ReviewController extends Controller
         $allReviews = Review::with([
             'items.menuItem:id,name,image_url',
             'vendor:id,vendor_public_id,restaurant_name',
-            'vendor.vendorSetting:id,vendor_id,date_format,time_format',
+            'vendor.vendorSetting:id,vendor_id,date_format,time_format,enable_reviews',
         ])
             ->whereIn('table_scan_session_id', $sessionIds)
             ->get()
             ->keyBy('table_scan_session_id');
 
-        $data = $sessions->map(function (TableScanSession $session) use ($allOrders, $allReviews) {
+        $vendorIds = $sessions->pluck('vendor_id')->unique()->all();
+        $vendorSettings = \App\Models\VendorSetting::whereIn('vendor_id', $vendorIds)
+            ->pluck('enable_reviews', 'vendor_id');
+
+        $data = $sessions->map(function (TableScanSession $session) use ($allOrders, $allReviews, $vendorSettings) {
             $orders = $allOrders->get($session->id, collect());
 
             if ($orders->isEmpty()) {
                 return null;
             }
+
+            $reviewsEnabled = $vendorSettings[$session->vendor_id] ?? true;
 
             $activeOrders = $orders->filter(fn (Order $order) => ! in_array($order->status, ['cancelled', 'draft']));
             $cartItems = $this->cartItemsForOrders($orders);
@@ -180,7 +193,7 @@ class ReviewController extends Controller
             $entry = [
                 'session_scan_table_id' => $session->id,
                 'reviewed' => $existingReview !== null,
-                'reviewable' => $allPaid && $allServed && $existingReview === null,
+                'reviewable' => $reviewsEnabled && $allPaid && $allServed && $existingReview === null,
                 'all_paid' => $allPaid,
                 'all_served' => $allServed,
                 'orders' => $this->formatSessionOrders($orders, $cartItems),
@@ -200,7 +213,21 @@ class ReviewController extends Controller
     {
         $customer = $request->user();
 
-        $vendor = \App\Models\Vendor::where('vendor_public_id', $vendorPublicId)->firstOrFail();
+        $vendor = \App\Models\Vendor::where('vendor_public_id', $vendorPublicId)
+            ->with('vendorSetting:id,vendor_id,enable_reviews')
+            ->firstOrFail();
+
+        $reviewsEnabled = $vendor->vendorSetting->enable_reviews ?? true;
+
+        if (! $reviewsEnabled) {
+            return response()->json([
+                'vendor' => [
+                    'vendor_public_id' => $vendor->vendor_public_id,
+                    'restaurant_name' => $vendor->restaurant_name,
+                ],
+                'data' => [],
+            ]);
+        }
 
         $sessions = TableScanSession::where('customer_id', $customer->id)
             ->where('vendor_id', $vendor->id)
@@ -305,6 +332,9 @@ class ReviewController extends Controller
 
         $session = TableScanSession::findOrFail($order->table_scan_session_id);
 
+        $vendorSettings = \App\Models\VendorSetting::where('vendor_id', $session->vendor_id)->first();
+        $reviewsEnabled = $vendorSettings->enable_reviews ?? true;
+
         $orders = Order::where('table_scan_session_id', $session->id)
             ->where('customer_id', $customer->id)
             ->orderBy('id')
@@ -320,7 +350,7 @@ class ReviewController extends Controller
 
         return response()->json([
             'session_scan_table_id' => $session->id,
-            'reviewable' => $allPaid && $allServed && ! $existingReview,
+            'reviewable' => $reviewsEnabled && $allPaid && $allServed && ! $existingReview,
             'all_paid' => $allPaid,
             'all_served' => $allServed,
             'reviewed' => $existingReview,
@@ -341,6 +371,9 @@ class ReviewController extends Controller
         $session = TableScanSession::whereKey($sessionScanTableId)
             ->where('customer_id', $customer->id)
             ->firstOrFail();
+
+        $vendorSettings = \App\Models\VendorSetting::where('vendor_id', $session->vendor_id)->first();
+        $reviewsEnabled = $vendorSettings->enable_reviews ?? true;
 
         $orders = Order::where('table_scan_session_id', $session->id)
             ->where('customer_id', $customer->id)
@@ -370,7 +403,7 @@ class ReviewController extends Controller
         $response = [
             'session_scan_table_id' => $session->id,
             'reviewed' => $existingReview !== null,
-            'reviewable' => $allPaid && $allServed && $existingReview === null,
+            'reviewable' => $reviewsEnabled && $allPaid && $allServed && $existingReview === null,
             'all_paid' => $allPaid,
             'all_served' => $allServed,
             'orders' => $this->formatSessionOrders($orders, $cartItems),
@@ -385,22 +418,10 @@ class ReviewController extends Controller
 
     public function store(Request $request): JsonResponse
     {
-        $validated = $request->validate([
-            'session_scan_table_id' => ['required', 'integer'],
-            'rating' => ['required', 'integer', 'min:1', 'max:5'],
-            'review' => ['nullable', 'string', 'max:2000'],
-            'photos' => ['nullable', 'array', 'max:5'],
-            'photos.*' => ['file', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
-            'items' => ['required', 'array', 'min:1'],
-            'items.*.cart_item_id' => ['required', 'integer', 'distinct'],
-            'items.*.rating' => ['required', 'integer', 'min:1', 'max:5'],
-            'items.*.review' => ['nullable', 'string', 'max:1000'],
-            'items.*.photos' => ['nullable', 'array', 'max:5'],
-            'items.*.photos.*' => ['file', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
-        ]);
-
         $customer = $request->user();
-        $session = TableScanSession::whereKey($validated['session_scan_table_id'])
+
+        $sessionId = $request->input('session_scan_table_id');
+        $session = TableScanSession::whereKey($sessionId)
             ->where('customer_id', $customer->id)
             ->first();
 
@@ -410,22 +431,56 @@ class ReviewController extends Controller
             ]);
         }
 
+        $vendorSettings = \App\Models\VendorSetting::where('vendor_id', $session->vendor_id)->first();
+
+        if (! ($vendorSettings->enable_reviews ?? true)) {
+            return response()->json(['message' => 'Reviews are disabled for this restaurant.'], 403);
+        }
+
+        $menuReviewsEnabled = $vendorSettings->enable_menu_reviews ?? false;
+        $anonymousAllowed = (bool) ($vendorSettings->allow_anonymous_reviews ?? false);
+
+        $itemsRules = $menuReviewsEnabled
+            ? ['required', 'array', 'min:1']
+            : ['nullable', 'array'];
+
+        $validated = $request->validate([
+            'session_scan_table_id' => ['required', 'integer'],
+            'rating' => ['required', 'integer', 'min:1', 'max:5'],
+            'review' => ['nullable', 'string', 'max:2000'],
+            'photos' => ['nullable', 'array', 'max:5'],
+            'photos.*' => ['file', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
+            'anonymous' => ['sometimes', 'boolean'],
+            'items' => $itemsRules,
+            'items.*.cart_item_id' => ['required_with:items', 'integer', 'distinct'],
+            'items.*.rating' => ['required_with:items', 'integer', 'min:1', 'max:5'],
+            'items.*.review' => ['nullable', 'string', 'max:1000'],
+            'items.*.photos' => ['nullable', 'array', 'max:5'],
+            'items.*.photos.*' => ['file', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
+        ]);
+
         [, $cartItems] = $this->assertSessionReviewable($session, $customer->id);
 
-        $cartItemIds = $cartItems->pluck('id')->all();
-        $submittedIds = collect($validated['items'])->pluck('cart_item_id')->all();
-        $invalid = array_diff($submittedIds, $cartItemIds);
-        if (! empty($invalid)) {
-            throw ValidationException::withMessages([
-                'items' => ['One or more item IDs do not belong to this session.'],
-            ]);
+        $submittedItems = $validated['items'] ?? [];
+
+        if (! empty($submittedItems)) {
+            $cartItemIds = $cartItems->pluck('id')->all();
+            $submittedIds = collect($submittedItems)->pluck('cart_item_id')->all();
+            $invalid = array_diff($submittedIds, $cartItemIds);
+            if (! empty($invalid)) {
+                throw ValidationException::withMessages([
+                    'items' => ['One or more item IDs do not belong to this session.'],
+                ]);
+            }
         }
+
+        $isAnonymous = $anonymousAllowed && ($validated['anonymous'] ?? false);
 
         $reviewPublicId = 'rev_'.Str::random(16);
         $storedPaths = [];
 
         try {
-            $review = DB::transaction(function () use ($validated, $customer, $session, $cartItems, $reviewPublicId, &$storedPaths) {
+            $review = DB::transaction(function () use ($validated, $customer, $session, $cartItems, $reviewPublicId, &$storedPaths, $submittedItems, $isAnonymous) {
                 $lockedSession = TableScanSession::whereKey($session->id)->lockForUpdate()->firstOrFail();
 
                 if (Review::where('table_scan_session_id', $lockedSession->id)->exists()) {
@@ -448,12 +503,13 @@ class ReviewController extends Controller
                     'rating' => $validated['rating'],
                     'text' => $validated['review'] ?? null,
                     'images' => $reviewImages ?: null,
+                    'anonymous' => $isAnonymous,
                 ]);
 
                 $cartItemMap = $cartItems->keyBy('id');
                 $menuItemIds = [];
 
-                foreach ($validated['items'] as $itemData) {
+                foreach ($submittedItems as $itemData) {
                     $cartItem = $cartItemMap->get($itemData['cart_item_id']);
                     $itemImages = $this->storePhotos(
                         $itemData['photos'] ?? [],
@@ -473,7 +529,9 @@ class ReviewController extends Controller
                     $menuItemIds[] = $cartItem->menu_item_id;
                 }
 
-                $this->recalculateMenuItemRatings(array_values(array_unique($menuItemIds)));
+                if (! empty($menuItemIds)) {
+                    $this->recalculateMenuItemRatings(array_values(array_unique($menuItemIds)));
+                }
 
                 return $review;
             });
@@ -507,6 +565,7 @@ class ReviewController extends Controller
             'photos.*' => ['file', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
             'remove_photos' => ['nullable', 'array'],
             'remove_photos.*' => ['string'],
+            'anonymous' => ['sometimes', 'boolean'],
             'items' => ['sometimes', 'array'],
             'items.*.cart_item_id' => ['required_with:items', 'integer'],
             'items.*.rating' => ['required_with:items', 'integer', 'min:1', 'max:5'],
@@ -526,11 +585,14 @@ class ReviewController extends Controller
             ])
             ->firstOrFail();
 
+        $vendorSettings = \App\Models\VendorSetting::where('vendor_id', $review->vendor_id)->first();
+        $anonymousAllowed = (bool) ($vendorSettings->allow_anonymous_reviews ?? false);
+
         $storedPaths = [];
         $removedPaths = [];
 
         try {
-            DB::transaction(function () use ($review, $validated, &$storedPaths, &$removedPaths) {
+            DB::transaction(function () use ($review, $validated, &$storedPaths, &$removedPaths, $anonymousAllowed) {
                 $existingImages = $review->images ?? [];
 
                 $removeReviewPhotos = $validated['remove_photos'] ?? [];
@@ -552,11 +614,17 @@ class ReviewController extends Controller
                     ]);
                 }
 
-                $review->update([
+                $updateData = [
                     'rating' => $validated['rating'] ?? $review->rating,
                     'text' => array_key_exists('text', $validated) ? $validated['text'] : $review->text,
                     'images' => $mergedImages ?: null,
-                ]);
+                ];
+
+                if (array_key_exists('anonymous', $validated)) {
+                    $updateData['anonymous'] = $anonymousAllowed && $validated['anonymous'];
+                }
+
+                $review->update($updateData);
 
                 if (isset($validated['items'])) {
                     $allowedCartItems = $this->cartItemsForReview($review);
@@ -695,12 +763,34 @@ class ReviewController extends Controller
             ])->values()->all(),
             'vendor_reply' => $review->vendor_reply,
             'vendor_replied_at' => $this->dateTimes->formatDateTime($review->vendor_replied_at, $review->vendor),
+            'anonymous' => (bool) $review->anonymous,
             'flagged' => $review->flagged,
             'created_at' => $this->dateTimes->formatDateTime($review->created_at, $review->vendor),
             'updated_at' => $this->dateTimes->formatDateTime($review->updated_at, $review->vendor),
         ];
 
         return $payload;
+    }
+
+    private function anonymousDisplayName(int $id): string
+    {
+        $adjectives = [
+            'Happy', 'Clever', 'Brave', 'Gentle', 'Witty', 'Calm', 'Bright',
+            'Bold', 'Kind', 'Swift', 'Merry', 'Noble', 'Keen', 'Warm', 'Fair',
+            'Lucky', 'Jolly', 'Lively', 'Cheerful', 'Friendly',
+        ];
+        $nouns = [
+            'Foodie', 'Diner', 'Gourmet', 'Taster', 'Explorer', 'Guest',
+            'Patron', 'Traveler', 'Connoisseur', 'Epicure', 'Reviewer',
+            'Visitor', 'Wanderer', 'Adventurer', 'Enthusiast', 'Critic',
+            'Voyager', 'Pilgrim', 'Nomad', 'Discoverer',
+        ];
+
+        $hash = crc32((string) $id);
+        $adj = $adjectives[abs($hash) % count($adjectives)];
+        $noun = $nouns[abs($hash >> 8) % count($nouns)];
+
+        return "$adj $noun";
     }
 
     private function assertSessionReviewable(TableScanSession $session, int $customerId): array

@@ -79,13 +79,13 @@ class RestaurantController extends Controller
             if ($search !== '') {
                 $like = '%'.$search.'%';
                 $query->where(function ($q) use ($like) {
-                    $q->where('restaurant_name', 'like', $like)
-                        ->orWhere('city', 'like', $like)
-                        ->orWhere('address', 'like', $like)
-                        ->orWhere('slug', 'like', $like)
+                    $q->where('restaurant_name', 'ilike', $like)
+                        ->orWhere('city', 'ilike', $like)
+                        ->orWhere('address', 'ilike', $like)
+                        ->orWhere('slug', 'ilike', $like)
                         ->orWhereHas('menuCategories', function ($mc) use ($like) {
                             $mc->where('is_active', true)
-                                ->whereHas('masterCategory', fn ($master) => $master->where('name', 'like', $like));
+                                ->whereHas('masterCategory', fn ($master) => $master->where('name', 'ilike', $like));
                         });
                 });
             }
@@ -980,9 +980,15 @@ class RestaurantController extends Controller
 
         $reviews->getCollection()->transform(function ($review) use ($cartItemsByOrderId, $vendor) {
             $customer = $review->customer;
-            $reviewerName = $customer
-                ? trim(($customer->first_name ?? '').' '.($customer->last_name ?? ''))
-                : 'Anonymous';
+            $isAnonymous = (bool) $review->anonymous;
+
+            if ($isAnonymous) {
+                $reviewerName = $this->anonymousDisplayName($review->id);
+            } else {
+                $reviewerName = $customer
+                    ? trim(($customer->first_name ?? '').' '.($customer->last_name ?? ''))
+                    : 'Anonymous';
+            }
 
             $menuItems = $cartItemsByOrderId
                 ->get($review->order_id, collect())
@@ -1037,8 +1043,9 @@ class RestaurantController extends Controller
                 'created_at' => $this->dateTimes->formatDateTime($review->created_at, $vendor),
                 'reviewer' => [
                     'name' => $reviewerName !== '' ? $reviewerName : 'Anonymous',
-                    'profile_picture' => $customer?->profile_picture,
+                    'profile_picture' => $isAnonymous ? null : $customer?->profile_picture,
                 ],
+                'anonymous' => $isAnonymous,
                 'menu_items' => $menuItems,
                 'item_reviews' => $itemReviews,
                 'vendor_reply' => $review->vendor_reply,
@@ -1088,6 +1095,27 @@ class RestaurantController extends Controller
             ->filter()
             ->values()
             ->all();
+    }
+
+    private function anonymousDisplayName(int $id): string
+    {
+        $adjectives = [
+            'Happy', 'Clever', 'Brave', 'Gentle', 'Witty', 'Calm', 'Bright',
+            'Bold', 'Kind', 'Swift', 'Merry', 'Noble', 'Keen', 'Warm', 'Fair',
+            'Lucky', 'Jolly', 'Lively', 'Cheerful', 'Friendly',
+        ];
+        $nouns = [
+            'Foodie', 'Diner', 'Gourmet', 'Taster', 'Explorer', 'Guest',
+            'Patron', 'Traveler', 'Connoisseur', 'Epicure', 'Reviewer',
+            'Visitor', 'Wanderer', 'Adventurer', 'Enthusiast', 'Critic',
+            'Voyager', 'Pilgrim', 'Nomad', 'Discoverer',
+        ];
+
+        $hash = crc32((string) $id);
+        $adj = $adjectives[abs($hash) % count($adjectives)];
+        $noun = $nouns[abs($hash >> 8) % count($nouns)];
+
+        return "$adj $noun";
     }
 
     private function cartItemsByReviewOrder(Collection $orders): Collection

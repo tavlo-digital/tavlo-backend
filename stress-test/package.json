@@ -1,0 +1,14 @@
+{
+  "name": "tavlo-stress-test",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "setup": "node setup.mjs",
+    "test": "node runner.mjs",
+    "analyze": "node analyze.mjs",
+    "monitor": "bash monitor.sh"
+  },
+  "dependencies": {
+    "axios": "^1.7.0"
+  }
+}

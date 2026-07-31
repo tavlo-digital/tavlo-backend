@@ -41,6 +41,7 @@ class ReviewController extends Controller
                 'text' => $r->text,
                 'vendorReply' => $r->vendor_reply,
                 'vendorRepliedAt' => $r->vendor_replied_at?->toISOString(),
+                'anonymous' => (bool) $r->anonymous,
                 'flagged' => $r->flagged,
                 'flagReason' => $r->flag_reason,
                 'createdAt' => $r->created_at->toISOString(),
