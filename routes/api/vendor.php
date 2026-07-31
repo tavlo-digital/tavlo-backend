@@ -112,6 +112,7 @@ Route::middleware(['auth:vendor,team_member', 'vendor.staff.access'])->group(fun
     Route::get('{vendorId}/orders', [OrderController::class, 'index'])->name('orders.index');
     Route::get('{vendorId}/orders/history', [OrderController::class, 'history'])->name('orders.history');
     Route::get('{vendorId}/orders/{orderId}', [OrderController::class, 'show'])->name('orders.show');
+    Route::get('{vendorId}/orders/{orderId}/receipt', [OrderController::class, 'receipt'])->name('orders.receipt');
     Route::patch('orders/{orderId}', [OrderController::class, 'update'])->name('orders.update');
     Route::patch('orders/{orderId}/confirm', [OrderController::class, 'confirm'])->name('orders.confirm');
     Route::patch('orders/{orderId}/confirm-cash', [OrderController::class, 'confirmCashPayment'])->name('orders.confirmCash');

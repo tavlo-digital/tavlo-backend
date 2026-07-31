@@ -7,16 +7,20 @@ use App\Http\Controllers\Api\Vendor\Concerns\QueuesStaffCommands;
 use App\Http\Controllers\Controller;
 use App\Models\CartItem;
 use App\Models\Order;
+use App\Models\OrderPayment;
 use App\Models\TableScanSession;
 use App\Models\TableSession;
 use App\Models\TeamMember;
 use App\Models\Vendor;
 use App\Services\LocaleService;
+use App\Services\MediaService;
 use App\Services\MenuCustomizationService;
 use App\Services\NotificationService;
 use App\Services\StaffCommandBus;
 use App\Services\TableStatePatchService;
 use App\Services\TaxCalculationService;
+use App\Services\VendorDateTimeService;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
@@ -32,6 +36,8 @@ class OrderController extends Controller
         private readonly MenuCustomizationService $customizations,
         private readonly TableStatePatchService $statePatches,
         private readonly StaffCommandBus $staffCommands,
+        private readonly MediaService $media,
+        private readonly VendorDateTimeService $dateTimes,
     ) {}
 
     /**
@@ -859,6 +865,144 @@ class OrderController extends Controller
         return response()->json($this->formatOrder($order->fresh()->load('customer')));
     }
 
+    /**
+     * GET /api/vendor/{vendorId}/orders/{orderId}/receipt
+     */
+    public function receipt(Request $request, string $vendorId, string $orderId): JsonResponse
+    {
+        $vendor = $this->resolveVendor($vendorId);
+        $this->authorizeVendor($request, $vendor);
+
+        $order = Order::with([
+            'vendor.vendorSetting',
+            'tableScanSession.restaurantTable:id,number,name',
+            'paidBy:id,first_name,last_name',
+        ])
+            ->where('vendor_id', $vendor->id)
+            ->where(fn (Builder $q) => $q->where('order_public_id', $orderId)->orWhere('id', $orderId))
+            ->firstOrFail();
+
+        if (! $order->payment_received) {
+            return response()->json(['message' => 'Receipt is only available for paid orders.'], 422);
+        }
+
+        $settings = $vendor->vendorSetting;
+        $vendorCountry = $vendor->country ?? 'AT';
+        $locale = $this->locales->dashboardLanguage($vendor);
+        $countryCode = TaxCalculationService::countryCode($vendorCountry);
+        $receiptLocale = 'en-'.$countryCode;
+
+        $payment = OrderPayment::where('order_id', $order->id)
+            ->whereNotNull('paid_at')
+            ->latest('paid_at')
+            ->first();
+
+        if (! $payment) {
+            $payment = OrderPayment::whereHas(
+                'orders',
+                fn (Builder $q) => $q->where('orders.id', $order->id)
+            )
+                ->where('vendor_id', $vendor->id)
+                ->whereNotNull('paid_at')
+                ->latest('paid_at')
+                ->first();
+        }
+
+        if ($payment) {
+            $payment->load([
+                'orders.tableScanSession.restaurantTable:id,number,name',
+                'orders.paidBy:id,first_name,last_name',
+            ]);
+            $orders = $this->paymentCoveredOrders($payment);
+        } else {
+            $orders = collect([$order]);
+        }
+
+        $allItems = collect();
+        $orderBlocks = $orders->map(function (Order $o) use (&$allItems, $vendorCountry, $vendor, $locale) {
+            $items = $this->receiptLinkedCartItems($o);
+            $allItems = $allItems->merge($items);
+
+            return [
+                'order_id' => $o->order_public_id,
+                'order_number' => $o->order_number ?? $o->id,
+                'paid_by' => $this->receiptPaidByPayload($o),
+                'tip_amount' => round((float) ($o->tip_amount ?? 0), 2),
+                'items' => $items
+                    ->map(fn (CartItem $item) => $this->formatReceiptItem($item, $o, $vendorCountry, $vendor, $locale))
+                    ->values()
+                    ->all(),
+            ];
+        })->values()->all();
+
+        $uniqueItems = $allItems->unique('id')->values();
+        $taxGroups = TaxCalculationService::computeTaxGroups($uniqueItems, $vendorCountry, true);
+        $totals = TaxCalculationService::computeTotals($taxGroups, 0);
+
+        $serviceFee = round((float) $orders->sum(fn (Order $o) => (float) ($o->service_fee ?? 0)), 2);
+        $tipTotal = round((float) $orders->sum(fn (Order $o) => (float) ($o->tip_amount ?? 0)), 2);
+        $totals['service_fee'] = $serviceFee;
+        $totals['total_tips'] = $tipTotal;
+        $totals['grand_total'] = round($totals['grand_total'] + $serviceFee + $tipTotal, 2);
+        if ($payment) {
+            $totals['amount_charged'] = round((float) $payment->amount, 2);
+        }
+
+        $anchor = $orders->first(fn (Order $o) => $payment && (int) $o->id === (int) $payment->order_id)
+            ?? $orders->first();
+        $table = $anchor->tableScanSession?->restaurantTable;
+        $tableName = $table ? ($table->name ?? 'Table '.$table->number) : null;
+
+        $taxGroupsFormatted = array_map(fn (array $group) => array_merge($group, [
+            'tax_category' => strtoupper($group['tax_category']),
+            'label' => $this->locales->translatedTaxCategoryName($group['tax_category'], $vendorCountry, $locale),
+        ]), $taxGroups);
+
+        $invoiceNumber = $this->resolveReceiptInvoiceNumber($anchor, $settings);
+
+        return response()->json([
+            'data' => [
+                'restaurant' => [
+                    'name' => $vendor->restaurant_name,
+                    'logo_url' => $this->media->url($settings?->logo_url),
+                    'address' => $this->receiptFormatFullAddress($vendor),
+                    'vat_id' => $vendor->vat_number,
+                    'phone' => $vendor->phone,
+                    'email' => $vendor->email,
+                    'company_register_number' => $vendor->business_registration_number,
+                ],
+                'receipt' => [
+                    'receipt_id' => $payment?->id,
+                    'invoice_number' => $invoiceNumber,
+                    'date' => $this->dateTimes->formatDate($payment?->paid_at ?? $anchor->created_at, $vendor),
+                    'time' => $this->dateTimes->formatTime($payment?->paid_at ?? $anchor->created_at, $vendor),
+                    'table' => $tableName,
+                    'order_ids' => $orders->pluck('order_public_id')->values()->all(),
+                    'currency' => $payment?->currency ?? $anchor->currency ?? $vendor->currency ?? 'EUR',
+                    'locale' => $receiptLocale,
+                ],
+                'orders' => $orderBlocks,
+                'tax_groups' => $taxGroupsFormatted,
+                'totals' => $totals,
+                'payment' => [
+                    'method' => $payment?->stripe_payment_intent_id ? 'stripe' : ($order->payment_method ?? 'cash'),
+                    'status' => 'CONFIRMED',
+                    'transaction_id' => $payment?->stripe_payment_intent_id ?? $order->transaction_id,
+                    'paid_at' => $this->dateTimes->formatDateTime(
+                        $payment?->paid_at ?? $order->payment_confirmed_at,
+                        $vendor,
+                    ),
+                ],
+                'legal' => $this->receiptLegalBlock($countryCode, $vendor),
+            ],
+            'meta' => [
+                'generated_at' => $this->dateTimes->formatDateTime(now(), $vendor),
+                'template' => 'tavlo-receipt-template',
+                'version' => '1.0',
+            ],
+        ]);
+    }
+
     // ----------------------------------------------------------------
     // Session-level actions
     // ----------------------------------------------------------------
@@ -1565,5 +1709,168 @@ class OrderController extends Controller
                 'served_at' => null,
             ]);
         }
+    }
+
+    // ----------------------------------------------------------------
+    // Receipt helpers
+    // ----------------------------------------------------------------
+
+    private function paymentCoveredOrders(OrderPayment $payment): Collection
+    {
+        if ($payment->orders->isNotEmpty()) {
+            return collect($payment->orders->all())->values();
+        }
+
+        return $payment->order ? collect([$payment->order]) : collect();
+    }
+
+    private function receiptLinkedCartItems(Order $order): Collection
+    {
+        $items = CartItem::with('menuItem:id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category,paid_addons,free_addons,removable_items,translations')
+            ->where(function (Builder $query) use ($order) {
+                if ($order->status === 'draft' && $order->table_scan_session_id) {
+                    $query->where('table_scan_session_id', $order->table_scan_session_id)
+                        ->whereNull('order_id');
+                } else {
+                    $query->where('order_id', $order->id);
+                }
+                $query->orWhereJsonContains('shared_order_ids', $order->id);
+            })
+            ->orderBy('id')
+            ->get();
+
+        if ($items->isNotEmpty() || ! $order->table_scan_session_id || $order->status === 'draft') {
+            return $items;
+        }
+
+        $orderedAt = $order->updated_at ?? $order->created_at;
+
+        return CartItem::with('menuItem:id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category,paid_addons,free_addons,removable_items,translations')
+            ->where('table_scan_session_id', $order->table_scan_session_id)
+            ->whereNull('order_id')
+            ->when($orderedAt, fn (Builder $q) => $q->where('created_at', '<=', $orderedAt))
+            ->orderBy('id')
+            ->get();
+    }
+
+    private function formatReceiptItem(CartItem $item, Order $order, string $vendorCountry, ?Vendor $vendor, string $locale): array
+    {
+        $menuItem = $item->menuItem;
+        $unitPrice = $this->cartItemUnitPrice($item, $vendorCountry);
+        $lineGross = round($unitPrice * $item->quantity, 2);
+        $taxCategory = $menuItem?->tax_category ?? 'food';
+        $vatRate = TaxCalculationService::itemVatRate($menuItem, $vendorCountry);
+        $vatAmount = TaxCalculationService::vatFromGross($lineGross, $vatRate);
+
+        $sharedBetween = 1 + count(is_array($item->shared_order_ids) ? $item->shared_order_ids : []);
+        $myShare = round($lineGross / $sharedBetween, 2);
+
+        return [
+            'id' => $item->id,
+            'name' => $menuItem && $vendor
+                ? $this->customizations->menuItemName($menuItem, $vendor, $locale)
+                : $menuItem?->name,
+            'quantity' => $item->quantity,
+            'unit_price_gross' => $unitPrice,
+            'line_gross' => $lineGross,
+            'paid_addons' => $this->formatPaidAddons($item, $taxCategory, $vendorCountry, $vendor, $locale),
+            'free_addons' => $this->formatNamedSelections($item, 'free_addons', $vendor, $locale),
+            'removed_items' => $this->formatNamedSelections($item, 'removed_items', $vendor, $locale),
+            'selected_modifiers' => $this->formatSelectedModifiers($item, $taxCategory, $vendorCountry, $vendor, $locale),
+            'tax_category' => strtoupper($taxCategory),
+            'vat_rate' => $vatRate,
+            'vat_amount' => $vatAmount,
+            'is_mine' => (int) $item->order_id === (int) $order->id,
+            'shared_between' => $sharedBetween,
+            'my_share' => $myShare,
+        ];
+    }
+
+    private function resolveReceiptInvoiceNumber(Order $order, $settings): string
+    {
+        if ($order->invoice_number) {
+            return $order->invoice_number;
+        }
+
+        $prefix = $settings?->invoice_prefix ?? 'INV';
+
+        $nextNumber = DB::table('vendor_settings')
+            ->where('vendor_id', $order->vendor_id)
+            ->lockForUpdate()
+            ->value('next_invoice_number') ?? 1001;
+
+        DB::table('vendor_settings')
+            ->where('vendor_id', $order->vendor_id)
+            ->increment('next_invoice_number');
+
+        $invoiceNumber = $prefix.'-'.str_pad((string) $nextNumber, 7, '0', STR_PAD_LEFT);
+
+        $order->update(['invoice_number' => $invoiceNumber]);
+
+        return $invoiceNumber;
+    }
+
+    private function receiptPaidByPayload(Order $order): ?array
+    {
+        if (! $order->relationLoaded('paidBy')) {
+            $order->load('paidBy:id,first_name,last_name');
+        }
+
+        if (! $order->paidBy) {
+            return null;
+        }
+
+        return [
+            'id' => $order->paidBy->id,
+            'name' => trim(($order->paidBy->first_name ?? '').' '.($order->paidBy->last_name ?? '')) ?: 'Guest',
+        ];
+    }
+
+    private function receiptFormatFullAddress($vendor): ?string
+    {
+        if (! $vendor) {
+            return null;
+        }
+
+        $parts = array_filter([
+            $vendor->address,
+            $vendor->city,
+            $vendor->country,
+        ]);
+
+        return $parts ? implode(', ', $parts) : null;
+    }
+
+    private function receiptLegalBlock(string $countryCode, $vendor): array
+    {
+        $regNumber = $vendor?->business_registration_number;
+
+        $legalNotes = match ($countryCode) {
+            'AT' => [
+                'invoice_note' => 'This invoice was issued in accordance with § 11 UStG (Austria).',
+                'tax_note' => 'All prices include statutory VAT. The service date corresponds to the invoice date.',
+            ],
+            'DE' => [
+                'invoice_note' => 'This invoice was issued in accordance with § 14 UStG (Germany).',
+                'tax_note' => 'All prices include statutory VAT. The service date corresponds to the invoice date.',
+            ],
+            'GB' => [
+                'invoice_note' => 'This invoice was issued in accordance with UK VAT regulations.',
+                'tax_note' => 'All prices include VAT where applicable.',
+            ],
+            default => [
+                'invoice_note' => 'This invoice was issued in accordance with applicable tax regulations.',
+                'tax_note' => 'All prices include statutory VAT where applicable.',
+            ],
+        };
+
+        return [
+            'invoice_note' => $legalNotes['invoice_note'],
+            'tax_note' => $legalNotes['tax_note'],
+            'company_register_note' => $regNumber
+                ? 'Registration number: '.$regNumber
+                : null,
+            'rksv_required_check' => $countryCode === 'AT',
+        ];
     }
 }
