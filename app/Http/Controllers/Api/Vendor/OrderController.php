@@ -879,7 +879,8 @@ class OrderController extends Controller
             'paidBy:id,first_name,last_name',
         ])
             ->where('vendor_id', $vendor->id)
-            ->where(fn (Builder $q) => $q->where('order_public_id', $orderId)->orWhere('id', $orderId))
+            ->where(fn (Builder $q) => $q->where('order_public_id', $orderId)
+                ->when(ctype_digit($orderId), fn ($q2) => $q2->orWhere('id', $orderId)))
             ->firstOrFail();
 
         if (! $order->payment_received) {
