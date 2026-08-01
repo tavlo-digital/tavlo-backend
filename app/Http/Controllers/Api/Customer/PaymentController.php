@@ -1455,6 +1455,7 @@ class PaymentController extends Controller
         $payment->update([
             'status' => $status,
             'payment_method' => $intent['payment_method'] ?? $payment->payment_method,
+            'payment_method_details' => $intent['payment_method_details'] ?? $payment->payment_method_details,
             'last_verified_at' => $now,
             'paid_at' => $status === 'succeeded' ? ($payment->paid_at ?? $now) : $payment->paid_at,
             'failed_at' => in_array($status, ['failed', 'canceled'], true) ? ($payment->failed_at ?? $now) : $payment->failed_at,

@@ -1450,6 +1450,16 @@ class CustomerPaymentsTest extends TestCase
                     'customer_id' => (string) $this->customer->id,
                 ],
                 'payment_method' => 'pm_card_visa',
+                'payment_method_details' => [
+                    'provider' => 'stripe',
+                    'method' => 'visa',
+                    'type' => 'card',
+                    'display_name' => 'Visa',
+                    'card_brand' => 'visa',
+                    'card_last4' => '6537',
+                    'masked_card' => '**** **** **** 6537',
+                    'wallet_type' => null,
+                ],
             ],
         ];
         $this->stripe->events[] = $event;
@@ -1481,6 +1491,16 @@ class CustomerPaymentsTest extends TestCase
                     'customer_id' => (string) $this->customer->id,
                 ],
                 'payment_method' => 'pm_card_visa',
+                'payment_method_details' => [
+                    'provider' => 'stripe',
+                    'method' => 'visa',
+                    'type' => 'card',
+                    'display_name' => 'Visa',
+                    'card_brand' => 'visa',
+                    'card_last4' => '6537',
+                    'masked_card' => '**** **** **** 6537',
+                    'wallet_type' => null,
+                ],
             ],
         ];
         $this->postJson('/api/customer/payments/webhook', [], [
@@ -1495,7 +1515,10 @@ class CustomerPaymentsTest extends TestCase
             ->assertOk()
             ->assertJsonPath('receipts_count', 1)
             ->assertJsonPath('receipts.0.payment_intent_id', 'pi_fake_1')
-            ->assertJsonPath('receipts.0.payment_method', 'stripe')
+            ->assertJsonPath('receipts.0.payment_provider', 'stripe')
+            ->assertJsonPath('receipts.0.payment_method', 'visa')
+            ->assertJsonPath('receipts.0.payment_method_details.display_name', 'Visa')
+            ->assertJsonPath('receipts.0.payment_method_details.masked_card', '**** **** **** 6537')
             ->assertJsonPath('receipts.0.status', 'succeeded')
             ->assertJsonPath('receipts.0.orders_count', 1)
             ->assertJsonPath('receipts.0.orders.0.order_public_id', $paidOrder->order_public_id);
@@ -1534,6 +1557,16 @@ class CustomerPaymentsTest extends TestCase
                     'customer_id' => (string) $this->customer->id,
                 ],
                 'payment_method' => 'pm_card_visa',
+                'payment_method_details' => [
+                    'provider' => 'stripe',
+                    'method' => 'google_pay',
+                    'type' => 'card',
+                    'display_name' => 'Google Pay',
+                    'card_brand' => 'visa',
+                    'card_last4' => '4242',
+                    'masked_card' => '**** **** **** 4242',
+                    'wallet_type' => 'google_pay',
+                ],
             ],
         ];
         $this->postJson('/api/customer/payments/webhook', [], [
@@ -1547,6 +1580,10 @@ class CustomerPaymentsTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.receipt.receipt_id', $payment->id)
             ->assertJsonPath('data.payment.status', 'CONFIRMED')
+            ->assertJsonPath('data.payment.provider', 'stripe')
+            ->assertJsonPath('data.payment.method', 'google_pay')
+            ->assertJsonPath('data.payment.method_details.display_name', 'Google Pay')
+            ->assertJsonPath('data.payment.method_details.masked_card', '**** **** **** 4242')
             ->assertJsonPath('data.payment.transaction_id', 'pi_fake_1')
             ->assertJsonPath('data.totals.amount_charged', 13)
             ->assertJsonCount(2, 'data.orders');
@@ -1925,6 +1962,11 @@ class FakeStripePaymentService extends StripePaymentService
             'metadata' => [],
             'payment_method' => null,
         ];
+    }
+
+    public function retrievePaymentMethodDetails(string $paymentMethodId): ?array
+    {
+        return null;
     }
 
     public function cancelPaymentIntent(string $paymentIntentId): array

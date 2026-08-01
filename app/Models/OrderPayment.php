@@ -20,6 +20,7 @@ class OrderPayment extends Model
         'currency',
         'status',
         'payment_method',
+        'payment_method_details',
         'metadata',
         'paid_at',
         'failed_at',
@@ -29,11 +30,12 @@ class OrderPayment extends Model
     protected function casts(): array
     {
         return [
-            'amount'           => 'decimal:2',
-            'order_ids'        => 'array',
-            'metadata'         => 'array',
-            'paid_at'          => 'datetime',
-            'failed_at'        => 'datetime',
+            'amount' => 'decimal:2',
+            'order_ids' => 'array',
+            'payment_method_details' => 'array',
+            'metadata' => 'array',
+            'paid_at' => 'datetime',
+            'failed_at' => 'datetime',
             'last_verified_at' => 'datetime',
         ];
     }

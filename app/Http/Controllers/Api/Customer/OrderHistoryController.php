@@ -10,6 +10,7 @@ use App\Models\Vendor;
 use App\Services\LocaleService;
 use App\Services\MediaService;
 use App\Services\MenuCustomizationService;
+use App\Services\PaymentMethodDetailsService;
 use App\Services\TaxCalculationService;
 use App\Services\VendorDateTimeService;
 use Illuminate\Database\Eloquent\Builder;
@@ -25,6 +26,7 @@ class OrderHistoryController extends Controller
         private readonly VendorDateTimeService $dateTimes,
         private readonly LocaleService $locales,
         private readonly MenuCustomizationService $customizations,
+        private readonly PaymentMethodDetailsService $paymentMethods,
     ) {}
 
     /**
@@ -250,6 +252,19 @@ class OrderHistoryController extends Controller
             ->latest('paid_at')
             ->first();
 
+        if (! $payment) {
+            $payment = OrderPayment::whereHas(
+                'orders',
+                fn (Builder $query) => $query->where('orders.id', $order->id)
+            )
+                ->where('vendor_id', $order->vendor_id)
+                ->whereNotNull('paid_at')
+                ->latest('paid_at')
+                ->first();
+        }
+
+        $paymentDetails = $this->paymentMethods->details($payment, $order->payment_method);
+
         $table = $order->tableScanSession?->restaurantTable;
         $tableName = $table ? ($table->name ?? 'Table '.$table->number) : null;
 
@@ -293,7 +308,9 @@ class OrderHistoryController extends Controller
                 'tax_groups' => $taxGroupsFormatted,
                 'totals' => $totals,
                 'payment' => [
-                    'method' => $order->payment_method,
+                    'provider' => $paymentDetails['provider'],
+                    'method' => $paymentDetails['method'],
+                    'method_details' => $paymentDetails,
                     'status' => $order->payment_received ? 'CONFIRMED' : 'PENDING',
                     'transaction_id' => $order->transaction_id ?? $payment?->stripe_payment_intent_id,
                     'paid_at' => $this->dateTimes->formatDateTime(
@@ -333,6 +350,7 @@ class OrderHistoryController extends Controller
         $receipts = $payments->map(function (OrderPayment $payment) {
             $vendor = $payment->vendor;
             $orders = $this->paymentCoveredOrders($payment);
+            $paymentDetails = $this->paymentMethods->details($payment, $payment->payment_method);
 
             return [
                 'receipt_id' => $payment->id,
@@ -344,7 +362,9 @@ class OrderHistoryController extends Controller
                 ],
                 'amount' => round((float) $payment->amount, 2),
                 'currency' => $payment->currency,
-                'payment_method' => $payment->stripe_payment_intent_id ? 'stripe' : 'cash',
+                'payment_provider' => $paymentDetails['provider'],
+                'payment_method' => $paymentDetails['method'],
+                'payment_method_details' => $paymentDetails,
                 'status' => $payment->status,
                 'paid_at' => $this->dateTimes->formatDateTime($payment->paid_at, $vendor),
                 'orders_count' => $orders->count(),
@@ -433,6 +453,7 @@ class OrderHistoryController extends Controller
             'tax_category' => strtoupper($group['tax_category']),
             'label' => $this->locales->translatedTaxCategoryName($group['tax_category'], $vendorCountry, $contentLocale),
         ]), $taxGroups);
+        $paymentDetails = $this->paymentMethods->details($payment, $payment->payment_method);
 
         return response()->json([
             'data' => [
@@ -459,7 +480,9 @@ class OrderHistoryController extends Controller
                 'tax_groups' => $taxGroupsFormatted,
                 'totals' => $totals,
                 'payment' => [
-                    'method' => $payment->stripe_payment_intent_id ? 'stripe' : 'cash',
+                    'provider' => $paymentDetails['provider'],
+                    'method' => $paymentDetails['method'],
+                    'method_details' => $paymentDetails,
                     'status' => 'CONFIRMED',
                     'transaction_id' => $payment->stripe_payment_intent_id,
                     'paid_at' => $this->dateTimes->formatDateTime($payment->paid_at, $vendor),

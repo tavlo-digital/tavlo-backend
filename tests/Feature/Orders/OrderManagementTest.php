@@ -8,10 +8,12 @@ use App\Models\MenuCategory;
 use App\Models\MenuItem;
 use App\Models\Notification;
 use App\Models\Order;
+use App\Models\OrderPayment;
 use App\Models\RestaurantTable;
 use App\Models\TableScanSession;
 use App\Models\TeamMember;
 use App\Models\Vendor;
+use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -165,6 +167,100 @@ class OrderManagementTest extends TestCase
             ->assertJsonCount(3, 'sessions.0.orders');
 
         $this->assertSame(1, $languageQueries);
+    }
+
+    public function test_index_returns_exact_masked_stripe_payment_method_details(): void
+    {
+        $session = $this->scanSession();
+        $order = $this->order($session, [
+            'payment_method' => 'stripe',
+            'payment_pending' => false,
+            'payment_received' => true,
+            'payment_confirmed_at' => now(),
+        ]);
+
+        OrderPayment::create([
+            'order_id' => $order->id,
+            'vendor_id' => $this->vendor->id,
+            'customer_id' => $this->customer->id,
+            'table_scan_session_id' => $session->id,
+            'stripe_account_id' => 'acct_test',
+            'stripe_payment_intent_id' => 'pi_vendor_details',
+            'amount' => 12.50,
+            'currency' => 'EUR',
+            'status' => 'succeeded',
+            'payment_method' => 'pm_vendor_details',
+            'payment_method_details' => [
+                'provider' => 'stripe',
+                'method' => 'apple_pay',
+                'type' => 'card',
+                'display_name' => 'Apple Pay',
+                'card_brand' => 'mastercard',
+                'card_last4' => '6537',
+                'wallet_type' => 'apple_pay',
+            ],
+            'paid_at' => now(),
+        ]);
+
+        $headers = $this->vendorHeaders();
+
+        $this->getJson("/api/vendor/{$this->vendor->id}/orders", $headers)
+            ->assertOk()
+            ->assertJsonPath('sessions.0.orders.0.paymentMethodLabel', 'Apple Pay')
+            ->assertJsonPath('sessions.0.orders.0.paymentMethodDetails.method', 'apple_pay')
+            ->assertJsonPath('sessions.0.orders.0.paymentMethodDetails.cardBrand', 'mastercard')
+            ->assertJsonPath('sessions.0.orders.0.paymentMethodDetails.maskedCard', '**** **** **** 6537');
+
+        $this->getJson("/api/vendor/{$this->vendor->id}/orders/history", $headers)
+            ->assertOk()
+            ->assertJsonPath('data.0.paymentMethodLabel', 'Apple Pay')
+            ->assertJsonPath('data.0.paymentMethodDetails.maskedCard', '**** **** **** 6537');
+
+        $this->getJson("/api/vendor/{$this->vendor->id}/orders/{$order->order_public_id}/receipt", $headers)
+            ->assertOk()
+            ->assertJsonPath('data.payment.provider', 'stripe')
+            ->assertJsonPath('data.payment.method', 'apple_pay')
+            ->assertJsonPath('data.payment.method_details.card_brand', 'mastercard')
+            ->assertJsonPath('data.payment.method_details.masked_card', '**** **** **** 6537');
+    }
+
+    public function test_history_filters_an_inclusive_date_range_in_the_vendor_timezone(): void
+    {
+        $session = $this->scanSession();
+        $before = $this->order($session, ['order_public_id' => 'ord-before-range']);
+        $firstDay = $this->order($session, ['order_public_id' => 'ord-first-day']);
+        $lastDay = $this->order($session, ['order_public_id' => 'ord-last-day']);
+        $after = $this->order($session, ['order_public_id' => 'ord-after-range']);
+
+        $before->forceFill(['created_at' => Carbon::parse('2026-06-30 23:59:59', 'Europe/Vienna')->utc()])->save();
+        $firstDay->forceFill(['created_at' => Carbon::parse('2026-07-01 00:00:00', 'Europe/Vienna')->utc()])->save();
+        $lastDay->forceFill(['created_at' => Carbon::parse('2026-07-02 23:59:59', 'Europe/Vienna')->utc()])->save();
+        $after->forceFill(['created_at' => Carbon::parse('2026-07-03 00:00:00', 'Europe/Vienna')->utc()])->save();
+
+        $response = $this->getJson(
+            "/api/vendor/{$this->vendor->id}/orders/history?dateFrom=01.07.2026&dateTo=02.07.2026",
+            $this->vendorHeaders(),
+        )->assertOk()->assertJsonPath('meta.total', 2);
+
+        $this->assertEqualsCanonicalizing(
+            [$firstDay->order_public_id, $lastDay->order_public_id],
+            collect($response->json('data'))->pluck('orderPublicId')->all(),
+        );
+    }
+
+    public function test_history_rejects_a_reversed_or_malformed_date_range(): void
+    {
+        $headers = $this->vendorHeaders();
+
+        $this->getJson(
+            "/api/vendor/{$this->vendor->id}/orders/history?dateFrom=03.07.2026&dateTo=02.07.2026",
+            $headers,
+        )->assertUnprocessable()->assertJsonValidationErrors('dateTo');
+
+        $this->getJson(
+            "/api/vendor/{$this->vendor->id}/orders/history?dateFrom=2026-07-01",
+            $headers,
+        )->assertUnprocessable()->assertJsonValidationErrors('dateFrom');
     }
 
     public function test_index_excludes_closed_table_scan_sessions(): void

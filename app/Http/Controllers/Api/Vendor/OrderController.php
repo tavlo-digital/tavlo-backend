@@ -16,15 +16,18 @@ use App\Services\LocaleService;
 use App\Services\MediaService;
 use App\Services\MenuCustomizationService;
 use App\Services\NotificationService;
+use App\Services\PaymentMethodDetailsService;
 use App\Services\StaffCommandBus;
 use App\Services\TableStatePatchService;
 use App\Services\TaxCalculationService;
 use App\Services\VendorDateTimeService;
+use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 use Throwable;
 
 class OrderController extends Controller
@@ -38,6 +41,7 @@ class OrderController extends Controller
         private readonly StaffCommandBus $staffCommands,
         private readonly MediaService $media,
         private readonly VendorDateTimeService $dateTimes,
+        private readonly PaymentMethodDetailsService $paymentMethods,
     ) {}
 
     /**
@@ -62,6 +66,8 @@ class OrderController extends Controller
 
         $sessionOrders = Order::with([
             'customer:id,first_name,last_name,email,phone,customer_public_id',
+            'payments:id,order_id,stripe_payment_intent_id,status,payment_method,payment_method_details,paid_at',
+            'coveredPayments:id,stripe_payment_intent_id,status,payment_method,payment_method_details,paid_at',
         ])
             ->where('vendor_id', $vendor->id)
             ->whereIn('table_scan_session_id', $activeScanSessions->pluck('id'))
@@ -80,6 +86,8 @@ class OrderController extends Controller
             ->where('order_type', '!=', 'dine-in')
             ->with([
                 'customer:id,first_name,last_name,email,phone,customer_public_id',
+                'payments:id,order_id,stripe_payment_intent_id,status,payment_method,payment_method_details,paid_at',
+                'coveredPayments:id,stripe_payment_intent_id,status,payment_method,payment_method_details,paid_at',
             ])
             ->orderByDesc('created_at');
 
@@ -122,11 +130,41 @@ class OrderController extends Controller
         $this->authorizeVendor($request, $vendor);
 
         $perPage = min((int) ($request->query('perPage') ?? 20), 50);
+        $dates = $request->validate([
+            'dateFrom' => ['nullable', 'date_format:d.m.Y'],
+            'dateTo' => ['nullable', 'date_format:d.m.Y'],
+        ]);
+
+        $timezone = $vendor->resolveTimezone();
+        $dateFrom = isset($dates['dateFrom'])
+            ? Carbon::createFromFormat('!d.m.Y', $dates['dateFrom'], $timezone)->startOfDay()
+            : null;
+        $dateTo = isset($dates['dateTo'])
+            ? Carbon::createFromFormat('!d.m.Y', $dates['dateTo'], $timezone)->endOfDay()
+            : null;
+
+        if ($dateFrom && $dateTo && $dateFrom->gt($dateTo)) {
+            throw ValidationException::withMessages([
+                'dateTo' => ['The to date must be the same as or later than the from date.'],
+            ]);
+        }
 
         $query = $vendor->orders()
-            ->with(['customer:id,first_name,last_name,email,phone,customer_public_id', 'tableScanSession.restaurantTable:id,number,name'])
+            ->with([
+                'customer:id,first_name,last_name,email,phone,customer_public_id',
+                'tableScanSession.restaurantTable:id,number,name',
+                'payments:id,order_id,stripe_payment_intent_id,status,payment_method,payment_method_details,paid_at',
+                'coveredPayments:id,stripe_payment_intent_id,status,payment_method,payment_method_details,paid_at',
+            ])
             ->whereNotIn('status', ['draft'])
             ->orderByDesc('created_at');
+
+        if ($dateFrom) {
+            $query->where('created_at', '>=', $dateFrom->utc());
+        }
+        if ($dateTo) {
+            $query->where('created_at', '<=', $dateTo->utc());
+        }
 
         if ($status = $request->query('status')) {
             $query->where('status', $status);
@@ -148,7 +186,7 @@ class OrderController extends Controller
         if ($search = $request->query('search')) {
             $query->where(function ($q) use ($search) {
                 $q->where('order_number', 'like', "%{$search}%")
-                  ->orWhere('order_public_id', 'like', "%{$search}%");
+                    ->orWhere('order_public_id', 'like', "%{$search}%");
             });
         }
 
@@ -185,6 +223,8 @@ class OrderController extends Controller
             ->with([
                 'customer:id,first_name,last_name,email,phone,customer_public_id',
                 'tableScanSession.restaurantTable:id,number,name',
+                'payments:id,order_id,stripe_payment_intent_id,status,payment_method,payment_method_details,paid_at',
+                'coveredPayments:id,stripe_payment_intent_id,status,payment_method,payment_method_details,paid_at',
             ])
             ->firstOrFail();
 
@@ -960,6 +1000,7 @@ class OrderController extends Controller
         ]), $taxGroups);
 
         $invoiceNumber = $this->resolveReceiptInvoiceNumber($anchor, $settings);
+        $paymentDetails = $this->paymentMethods->details($payment, $order->payment_method);
 
         return response()->json([
             'data' => [
@@ -986,7 +1027,9 @@ class OrderController extends Controller
                 'tax_groups' => $taxGroupsFormatted,
                 'totals' => $totals,
                 'payment' => [
-                    'method' => $payment?->stripe_payment_intent_id ? 'stripe' : ($order->payment_method ?? 'cash'),
+                    'provider' => $paymentDetails['provider'],
+                    'method' => $paymentDetails['method'],
+                    'method_details' => $paymentDetails,
                     'status' => 'CONFIRMED',
                     'transaction_id' => $payment?->stripe_payment_intent_id ?? $order->transaction_id,
                     'paid_at' => $this->dateTimes->formatDateTime(
@@ -1304,6 +1347,8 @@ class OrderController extends Controller
             ? trim(($order->customer->first_name ?? '').' '.($order->customer->last_name ?? ''))
             : null;
         $customerName = $customerName !== '' ? $customerName : null;
+        $payment = $this->orderPayment($order);
+        $paymentDetails = $this->paymentMethods->vendorDetails($payment, $order->payment_method);
 
         return [
             'id' => (string) $order->id,
@@ -1340,6 +1385,9 @@ class OrderController extends Controller
             'totals' => $totals,
             'currency' => $order->currency,
             'paymentMethod' => $order->payment_method,
+            'paymentProvider' => $paymentDetails['provider'],
+            'paymentMethodLabel' => $paymentDetails['displayName'],
+            'paymentMethodDetails' => $paymentDetails,
             'paymentPending' => (bool) $order->payment_pending,
             'paymentReceived' => (bool) $order->payment_received,
             'paymentConfirmedAt' => $order->payment_confirmed_at?->toISOString(),
@@ -1607,6 +1655,24 @@ class OrderController extends Controller
         );
     }
 
+    private function orderPayment(Order $order): ?OrderPayment
+    {
+        $payments = collect();
+
+        if ($order->relationLoaded('payments')) {
+            $payments = $payments->concat($order->payments);
+        }
+
+        if ($order->relationLoaded('coveredPayments')) {
+            $payments = $payments->concat($order->coveredPayments);
+        }
+
+        return $payments
+            ->unique('id')
+            ->sortByDesc(fn (OrderPayment $payment) => $payment->paid_at?->getTimestamp() ?? $payment->id)
+            ->first();
+    }
+
     private function resolveVendor(string $vendorId): Vendor
     {
         return Vendor::with('vendorSetting')
@@ -1617,7 +1683,12 @@ class OrderController extends Controller
 
     private function resolveOrder(string $orderId, ?Request $request = null): Order
     {
-        $query = Order::with(['vendor.vendorSetting', 'tableScanSession.restaurantTable']);
+        $query = Order::with([
+            'vendor.vendorSetting',
+            'tableScanSession.restaurantTable',
+            'payments:id,order_id,stripe_payment_intent_id,status,payment_method,payment_method_details,paid_at',
+            'coveredPayments:id,stripe_payment_intent_id,status,payment_method,payment_method_details,paid_at',
+        ]);
 
         if ($request) {
             $user = $request->user();
