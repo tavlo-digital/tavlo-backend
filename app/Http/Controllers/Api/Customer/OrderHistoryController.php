@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\CartItem;
 use App\Models\Order;
 use App\Models\OrderPayment;
+use App\Models\TableScanSession;
 use App\Models\Vendor;
 use App\Services\LocaleService;
 use App\Services\MediaService;
@@ -30,7 +31,7 @@ class OrderHistoryController extends Controller
     ) {}
 
     /**
-     * Get the customer's full account order history grouped by restaurant.
+     * Get the customer's full account order history grouped by dine-in session.
      */
     public function history(Request $request): JsonResponse
     {
@@ -38,59 +39,63 @@ class OrderHistoryController extends Controller
         $perPage = min(max($request->integer('per_page', 10), 1), 50);
         $page = max($request->integer('page', 1), 1);
 
-        $base = Order::query()
-            ->where(fn (Builder $query) => $this->scopeCustomerOrders($query, $customer->id))
-            ->where('status', '!=', 'draft');
+        $historyOrderScope = fn (Builder $query) => $query->where('status', '!=', 'draft');
 
-        $orders = (clone $base)
+        $sessions = TableScanSession::query()
+            ->where('customer_id', $customer->id)
+            ->whereHas('orders', $historyOrderScope)
             ->with([
                 'vendor.vendorSetting:id,vendor_id,logo_url,service_fee_rate,date_format,time_format,supported_languages',
-                'tableScanSession:id,customer_id',
-                'paidBy:id,first_name,last_name',
+                'review' => fn ($query) => $query->where('customer_id', $customer->id),
+                'orders' => fn ($query) => $query
+                    ->where('status', '!=', 'draft')
+                    ->with([
+                        'vendor.vendorSetting:id,vendor_id,logo_url,service_fee_rate,date_format,time_format,supported_languages',
+                        'tableScanSession:id,customer_id',
+                        'paidBy:id,first_name,last_name',
+                    ])
+                    ->orderByDesc('created_at'),
             ])
-            ->orderByDesc('created_at')
-            ->get();
+            ->withMax(['orders as history_last_ordered_at' => $historyOrderScope], 'created_at')
+            ->orderByDesc('history_last_ordered_at')
+            ->orderByDesc('id')
+            ->paginate($perPage, ['*'], 'page', $page);
 
-        $history = $orders
-            ->groupBy('vendor_id')
-            ->sortByDesc(fn (Collection $vendorOrders) => $vendorOrders->max('created_at'))
-            ->map(function (Collection $vendorOrders) use ($page, $perPage, $request) {
+        $history = $sessions->getCollection()
+            ->map(function (TableScanSession $session) use ($request) {
+                /** @var Collection<int, Order> $sessionOrders */
+                $sessionOrders = $session->orders;
                 /** @var Order $first */
-                $first = $vendorOrders->first();
-                $vendor = $first->vendor;
+                $first = $sessionOrders->first();
+                $vendor = $session->vendor ?? $first->vendor;
                 $settings = $vendor?->vendorSetting;
-                $pagedOrders = $vendorOrders->forPage($page, $perPage)->values();
-                $total = $vendorOrders->count();
 
                 return [
+                    'session_id' => (string) $session->id,
                     'restaurant_public_id' => $vendor?->vendor_public_id,
                     'restaurant_name' => $vendor?->restaurant_name,
                     'restaurant_logo_url' => $this->media->url($settings?->logo_url),
                     'currency' => $first->currency ?? $vendor?->currency,
-                    'orders_count' => $total,
-                    'total_spent' => round((float) $vendorOrders->sum(fn (Order $order) => (float) $order->amount), 2),
+                    'orders_count' => $sessionOrders->count(),
+                    'total_spent' => round((float) $sessionOrders->sum(fn (Order $order) => (float) $order->amount), 2),
                     'last_ordered_at' => $this->dateTimes->formatDateTime(
-                        $vendorOrders->max('created_at'),
+                        $sessionOrders->max('created_at'),
                         $vendor,
                     ),
-                    'orders' => $pagedOrders->map(fn (Order $order) => $this->formatHistoryOrder($order, $request))->all(),
-                    'pagination' => [
-                        'current_page' => $page,
-                        'per_page' => $perPage,
-                        'total' => $total,
-                        'last_page' => max((int) ceil($total / $perPage), 1),
-                        'has_more' => $page < max((int) ceil($total / $perPage), 1),
-                    ],
+                    'reviewed' => $session->review !== null,
+                    'orders' => $sessionOrders->map(fn (Order $order) => $this->formatHistoryOrder($order, $request))->all(),
                 ];
             })
             ->values();
 
         return response()->json([
             'history' => $history,
-            'summary' => [
-                'restaurants_count' => $history->count(),
-                'orders_count' => (clone $base)->count(),
-                'total_spent' => round((float) (clone $base)->sum('amount'), 2),
+            'pagination' => [
+                'current_page' => $sessions->currentPage(),
+                'per_page' => $sessions->perPage(),
+                'total' => $sessions->total(),
+                'last_page' => $sessions->lastPage(),
+                'has_more' => $sessions->hasMorePages(),
             ],
         ]);
     }

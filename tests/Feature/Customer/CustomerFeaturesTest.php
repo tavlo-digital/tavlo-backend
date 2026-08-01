@@ -94,7 +94,7 @@ class CustomerFeaturesTest extends TestCase
             ->assertJsonCount(1);
     }
 
-    public function test_can_get_account_order_history_grouped_by_restaurant_with_paginated_orders(): void
+    public function test_can_get_account_order_history_grouped_and_paginated_by_session(): void
     {
         $this->vendor->update([
             'vendor_public_id' => 'REST-101',
@@ -132,9 +132,9 @@ class CustomerFeaturesTest extends TestCase
             'available' => true,
         ]);
 
-        $session = $this->tableScanSession();
+        $olderSession = $this->tableScanSession();
         $cartItem = CartItem::create([
-            'table_scan_session_id' => $session->id,
+            'table_scan_session_id' => $olderSession->id,
             'menu_item_id' => $menuItem->id,
             'quantity' => 1,
             'notes' => null,
@@ -145,7 +145,7 @@ class CustomerFeaturesTest extends TestCase
             'order_number' => 'ORD-8801',
             'customer_id' => $this->customer->id,
             'vendor_id' => $this->vendor->id,
-            'table_scan_session_id' => $session->id,
+            'table_scan_session_id' => $olderSession->id,
             'order_type' => 'dine-in',
             'payment_received' => true,
             'payment_pending' => false,
@@ -158,8 +158,16 @@ class CustomerFeaturesTest extends TestCase
         ]);
         $cartItem->update(['order_id' => $first->id]);
 
-        CartItem::create([
-            'table_scan_session_id' => $session->id,
+        $newerSession = TableScanSession::create([
+            'vendor_id' => $this->vendor->id,
+            'restaurant_table_id' => $olderSession->restaurant_table_id,
+            'customer_id' => $this->customer->id,
+            'pin' => '5678',
+            'status' => 'active',
+            'scanned_at' => now(),
+        ]);
+        $newerCartItem = CartItem::create([
+            'table_scan_session_id' => $newerSession->id,
             'menu_item_id' => $legacyMenuItem->id,
             'quantity' => 2,
             'notes' => null,
@@ -168,30 +176,52 @@ class CustomerFeaturesTest extends TestCase
         $second = Order::factory()->create([
             'customer_id' => $this->customer->id,
             'vendor_id' => $this->vendor->id,
-            'table_scan_session_id' => $session->id,
+            'table_scan_session_id' => $newerSession->id,
             'payment_received' => true,
             'payment_pending' => false,
             'amount' => 10,
             'currency' => 'USD',
             'created_at' => now(),
         ]);
+        $newerCartItem->update(['order_id' => $second->id]);
+
+        Review::create([
+            'review_public_id' => 'rev_order_history_session',
+            'customer_id' => $this->customer->id,
+            'vendor_id' => $this->vendor->id,
+            'table_scan_session_id' => $olderSession->id,
+            'rating' => 5,
+        ]);
 
         $this->getJson('/api/customer/orders/history?per_page=1&page=1', $this->headers)
             ->assertOk()
+            ->assertJsonPath('history.0.session_id', (string) $newerSession->id)
+            ->assertJsonPath('history.0.restaurant_public_id', 'REST-101')
+            ->assertJsonPath('history.0.orders_count', 1)
+            ->assertJsonPath('history.0.total_spent', 10)
+            ->assertJsonPath('history.0.reviewed', false)
             ->assertJsonPath('history.0.orders.0.order_public_id', $second->order_public_id)
             ->assertJsonPath('history.0.orders.0.items_count', 2)
             ->assertJsonPath('history.0.orders.0.items.0.name', 'Matcha Latte')
-            ->assertJsonPath('history.0.orders.0.items.0.quantity', 2);
+            ->assertJsonPath('history.0.orders.0.items.0.quantity', 2)
+            ->assertJsonPath('pagination.current_page', 1)
+            ->assertJsonPath('pagination.per_page', 1)
+            ->assertJsonPath('pagination.total', 2)
+            ->assertJsonPath('pagination.last_page', 2)
+            ->assertJsonPath('pagination.has_more', true)
+            ->assertJsonMissingPath('history.0.pagination');
 
         $response = $this->getJson('/api/customer/orders/history?per_page=1&page=2', $this->headers);
 
         $response->assertOk()
+            ->assertJsonPath('history.0.session_id', (string) $olderSession->id)
             ->assertJsonPath('history.0.restaurant_public_id', 'REST-101')
             ->assertJsonPath('history.0.restaurant_name', 'Bella Italia')
             ->assertJsonPath('history.0.currency', 'USD')
-            ->assertJsonPath('history.0.orders_count', 2)
-            ->assertJsonPath('history.0.total_spent', 34.24)
-            ->assertJsonPath('history.0.last_ordered_at', $second->created_at->copy()->setTimezone($this->vendor->resolveTimezone())->format('m/d/Y g:i A'))
+            ->assertJsonPath('history.0.orders_count', 1)
+            ->assertJsonPath('history.0.total_spent', 24.24)
+            ->assertJsonPath('history.0.last_ordered_at', $first->created_at->copy()->setTimezone($this->vendor->resolveTimezone())->format('m/d/Y g:i A'))
+            ->assertJsonPath('history.0.reviewed', true)
             ->assertJsonPath('history.0.orders.0.order_id', 'ORD-8801')
             ->assertJsonPath('history.0.orders.0.order_public_id', $first->order_public_id)
             ->assertJsonPath('history.0.orders.0.created_at', $first->created_at->copy()->setTimezone($this->vendor->resolveTimezone())->format('m/d/Y g:i A'))
@@ -202,14 +232,12 @@ class CustomerFeaturesTest extends TestCase
             ->assertJsonPath('history.0.orders.0.items.0.name', 'Tonkotsu Ramen')
             ->assertJsonPath('history.0.orders.0.items.0.quantity', 1)
             ->assertJsonPath('history.0.orders.0.items.0.unit_price', 17.86)
-            ->assertJsonPath('history.0.pagination.current_page', 2)
-            ->assertJsonPath('history.0.pagination.per_page', 1)
-            ->assertJsonPath('history.0.pagination.total', 2)
-            ->assertJsonPath('history.0.pagination.last_page', 2)
-            ->assertJsonPath('history.0.pagination.has_more', false)
-            ->assertJsonPath('summary.restaurants_count', 1)
-            ->assertJsonPath('summary.orders_count', 2)
-            ->assertJsonPath('summary.total_spent', 34.24);
+            ->assertJsonPath('pagination.current_page', 2)
+            ->assertJsonPath('pagination.per_page', 1)
+            ->assertJsonPath('pagination.total', 2)
+            ->assertJsonPath('pagination.last_page', 2)
+            ->assertJsonPath('pagination.has_more', false)
+            ->assertJsonMissingPath('summary');
     }
 
     public function test_can_get_vendor_orders(): void

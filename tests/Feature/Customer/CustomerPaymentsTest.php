@@ -1674,7 +1674,7 @@ class CustomerPaymentsTest extends TestCase
 
         $this->getJson('/api/customer/orders/history', $ownerHeaders)
             ->assertOk()
-            ->assertJsonPath('summary.orders_count', 1)
+            ->assertJsonPath('pagination.total', 1)
             ->assertJsonPath('history.0.orders.0.order_public_id', $order->order_public_id);
 
         $this->getJson('/api/customer/receipts', $ownerHeaders)
@@ -1743,7 +1743,7 @@ class CustomerPaymentsTest extends TestCase
         $this->withHeaders($this->headers)
             ->getJson('/api/customer/orders/history')
             ->assertOk()
-            ->assertJsonPath('summary.orders_count', 0);
+            ->assertJsonPath('pagination.total', 0);
 
         $tablemateToken = $tablemate->createToken('history', ['role:customer'])->plainTextToken;
         $this->app['auth']->forgetGuards();
