@@ -46,6 +46,7 @@ class OrderHistoryController extends Controller
             ->whereHas('orders', $historyOrderScope)
             ->with([
                 'vendor.vendorSetting:id,vendor_id,logo_url,service_fee_rate,date_format,time_format,supported_languages',
+                'restaurantTable:id,number,name',
                 'review' => fn ($query) => $query->where('customer_id', $customer->id),
                 'orders' => fn ($query) => $query
                     ->where('status', '!=', 'draft')
@@ -83,6 +84,11 @@ class OrderHistoryController extends Controller
                         $vendor,
                     ),
                     'reviewed' => $session->review !== null,
+                    'table' => $session->restaurantTable ? [
+                        'id' => (string) $session->restaurantTable->id,
+                        'number' => $session->restaurantTable->number,
+                        'name' => $session->restaurantTable->name,
+                    ] : null,
                     'orders' => $sessionOrders->map(fn (Order $order) => $this->formatHistoryOrder($order, $request))->all(),
                 ];
             })
