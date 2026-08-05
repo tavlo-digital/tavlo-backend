@@ -13,6 +13,7 @@ class TableScanSession extends Model
         'vendor_id',
         'restaurant_table_id',
         'customer_id',
+        'type',
         'pin',
         'status',
         'scanned_at',
@@ -60,6 +61,16 @@ class TableScanSession extends Model
     public function sessionActivities(): HasMany
     {
         return $this->hasMany(CustomerSessionActivity::class);
+    }
+
+    public function scopePickup($query)
+    {
+        return $query->where('type', 'pickup');
+    }
+
+    public function scopeDineIn($query)
+    {
+        return $query->where('type', 'dine_in');
     }
 
     /**

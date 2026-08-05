@@ -123,7 +123,7 @@ class PaymentController extends Controller
         $payer = $request->user();
         $targetOrderId = (string) $data['order_id'];
 
-        $payerSession = $this->activeSession((int) $payer->id);
+        $payerSession = $this->activeSession((int) $payer->id, $request);
         if (! $payerSession) {
             return response()->json(['message' => 'No active table session found.'], 422);
         }
@@ -274,7 +274,7 @@ class PaymentController extends Controller
     public function releasePayFor(Request $request, string $orderId): JsonResponse
     {
         $payer = $request->user();
-        $payerSession = $this->activeSession((int) $payer->id);
+        $payerSession = $this->activeSession((int) $payer->id, $request);
 
         if (! $payerSession) {
             return response()->json(['message' => 'No active table session found.'], 422);
@@ -406,7 +406,7 @@ class PaymentController extends Controller
     public function activeIntent(Request $request): JsonResponse
     {
         $customer = $request->user();
-        $payerSession = $this->activeSession((int) $customer->id);
+        $payerSession = $this->activeSession((int) $customer->id, $request);
 
         if (! $payerSession) {
             return response()->json(['active' => false]);
@@ -456,7 +456,7 @@ class PaymentController extends Controller
     public function cancelIntent(Request $request): JsonResponse
     {
         $customer = $request->user();
-        $payerSession = $this->activeSession((int) $customer->id);
+        $payerSession = $this->activeSession((int) $customer->id, $request);
 
         if (! $payerSession) {
             return response()->json(['message' => 'No active table session found.'], 422);
@@ -530,7 +530,7 @@ class PaymentController extends Controller
     {
         $customer = $request->user();
 
-        $payerSession = $this->activeSession((int) $customer->id);
+        $payerSession = $this->activeSession((int) $customer->id, $request);
         if (! $payerSession) {
             return response()->json(['message' => 'No active table session found.'], 422);
         }
@@ -766,7 +766,7 @@ class PaymentController extends Controller
         ]);
 
         $customer = $request->user();
-        $payerSession = $this->activeSession((int) $customer->id);
+        $payerSession = $this->activeSession((int) $customer->id, $request);
         if (! $payerSession) {
             return response()->json(['message' => 'No active table session found.'], 422);
         }
@@ -1219,12 +1219,21 @@ class PaymentController extends Controller
             ->firstOrFail();
     }
 
-    private function activeSession(int $customerId): ?TableScanSession
+    private function activeSession(int $customerId, ?Request $request = null): ?TableScanSession
     {
-        return TableScanSession::where('customer_id', $customerId)
-            ->where('status', 'active')
-            ->latest('scanned_at')
-            ->first();
+        $query = TableScanSession::where('customer_id', $customerId)
+            ->where('status', 'active');
+
+        if ($request) {
+            $orderMode = $request->header('X-Order-Mode');
+            if ($orderMode === 'pickup') {
+                $query->where('type', 'pickup');
+            } elseif ($orderMode === 'dine-in') {
+                $query->where('type', 'dine_in');
+            }
+        }
+
+        return $query->latest('scanned_at')->first();
     }
 
     private function orderOwnerCustomerId(Order $order): ?int
@@ -1246,10 +1255,14 @@ class PaymentController extends Controller
 
     private function payableSessionOrders(TableScanSession $payerSession, int $payerId): EloquentCollection
     {
-        $activeSessionIds = TableScanSession::where('vendor_id', $payerSession->vendor_id)
-            ->where('restaurant_table_id', $payerSession->restaurant_table_id)
-            ->where('status', 'active')
-            ->pluck('id');
+        if ($payerSession->restaurant_table_id === null) {
+            $activeSessionIds = collect([$payerSession->id]);
+        } else {
+            $activeSessionIds = TableScanSession::where('vendor_id', $payerSession->vendor_id)
+                ->where('restaurant_table_id', $payerSession->restaurant_table_id)
+                ->where('status', 'active')
+                ->pluck('id');
+        }
 
         return Order::with([
             'vendor.vendorSetting',

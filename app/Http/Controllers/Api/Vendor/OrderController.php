@@ -82,7 +82,10 @@ class OrderController extends Controller
         });
 
         $takeawayQuery = $vendor->orders()
-            ->whereNull('table_scan_session_id')
+            ->where(function ($q) {
+                $q->whereNull('table_scan_session_id')
+                    ->orWhereHas('tableScanSession', fn ($sq) => $sq->where('type', 'pickup'));
+            })
             ->where('order_type', '!=', 'dine-in')
             ->with([
                 'customer:id,first_name,last_name,email,phone,customer_public_id',

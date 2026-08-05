@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\Customer\LoyaltyController;
 use App\Http\Controllers\Api\Customer\NotificationController;
 use App\Http\Controllers\Api\Customer\OrderHistoryController;
 use App\Http\Controllers\Api\Customer\PaymentController;
+use App\Http\Controllers\Api\Customer\PickupController;
 use App\Http\Controllers\Api\Customer\PrivacyController;
 use App\Http\Controllers\Api\Customer\ProfileController;
 use App\Http\Controllers\Api\Customer\RealtimeTokenController;
@@ -83,6 +84,9 @@ Route::middleware('customer.response.cache')->group(function () {
 
     // Public table QR status lookup
     Route::get('table/status', [TableScanController::class, 'status'])->name('table.status');
+
+    // Public pickup QR token lookup
+    Route::get('pickup/status', [PickupController::class, 'tokenStatus'])->name('pickup.status');
 });
 Route::post('table/call', [TableScanController::class, 'call'])->name('table.call');
 
@@ -111,6 +115,13 @@ Route::middleware([
     Route::put('profile/change-phone', [ProfileController::class, 'changePhone'])->name('profile.phone');
     Route::match(['put', 'post'], 'profile/change-email', [ProfileController::class, 'changeEmail'])->name('profile.email');
     Route::post('profile/password', [ProfileController::class, 'changePassword'])->name('profile.password');
+
+    // Pickup session flow
+    Route::prefix('pickup')->name('pickup.')->group(function () {
+        Route::post('scan', [PickupController::class, 'scan'])->name('scan');
+        Route::get('session/status', [PickupController::class, 'sessionStatus'])->name('session.status');
+        Route::post('close', [PickupController::class, 'close'])->name('close');
+    });
 
     // Table session flow
     Route::post('table/scan', [TableScanController::class, 'scan'])->name('table.scan');

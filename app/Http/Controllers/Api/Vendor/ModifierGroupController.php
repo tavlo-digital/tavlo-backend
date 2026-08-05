@@ -58,15 +58,21 @@ class ModifierGroupController extends Controller
             'options.*.translations' => ['sometimes', 'array'],
         ]);
 
+        $isRequired = $data['isRequired'] ?? false;
+        $minSelection = $data['minSelection'] ?? ($isRequired ? 1 : 0);
+        if ($isRequired && $minSelection < 1) {
+            $minSelection = 1;
+        }
+
         $maxSort = ModifierGroup::where('vendor_id', $vendor->id)->max('sort_order') ?? -1;
 
         $group = ModifierGroup::create([
             'vendor_id' => $vendor->id,
             'name' => $data['name'],
             'type' => $data['type'] ?? 'single',
-            'min_selection' => $data['minSelection'] ?? 0,
+            'min_selection' => $minSelection,
             'max_selection' => $data['maxSelection'] ?? 1,
-            'is_required' => $data['isRequired'] ?? false,
+            'is_required' => $isRequired,
             'tax_category' => $data['taxCategory'] ?? null,
             'sort_order' => $maxSort + 1,
             'is_active' => true,
@@ -140,14 +146,17 @@ class ModifierGroupController extends Controller
         if (isset($data['type'])) {
             $group->type = $data['type'];
         }
+        if (isset($data['isRequired'])) {
+            $group->is_required = $data['isRequired'];
+        }
         if (isset($data['minSelection'])) {
             $group->min_selection = $data['minSelection'];
         }
         if (isset($data['maxSelection'])) {
             $group->max_selection = $data['maxSelection'];
         }
-        if (isset($data['isRequired'])) {
-            $group->is_required = $data['isRequired'];
+        if ($group->is_required && $group->min_selection < 1) {
+            $group->min_selection = 1;
         }
         if (array_key_exists('taxCategory', $data)) {
             $group->tax_category = $data['taxCategory'];

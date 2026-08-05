@@ -34,12 +34,16 @@ class NotificationService
     private const TYPE_OPERATION_ACTOR = 'operation_actor';
 
     public static function notifyTableCustomers(
-        int $restaurantTableId,
+        ?int $restaurantTableId,
         string $event,
         string $message,
         array $metadata = [],
         bool $notifyOperations = true,
     ): void {
+        if ($restaurantTableId === null) {
+            return;
+        }
+
         self::dispatch(self::TYPE_TABLE, [
             'restaurant_table_id' => $restaurantTableId,
             'event' => $event,

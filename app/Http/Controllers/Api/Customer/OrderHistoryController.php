@@ -1049,7 +1049,7 @@ class OrderHistoryController extends Controller
             return collect();
         }
 
-        return CartItem::with('menuItem:id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category,paid_addons,free_addons,removable_items,translations')
+        return CartItem::with(['menuItem' => fn ($query) => $query->withTrashed()->select('id', 'name', 'price', 'has_discount', 'discounted_price', 'image_url', 'vat_rate', 'tax_category', 'paid_addons', 'free_addons', 'removable_items', 'translations')])
             ->where(function (Builder $query) use ($order) {
                 if ($order->status === 'draft') {
                     $query->where('table_scan_session_id', $order->table_scan_session_id)
@@ -1070,7 +1070,7 @@ class OrderHistoryController extends Controller
             return collect();
         }
 
-        return CartItem::with('menuItem:id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category,paid_addons,free_addons,removable_items,translations')
+        return CartItem::with(['menuItem' => fn ($query) => $query->withTrashed()->select('id', 'name', 'price', 'has_discount', 'discounted_price', 'image_url', 'vat_rate', 'tax_category', 'paid_addons', 'free_addons', 'removable_items', 'translations')])
             ->whereJsonContains('shared_order_ids', $order->id)
             ->where('table_scan_session_id', '!=', $order->table_scan_session_id)
             ->orderBy('id')
@@ -1132,7 +1132,7 @@ class OrderHistoryController extends Controller
 
     private function linkedCartItems(Order $order): Collection
     {
-        $items = CartItem::with('menuItem:id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category,paid_addons,free_addons,removable_items,translations')
+        $items = CartItem::with(['menuItem' => fn ($query) => $query->withTrashed()->select('id', 'name', 'price', 'has_discount', 'discounted_price', 'image_url', 'vat_rate', 'tax_category', 'paid_addons', 'free_addons', 'removable_items', 'translations')])
             ->where(function (Builder $query) use ($order) {
                 if ($order->status === 'draft' && $order->table_scan_session_id) {
                     $query->where('table_scan_session_id', $order->table_scan_session_id);
@@ -1152,7 +1152,7 @@ class OrderHistoryController extends Controller
 
         $orderedAt = $order->updated_at ?? $order->created_at;
 
-        return CartItem::with('menuItem:id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category,paid_addons,free_addons,removable_items,translations')
+        return CartItem::with(['menuItem' => fn ($query) => $query->withTrashed()->select('id', 'name', 'price', 'has_discount', 'discounted_price', 'image_url', 'vat_rate', 'tax_category', 'paid_addons', 'free_addons', 'removable_items', 'translations')])
             ->where('table_scan_session_id', $order->table_scan_session_id)
             ->whereNull('order_id')
             ->when($orderedAt, fn (Builder $query) => $query->where('created_at', '<=', $orderedAt))
