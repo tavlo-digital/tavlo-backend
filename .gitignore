@@ -28,8 +28,3 @@ yarn-error.log
 /.nova
 /.vscode
 /.zed
-/vendor-nextjs
-/tavlo-customer
-/Tavlo-template
-/requerments
-/documentation
