@@ -51,7 +51,7 @@ jobs:
             --exclude='storage/'
 
           path: ./
-          remote_path: ${{ secrets.STAGING_DEPLOY_PATH }}
+          remote_path: ./applications/ynfjqwuxxs/public_html
           remote_host: ${{ secrets.SSH_HOST }}
           remote_user: ${{ secrets.SSH_USERNAME }}
           remote_key: ${{ secrets.SSH_PRIVATE_KEY }}
