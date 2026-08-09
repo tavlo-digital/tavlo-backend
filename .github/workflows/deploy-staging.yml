@@ -74,6 +74,22 @@ jobs:
             set -e
             cd ./applications/ynfjqwuxxs/public_html
 
+            # Composer may inspect the retained remote Git metadata. Trust this
+            # deployment path even though the application files have another owner.
+            DEPLOY_PATH="$(pwd -P)"
+            git config --global --get-all safe.directory 2>/dev/null | grep -Fxq "$DEPLOY_PATH" || \
+              git config --global --add safe.directory "$DEPLOY_PATH"
+
+            # The deploy user has group write access but does not own these
+            # retained runtime directories, so verify access without chmod.
+            for writable_dir in storage bootstrap/cache; do
+              if [ ! -w "$writable_dir" ]; then
+                echo "Deployment directory is not writable by $(whoami): $writable_dir"
+                ls -ld "$writable_dir"
+                exit 1
+              fi
+            done
+
             # Install PHP dependencies only when Composer configuration changes.
             COMPOSER_HASH="$(sha256sum composer.json composer.lock | sha256sum | cut -d ' ' -f 1)"
             COMPOSER_HASH_FILE="storage/app/.deploy-composer-hash"
@@ -81,9 +97,6 @@ jobs:
               composer install --no-interaction --prefer-dist --optimize-autoloader --no-dev --no-progress
               printf '%s' "$COMPOSER_HASH" > "$COMPOSER_HASH_FILE"
             fi
-
-            # These directories retain their contents and permissions between deploys.
-            chmod 775 storage bootstrap/cache
 
             php artisan optimize:clear
 
