@@ -23,6 +23,7 @@ class RecordCustomerSessionActivity implements ShouldQueue
         public readonly string $endpoint,
         public readonly string $method,
         public readonly string $occurredAt,
+        public readonly ?string $orderMode = null,
     ) {
         $this->onQueue((string) config('services.session_activity.queue', 'activity'));
     }
@@ -36,13 +37,27 @@ class RecordCustomerSessionActivity implements ShouldQueue
     public function handle(): void
     {
         $occurredAt = CarbonImmutable::parse($this->occurredAt);
-        $session = TableScanSession::query()
+        $sessionQuery = TableScanSession::query()
             ->where('customer_id', $this->customerId)
             ->where('scanned_at', '<=', $occurredAt)
             ->where(function ($query) use ($occurredAt): void {
                 $query->where('status', 'active')
                     ->orWhere('closed_at', '>=', $occurredAt);
-            })
+            });
+
+        if ($this->orderMode) {
+            $type = match ($this->orderMode) {
+                'pickup' => 'pickup',
+                'takeaway' => 'takeaway',
+                'dine-in', 'dine_in' => 'dine_in',
+                default => null,
+            };
+            if ($type) {
+                $sessionQuery->where('type', $type);
+            }
+        }
+
+        $session = $sessionQuery
             ->latest('scanned_at')
             ->first(['id']);
 

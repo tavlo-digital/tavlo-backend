@@ -200,7 +200,7 @@ class PickupController extends Controller
                 'name' => $vendor->name,
                 'slug' => $vendor->slug,
             ],
-            'type' => 'pickup',
+            'type' => 'takeaway',
         ]);
     }
 }

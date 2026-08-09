@@ -26,6 +26,7 @@ class TrackSessionActivity
             $request->path(),
             $request->method(),
             $occurredAt,
+            $request->header('X-Order-Mode'),
         );
 
         if ((bool) config('services.session_activity.queue_enabled', false)) {

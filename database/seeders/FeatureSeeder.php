@@ -53,13 +53,21 @@ class FeatureSeeder extends Seeder
         // First pass: create all features without dependencies
         $featureModels = [];
         foreach ($features as $featureData) {
-            $featureModels[$featureData['name']] = Feature::updateOrCreate(
+            $feature = Feature::updateOrCreate(
                 ['name' => $featureData['name']],
                 [
                     'description' => $featureData['description'],
                     'category' => $featureData['category'],
                 ]
             );
+
+            // Baseline English row so the admin translation screen is populated.
+            $feature->localizedTranslations()->updateOrCreate(
+                ['language' => 'en'],
+                ['name' => $featureData['name'], 'description' => $featureData['description']]
+            );
+
+            $featureModels[$featureData['name']] = $feature;
         }
 
         // Second pass: set required_feature_id

@@ -17,6 +17,7 @@ class TableScanSession extends Model
         'pin',
         'status',
         'scanned_at',
+        'scheduled_for',
         'closed_at',
     ];
 
@@ -24,6 +25,7 @@ class TableScanSession extends Model
     {
         return [
             'scanned_at' => 'datetime',
+            'scheduled_for' => 'datetime',
             'closed_at' => 'datetime',
         ];
     }
@@ -71,6 +73,11 @@ class TableScanSession extends Model
     public function scopeDineIn($query)
     {
         return $query->where('type', 'dine_in');
+    }
+
+    public function scopeTakeaway($query)
+    {
+        return $query->where('type', 'takeaway');
     }
 
     /**

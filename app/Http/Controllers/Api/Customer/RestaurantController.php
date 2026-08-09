@@ -78,14 +78,17 @@ class RestaurantController extends Controller
             $search = trim((string) $request->search);
             if ($search !== '') {
                 $like = '%'.$search.'%';
-                $query->where(function ($q) use ($like) {
-                    $q->where('restaurant_name', 'ilike', $like)
-                        ->orWhere('city', 'ilike', $like)
-                        ->orWhere('address', 'ilike', $like)
-                        ->orWhere('slug', 'ilike', $like)
-                        ->orWhereHas('menuCategories', function ($mc) use ($like) {
+                $likeOperator = $query->getModel()->getConnection()->getDriverName() === 'pgsql'
+                    ? 'ilike'
+                    : 'like';
+                $query->where(function ($q) use ($like, $likeOperator) {
+                    $q->where('restaurant_name', $likeOperator, $like)
+                        ->orWhere('city', $likeOperator, $like)
+                        ->orWhere('address', $likeOperator, $like)
+                        ->orWhere('slug', $likeOperator, $like)
+                        ->orWhereHas('menuCategories', function ($mc) use ($like, $likeOperator) {
                             $mc->where('is_active', true)
-                                ->whereHas('masterCategory', fn ($master) => $master->where('name', 'ilike', $like));
+                                ->whereHas('masterCategory', fn ($master) => $master->where('name', $likeOperator, $like));
                         });
                 });
             }

@@ -9,6 +9,7 @@ Artisan::command('inspire', function () {
 })->purpose('Display an inspiring quote');
 
 Schedule::command('table-sessions:close-stale')->everyMinute();
+Schedule::command('kitchen-orders:release-scheduled')->everyMinute()->withoutOverlapping();
 Schedule::command('payments:reconcile-stale')->everyMinute();
 Schedule::command('subscriptions:reconcile-stale')->everyMinute();
 Schedule::command('notifications:prune-silent')->daily();

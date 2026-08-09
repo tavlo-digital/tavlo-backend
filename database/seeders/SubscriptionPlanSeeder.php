@@ -97,6 +97,14 @@ class SubscriptionPlanSeeder extends Seeder
 
         $allInherited = array_merge($basicFeatures, $standardFeatures);
         $this->syncFeatures($premium, $premiumFeatures, $allInherited, $featuresByName);
+
+        // Baseline English rows so the admin translation screen is populated.
+        foreach ([$basic, $standard, $premium] as $plan) {
+            $plan->localizedTranslations()->updateOrCreate(
+                ['language' => 'en'],
+                ['name' => $plan->name, 'description' => $plan->description]
+            );
+        }
     }
 
     private function syncFeatures(

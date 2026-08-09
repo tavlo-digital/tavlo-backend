@@ -214,6 +214,7 @@ class VendorPusherRealtimeTest extends TestCase
 
     public function test_terminal_command_event_targets_only_the_initiating_actor(): void
     {
+        Queue::fake();
         config()->set('services.realtime.vendor_enabled', false);
         $vendor = Vendor::factory()->create();
         $waiter = $this->member($vendor, 'waiter');
@@ -232,6 +233,9 @@ class VendorPusherRealtimeTest extends TestCase
             ],
         );
         $this->invokeDeferredCallbacks();
+        $delivery = Queue::pushed(DeliverOperationalNotification::class)->sole();
+        $this->assertSame('operation_actor', $delivery->type);
+        $delivery->handle();
 
         $this->assertDatabaseCount('notifications', 1);
         $this->assertDatabaseHas('notifications', [

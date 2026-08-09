@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Orders;
 
+use App\Jobs\DeliverOperationalNotification;
 use App\Models\CartItem;
 use App\Models\Customer;
 use App\Models\MenuCategory;
@@ -15,8 +16,10 @@ use App\Models\TeamMember;
 use App\Models\Vendor;
 use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Defer\DeferredCallbackCollection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Queue;
 use Tests\TestCase;
 
 class OrderManagementTest extends TestCase
@@ -34,6 +37,7 @@ class OrderManagementTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        config()->set('services.staff_commands.enabled', false);
 
         $this->vendor = Vendor::factory()->create(['country' => 'Austria']);
         $this->customer = Customer::factory()->create();
@@ -274,6 +278,7 @@ class OrderManagementTest extends TestCase
 
     public function test_kitchen_can_update_cart_item_status(): void
     {
+        Queue::fake([DeliverOperationalNotification::class]);
         $session = $this->scanSession();
         $order = $this->order($session);
         $item = $this->cartItem($session, ['order_id' => $order->id]);
@@ -285,6 +290,7 @@ class OrderManagementTest extends TestCase
         )->assertOk()
             ->assertJsonPath('items.0.status', 'preparing')
             ->assertJsonPath('status', 'in_progress');
+        $this->deliverOperationalNotifications();
 
         $this->assertNotNull($item->fresh()->preparing_start_at);
         $this->assertTrue(Notification::where('event', 'order_item_status_changed')
@@ -596,6 +602,7 @@ class OrderManagementTest extends TestCase
 
     public function test_staff_close_table_notifies_session_customers_and_staff(): void
     {
+        Queue::fake([DeliverOperationalNotification::class]);
         $secondCustomer = Customer::factory()->create();
         $session = $this->scanSession();
         $this->scanSession($secondCustomer);
@@ -616,6 +623,7 @@ class OrderManagementTest extends TestCase
             [],
             $waiterHeaders
         )->assertOk();
+        $this->deliverOperationalNotifications();
 
         foreach ([$this->customer->id, $secondCustomer->id] as $customerId) {
             $this->assertDatabaseHas('notifications', [
@@ -633,6 +641,13 @@ class OrderManagementTest extends TestCase
         $this->assertTrue($staffRows->contains(
             fn (Notification $n) => $n->waiter_id === null && $n->kitchen_id === null && $n->customer_id === null
         ));
+    }
+
+    private function deliverOperationalNotifications(): void
+    {
+        app(DeferredCallbackCollection::class)->invoke();
+        Queue::pushed(DeliverOperationalNotification::class)
+            ->each(fn (DeliverOperationalNotification $job) => $job->handle());
     }
 
     public function test_close_table_session_allows_fully_served_paid_orders(): void

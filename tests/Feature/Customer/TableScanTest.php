@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Customer;
 
+use App\Jobs\DeliverOperationalNotification;
 use App\Models\CartItem;
 use App\Models\Customer;
 use App\Models\MenuCategory;
@@ -14,6 +15,8 @@ use App\Models\TeamMember;
 use App\Models\Vendor;
 use App\Services\NotificationTemplateService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Defer\DeferredCallbackCollection;
+use Illuminate\Support\Facades\Queue;
 use Tests\TestCase;
 
 class TableScanTest extends TestCase
@@ -916,6 +919,7 @@ class TableScanTest extends TestCase
 
     public function test_call_is_public_and_notifies_all_waiters_without_active_session(): void
     {
+        Queue::fake([DeliverOperationalNotification::class]);
         $table = $this->makeTable();
 
         $waiter1 = TeamMember::create([
@@ -936,6 +940,7 @@ class TableScanTest extends TestCase
         $this->postCall(['table_id' => $table->id])
             ->assertOk()
             ->assertJsonPath('message', 'Waiters have been notified.');
+        $this->deliverOperationalNotifications();
 
         $this->assertDatabaseHas('notifications', [
             'waiter_id' => $waiter1->id,
@@ -949,6 +954,7 @@ class TableScanTest extends TestCase
 
     public function test_call_accepts_an_optional_note_for_waiters(): void
     {
+        Queue::fake([DeliverOperationalNotification::class]);
         $table = $this->makeTable();
         $waiter = TeamMember::create([
             'vendor_id' => $this->vendor->id,
@@ -962,6 +968,7 @@ class TableScanTest extends TestCase
             'table_id' => $table->id,
             'note' => 'Please bring the bill.',
         ])->assertOk();
+        $this->deliverOperationalNotifications();
 
         $notification = Notification::where('waiter_id', $waiter->id)
             ->where('event', 'table_call')
@@ -988,6 +995,7 @@ class TableScanTest extends TestCase
 
     public function test_call_does_not_notify_kitchen_staff(): void
     {
+        Queue::fake([DeliverOperationalNotification::class]);
         $table = $this->makeTable();
 
         TeamMember::create([
@@ -1006,12 +1014,20 @@ class TableScanTest extends TestCase
         ]);
 
         $this->postCall(['table_id' => $table->id])->assertOk();
+        $this->deliverOperationalNotifications();
 
         $this->assertDatabaseMissing('notifications', [
             'kitchen_id' => $kitchen->id,
             'event' => 'table_call',
         ]);
         $this->assertCount(1, Notification::where('event', 'table_call')->get());
+    }
+
+    private function deliverOperationalNotifications(): void
+    {
+        app(DeferredCallbackCollection::class)->invoke();
+        Queue::pushed(DeliverOperationalNotification::class)
+            ->each(fn (DeliverOperationalNotification $job) => $job->handle());
     }
 
     public function test_call_returns_422_when_no_waiters_available(): void

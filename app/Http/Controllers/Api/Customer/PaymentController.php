@@ -10,7 +10,9 @@ use App\Models\StripeWebhookLog;
 use App\Models\TableScanSession;
 use App\Models\Vendor;
 use App\Services\CustomerCommandBus;
+use App\Services\KitchenOrderReleaseService;
 use App\Services\NotificationService;
+use App\Services\OrderSessionService;
 use App\Services\PaymentGuardService;
 use App\Services\ShareOrderService;
 use App\Services\StripePaymentService;
@@ -21,6 +23,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Stripe\Exception\InvalidRequestException as StripeInvalidRequestException;
@@ -35,6 +38,8 @@ class PaymentController extends Controller
         private readonly StripePaymentService $stripe,
         private readonly TableStatePatchService $statePatches,
         private readonly CustomerCommandBus $commands,
+        private readonly OrderSessionService $orderSessions,
+        private readonly KitchenOrderReleaseService $kitchenReleases,
     ) {}
 
     private function pendingCommandResponse(TableScanSession $session): ?JsonResponse
@@ -131,14 +136,11 @@ class PaymentController extends Controller
             return $pending;
         }
 
-        $tableSessionIds = TableScanSession::where('vendor_id', $payerSession->vendor_id)
-            ->where('restaurant_table_id', $payerSession->restaurant_table_id)
-            ->where('status', 'active')
-            ->pluck('id');
+        $tableSessionIds = $this->orderSessions->groupSessionIds($payerSession);
 
         $result = DB::transaction(function () use ($tableSessionIds, $payer, $payerSession, $targetOrderId) {
             $orders = Order::whereIn('table_scan_session_id', $tableSessionIds)
-                ->whereNotIn('status', [Order::STATUS_DRAFT, Order::STATUS_CANCELLED])
+                ->whereNotIn('status', $this->eligibleExcludedStatuses($payerSession))
                 ->where('payment_received', false)
                 ->where(function (Builder $match) use ($targetOrderId) {
                     $match->where('order_public_id', $targetOrderId);
@@ -238,8 +240,8 @@ class PaymentController extends Controller
             $result['affected_item_ids'],
             $result['removed_order_ids'],
         );
-        NotificationService::notifyTableCustomers(
-            $payerSession->restaurant_table_id,
+        $this->orderSessions->notifyCustomers(
+            $payerSession,
             'order_updated',
             "{$payerIdentity['name']} is paying for {$targetName}'s orders.",
             [
@@ -283,10 +285,7 @@ class PaymentController extends Controller
             return $pending;
         }
 
-        $tableSessionIds = TableScanSession::where('vendor_id', $payerSession->vendor_id)
-            ->where('restaurant_table_id', $payerSession->restaurant_table_id)
-            ->where('status', 'active')
-            ->pluck('id');
+        $tableSessionIds = $this->orderSessions->groupSessionIds($payerSession);
 
         $result = DB::transaction(function () use ($tableSessionIds, $payer, $orderId) {
             $query = Order::whereIn('table_scan_session_id', $tableSessionIds)
@@ -370,8 +369,8 @@ class PaymentController extends Controller
                 ->get()
                 ->map(fn (Order $o) => NotificationService::orderSnapshot($o))
                 ->values()->all();
-            NotificationService::notifyTableCustomers(
-                $payerSession->restaurant_table_id,
+            $this->orderSessions->notifyCustomers(
+                $payerSession,
                 'order_updated',
                 "{$payerIdentity['name']} is no longer paying for {$targetName}'s orders.",
                 [
@@ -503,8 +502,8 @@ class PaymentController extends Controller
                 ->get()
                 ->map(fn (Order $o) => NotificationService::orderSnapshot($o))
                 ->values()->all();
-            NotificationService::notifyTableCustomers(
-                $payerSession->restaurant_table_id,
+            $this->orderSessions->notifyCustomers(
+                $payerSession,
                 'payment_updated',
                 "{$customerName} canceled the payment.",
                 [
@@ -542,7 +541,7 @@ class PaymentController extends Controller
 
         if ($orders->isEmpty()) {
             $assignedElsewhere = Order::where('table_scan_session_id', $payerSession->id)
-                ->whereNotIn('status', [Order::STATUS_DRAFT, Order::STATUS_CANCELLED])
+                ->whereNotIn('status', $this->eligibleExcludedStatuses($payerSession))
                 ->where('payment_received', false)
                 ->whereNotNull('paid_by')
                 ->where('paid_by', '!=', $customer->id)
@@ -566,7 +565,7 @@ class PaymentController extends Controller
             $unboundCount = CartItem::where('table_scan_session_id', $sessionId)
                 ->whereNull('order_id')
                 ->count();
-            if ($unboundCount > 0) {
+            if ($unboundCount > 0 && ! $this->orderSessions->isOffPremise($payerSession)) {
                 return response()->json([
                     'message' => 'You have items in your cart that have not been submitted. Please confirm your full order before paying.',
                     'unbound_item_count' => $unboundCount,
@@ -674,6 +673,8 @@ class PaymentController extends Controller
                     abort(409, 'One or more orders are no longer assigned to this payer.');
                 }
 
+                $this->bindOffPremiseDraftItems($lockedOrders);
+
                 $intent = $this->stripe->createPaymentIntent(
                     $this->stripeAmountMinor($amount, $currency),
                     $currency,
@@ -724,28 +725,25 @@ class PaymentController extends Controller
 
         $statePatch = $this->statePatches->build('payment.initiated', $orderIds);
 
-        if ($order->table_scan_session_id) {
-            $tableId = $order->tableScanSession?->restaurant_table_id;
-            if ($tableId) {
-                $customerName = trim(($customer->first_name ?? '').' '.($customer->last_name ?? '')) ?: 'A guest';
-                $snapshots = Order::with('paidBy:id,first_name,last_name')
-                    ->whereIn('id', $orderIds)->get()
-                    ->map(fn (Order $o) => NotificationService::orderSnapshot($o))
-                    ->values()->all();
-                NotificationService::notifyTableCustomers(
-                    $tableId,
-                    'payment_updated',
-                    "{$customerName} initiated a payment.",
-                    [
-                        'template' => 'payment.initiated',
-                        'customer_id' => $customer->id,
-                        'customer_name' => $customerName,
-                        'order_id' => $order->id,
-                        'order_snapshots' => $snapshots,
-                        'state_patch' => $statePatch,
-                    ],
-                );
-            }
+        if ($order->table_scan_session_id && $order->tableScanSession) {
+            $customerName = trim(($customer->first_name ?? '').' '.($customer->last_name ?? '')) ?: 'A guest';
+            $snapshots = Order::with('paidBy:id,first_name,last_name')
+                ->whereIn('id', $orderIds)->get()
+                ->map(fn (Order $o) => NotificationService::orderSnapshot($o))
+                ->values()->all();
+            $this->orderSessions->notifyCustomers(
+                $order->tableScanSession,
+                'payment_updated',
+                "{$customerName} initiated a payment.",
+                [
+                    'template' => 'payment.initiated',
+                    'customer_id' => $customer->id,
+                    'customer_name' => $customerName,
+                    'order_id' => $order->id,
+                    'order_snapshots' => $snapshots,
+                    'state_patch' => $statePatch,
+                ],
+            );
         }
 
         return response()->json([
@@ -781,7 +779,7 @@ class PaymentController extends Controller
 
         if ($orders->isEmpty()) {
             $assignedElsewhere = Order::where('table_scan_session_id', $payerSession->id)
-                ->whereNotIn('status', [Order::STATUS_DRAFT, Order::STATUS_CANCELLED])
+                ->whereNotIn('status', $this->eligibleExcludedStatuses($payerSession))
                 ->where('payment_received', false)
                 ->whereNotNull('paid_by')
                 ->where('paid_by', '!=', $customer->id)
@@ -805,7 +803,7 @@ class PaymentController extends Controller
             $unboundCount = CartItem::where('table_scan_session_id', $sessionId)
                 ->whereNull('order_id')
                 ->count();
-            if ($unboundCount > 0) {
+            if ($unboundCount > 0 && ! $this->orderSessions->isOffPremise($payerSession)) {
                 return response()->json([
                     'message' => 'You have items in your cart that have not been submitted. Please confirm your full order before paying.',
                     'unbound_item_count' => $unboundCount,
@@ -854,6 +852,8 @@ class PaymentController extends Controller
                 abort(409, 'One or more orders are no longer assigned to this payer.');
             }
 
+            $this->bindOffPremiseDraftItems($lockedOrders);
+
             $payment = OrderPayment::create([
                 'order_id' => $order->id,
                 'order_ids' => $orderIdsArray,
@@ -897,15 +897,13 @@ class PaymentController extends Controller
         $statePatch = $this->statePatches->build('payment.cash_requested', $orderIds);
 
         $customerName = trim(($customer->first_name ?? '').' '.($customer->last_name ?? '')) ?: 'A guest';
-        $tableId = $order->tableScanSession?->restaurant_table_id;
-
-        if ($tableId) {
+        if ($order->tableScanSession) {
             $snapshots = Order::with('paidBy:id,first_name,last_name')
                 ->whereIn('id', $orderIds)->get()
                 ->map(fn (Order $o) => NotificationService::orderSnapshot($o))
                 ->values()->all();
-            NotificationService::notifyTableCustomers(
-                $tableId,
+            $this->orderSessions->notifyCustomers(
+                $order->tableScanSession,
                 'payment_updated',
                 "{$customerName} requested cash payment.",
                 [
@@ -921,7 +919,9 @@ class PaymentController extends Controller
         }
 
         return response()->json([
-            'message' => 'Cash payment requested. A waiter will come to your table.',
+            'message' => $this->orderSessions->isOffPremise($payerSession)
+                ? 'Cash payment requested. Please pay when collecting the order.'
+                : 'Cash payment requested. A waiter will come to your table.',
             'amount' => $amount,
             'currency' => strtoupper($currency),
             'state_patch' => $statePatch,
@@ -1045,27 +1045,24 @@ class PaymentController extends Controller
 
         $statePatch = $this->statePatches->build('payment.updated', $coveredOrders->pluck('id'));
 
-        if ($order->table_scan_session_id) {
-            $tableId = $order->tableScanSession?->restaurant_table_id;
-            if ($tableId) {
-                $customerName = trim(($customer->first_name ?? '').' '.($customer->last_name ?? '')) ?: 'A guest';
-                $snapshots = $coveredOrders->map(fn (Order $o) => NotificationService::orderSnapshot($o->fresh()->load('paidBy')))
-                    ->values()->all();
-                NotificationService::notifyTableCustomers(
-                    $tableId,
-                    'payment_updated',
-                    "{$customerName} updated the payment.",
-                    [
-                        'template' => 'payment.updated',
-                        'customer_id' => $customer->id,
-                        'customer_name' => $customerName,
-                        'order_id' => $order->id,
-                        'payment_id' => $payment->id,
-                        'order_snapshots' => $snapshots,
-                        'state_patch' => $statePatch,
-                    ],
-                );
-            }
+        if ($order->table_scan_session_id && $order->tableScanSession) {
+            $customerName = trim(($customer->first_name ?? '').' '.($customer->last_name ?? '')) ?: 'A guest';
+            $snapshots = $coveredOrders->map(fn (Order $o) => NotificationService::orderSnapshot($o->fresh()->load('paidBy')))
+                ->values()->all();
+            $this->orderSessions->notifyCustomers(
+                $order->tableScanSession,
+                'payment_updated',
+                "{$customerName} updated the payment.",
+                [
+                    'template' => 'payment.updated',
+                    'customer_id' => $customer->id,
+                    'customer_name' => $customerName,
+                    'order_id' => $order->id,
+                    'payment_id' => $payment->id,
+                    'order_snapshots' => $snapshots,
+                    'state_patch' => $statePatch,
+                ],
+            );
         }
 
         return response()->json([
@@ -1221,19 +1218,16 @@ class PaymentController extends Controller
 
     private function activeSession(int $customerId, ?Request $request = null): ?TableScanSession
     {
-        $query = TableScanSession::where('customer_id', $customerId)
-            ->where('status', 'active');
-
         if ($request) {
-            $orderMode = $request->header('X-Order-Mode');
-            if ($orderMode === 'pickup') {
-                $query->where('type', 'pickup');
-            } elseif ($orderMode === 'dine-in') {
-                $query->where('type', 'dine_in');
-            }
+            return $this->orderSessions->activeForCustomer($customerId, $request);
         }
 
-        return $query->latest('scanned_at')->first();
+        return TableScanSession::query()
+            ->where('customer_id', $customerId)
+            ->where('status', 'active')
+            ->latest('scanned_at')
+            ->latest('id')
+            ->first();
     }
 
     private function orderOwnerCustomerId(Order $order): ?int
@@ -1255,14 +1249,7 @@ class PaymentController extends Controller
 
     private function payableSessionOrders(TableScanSession $payerSession, int $payerId): EloquentCollection
     {
-        if ($payerSession->restaurant_table_id === null) {
-            $activeSessionIds = collect([$payerSession->id]);
-        } else {
-            $activeSessionIds = TableScanSession::where('vendor_id', $payerSession->vendor_id)
-                ->where('restaurant_table_id', $payerSession->restaurant_table_id)
-                ->where('status', 'active')
-                ->pluck('id');
-        }
+        $activeSessionIds = $this->orderSessions->groupSessionIds($payerSession);
 
         return Order::with([
             'vendor.vendorSetting',
@@ -1271,7 +1258,7 @@ class PaymentController extends Controller
             'paidBy:id,first_name,last_name',
         ])
             ->whereIn('table_scan_session_id', $activeSessionIds)
-            ->whereNotIn('status', [Order::STATUS_DRAFT, Order::STATUS_CANCELLED])
+            ->whereNotIn('status', $this->eligibleExcludedStatuses($payerSession))
             ->where('payment_received', false)
             ->where(function (Builder $query) use ($payerSession, $payerId) {
                 $query->where(function (Builder $own) use ($payerSession, $payerId) {
@@ -1286,13 +1273,40 @@ class PaymentController extends Controller
             ->values();
     }
 
+    /** @return array<int, string> */
+    private function eligibleExcludedStatuses(TableScanSession $session): array
+    {
+        return $this->orderSessions->isOffPremise($session)
+            ? [Order::STATUS_CANCELLED]
+            : [Order::STATUS_DRAFT, Order::STATUS_CANCELLED];
+    }
+
+    private function bindOffPremiseDraftItems(EloquentCollection $orders): void
+    {
+        foreach ($orders as $order) {
+            if ($order->status !== Order::STATUS_DRAFT) {
+                continue;
+            }
+
+            $session = $order->tableScanSession;
+            if (! $session || ! $this->orderSessions->isOffPremise($session)) {
+                continue;
+            }
+
+            CartItem::query()
+                ->where('table_scan_session_id', $session->id)
+                ->whereNull('order_id')
+                ->update(['order_id' => $order->id]);
+        }
+    }
+
     /**
      * Cancel the customer's own abandoned intent, mark the payment canceled,
      * and reset payment_pending on the unpaid orders it covered. Returns the
      * covered order ids. Aborts with 409 when the intent turns out to be
      * completed (or otherwise uncancelable) on Stripe's side.
      */
-    private function cancelAbandonedPayment(OrderPayment $payment): \Illuminate\Support\Collection
+    private function cancelAbandonedPayment(OrderPayment $payment): Collection
     {
         if ($payment->stripe_payment_intent_id) {
             try {
@@ -1365,8 +1379,8 @@ class PaymentController extends Controller
             $this->paymentOrders($payment)->pluck('id'),
         );
 
-        NotificationService::notifyTableCustomers(
-            $session->restaurant_table_id,
+        $this->orderSessions->notifyCustomers(
+            $session,
             'payment_updated',
             'A payment has been completed on this table.',
             [
@@ -1410,9 +1424,21 @@ class PaymentController extends Controller
 
     private function computeTableOrderAmount(Order $order, string $vendorCountry = 'AT'): float
     {
-        $owned = CartItem::with('menuItem:id,price,has_discount,discounted_price,vat_rate,tax_category')
-            ->where('order_id', $order->id)
-            ->get();
+        $ownedQuery = CartItem::with('menuItem:id,price,has_discount,discounted_price,vat_rate,tax_category')
+            ->where(function (Builder $query) use ($order) {
+                $query->where('order_id', $order->id);
+
+                if ($order->status === Order::STATUS_DRAFT
+                    && $order->tableScanSession
+                    && $this->orderSessions->isOffPremise($order->tableScanSession)) {
+                    $query->orWhere(function (Builder $open) use ($order) {
+                        $open->where('table_scan_session_id', $order->table_scan_session_id)
+                            ->whereNull('order_id');
+                    });
+                }
+            });
+
+        $owned = $ownedQuery->get();
 
         $sharedInto = CartItem::with('menuItem:id,price,has_discount,discounted_price,vat_rate,tax_category')
             ->whereJsonContains('shared_order_ids', $order->id)
@@ -1481,13 +1507,39 @@ class PaymentController extends Controller
 
         if ($status === 'succeeded') {
             foreach ($orders as $order) {
-                $order->update([
+                $wasPaymentReceived = (bool) $order->payment_received;
+                $updates = [
                     'payment_method' => 'stripe',
                     'transaction_id' => $payment->stripe_payment_intent_id,
                     'payment_pending' => false,
                     'payment_received' => true,
                     'payment_confirmed_at' => $order->payment_confirmed_at ?? $now,
-                ]);
+                ];
+
+                if ($order->tableScanSession
+                    && $this->orderSessions->isOffPremise($order->tableScanSession)
+                    && $order->status === Order::STATUS_DRAFT) {
+                    $updates['status'] = Order::STATUS_CONFIRMED;
+                    $updates['confirmed_at'] = $order->confirmed_at ?? $now;
+                }
+
+                $order->update($updates);
+
+                if ($order->tableScanSession
+                    && $this->orderSessions->isOffPremise($order->tableScanSession)) {
+                    CartItem::query()
+                        ->where('order_id', $order->id)
+                        ->whereNull('received_at')
+                        ->update(['received_at' => $now]);
+
+                    if (! $wasPaymentReceived) {
+                        $this->kitchenReleases->notifyPaidOffPremiseOrder(
+                            $order->fresh(['tableScanSession.restaurantTable']),
+                            'customer',
+                            (int) $payment->customer_id,
+                        );
+                    }
+                }
             }
 
             return;

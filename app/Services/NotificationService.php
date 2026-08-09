@@ -415,6 +415,7 @@ class NotificationService
                 'preparing_start_at' => $ci->preparing_start_at?->toISOString(),
                 'ready_at' => $ci->ready_at?->toISOString(),
                 'served_at' => $ci->served_at?->toISOString(),
+                'picked_up_at' => $ci->picked_up_at?->toISOString(),
             ])->values()->all();
         }
 
@@ -452,19 +453,37 @@ class NotificationService
             'picked_up' => 'picked-up',
             default => $order->status,
         };
+        $readyAt = $items->isNotEmpty() && $items->every(fn (CartItem $item) => $item->ready_at !== null)
+            ? $items->max(fn (CartItem $item) => $item->ready_at)
+            : null;
+        $pickupStatus = $order->status === Order::STATUS_PICKED_UP
+            ? 'picked-up'
+            : ($readyAt ? 'ready' : 'pending');
+        $orderMode = $order->tableScanSession?->type ?? $order->order_type;
 
         return [
             'id' => (string) $order->id,
             'orderPublicId' => $order->order_public_id,
             'orderNumber' => $order->order_number ?? $order->id,
             'orderType' => $order->order_type ?? 'dine-in',
+            'orderMode' => $orderMode,
             'tableId' => $table ? (string) $table->id : null,
-            'tableNumber' => $order->table_number ?? $table?->number ?? 'TAKEAWAY',
+            'tableNumber' => $order->table_number ?? $table?->number ?? match ($orderMode) {
+                OrderSessionService::PICKUP => 'PICKUP',
+                OrderSessionService::TAKEAWAY => 'TAKEAWAY',
+                default => null,
+            },
             'tableScanSessionId' => $order->table_scan_session_id ? (string) $order->table_scan_session_id : null,
             'placedBy' => $order->placed_by ?? ($order->customer_id ? 'customer' : 'waiter'),
             'customerName' => $customerName !== '' ? $customerName : null,
             'status' => $order->status,
             'displayStatus' => $displayStatus,
+            'pickupStatus' => $pickupStatus,
+            'scheduledFor' => $order->tableScanSession?->scheduled_for?->toISOString(),
+            'kitchenReleasedAt' => $order->kitchen_released_at?->toISOString(),
+            'pickupTime' => ($order->tableScanSession?->scheduled_for
+                ?? $order->confirmed_at?->copy()->addMinutes(20)
+                ?? $order->created_at?->copy()->addMinutes(20))?->toISOString(),
             'items' => $items->map(function (CartItem $item) use ($order, $country) {
                 $quantity = max(1, (int) $item->quantity);
                 $unitPrice = round(TaxCalculationService::cartItemLineTotalGross($item, $country) / $quantity, 2);
@@ -494,6 +513,8 @@ class NotificationService
                     'ready_at' => $item->ready_at?->toISOString(),
                     'servedAt' => $item->served_at?->toISOString(),
                     'served_at' => $item->served_at?->toISOString(),
+                    'pickedUpAt' => $item->picked_up_at?->toISOString(),
+                    'picked_up_at' => $item->picked_up_at?->toISOString(),
                 ];
             })->all(),
             'total' => (float) $order->amount,
@@ -502,6 +523,8 @@ class NotificationService
             'paymentMethod' => $order->payment_method,
             'paymentPending' => (bool) $order->payment_pending,
             'paymentReceived' => (bool) $order->payment_received,
+            'readyAt' => $readyAt?->toISOString(),
+            'pickedUpAt' => $order->picked_up_at?->toISOString(),
             'createdAt' => $order->created_at->toISOString(),
             'updatedAt' => $order->updated_at->toISOString(),
         ];

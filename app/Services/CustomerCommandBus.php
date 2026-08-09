@@ -70,6 +70,7 @@ class CustomerCommandBus
         string $operation,
         array $payload,
         ?string $locale = null,
+        ?string $orderMode = null,
     ): array {
         $commandId = (string) Str::uuid7();
         $sequence = (int) Redis::incr($this->sequenceKey((int) $session->id));
@@ -96,6 +97,7 @@ class CustomerCommandBus
                 $operation,
                 $payload,
                 $locale,
+                $orderMode,
             )
                 ->onConnection((string) config('services.customer_commands.connection', 'redis'))
                 ->onQueue((string) config('services.customer_commands.queue', 'customercommands'));

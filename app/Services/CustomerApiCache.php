@@ -52,6 +52,11 @@ class CustomerApiCache
     {
         $customerId = $request->user('customer')?->id ?? 0;
         $locale = strtolower((string) $request->header('Accept-Language', 'en'));
+        $orderMode = match (strtolower(trim((string) $request->header('X-Order-Mode')))) {
+            'pickup' => 'pickup',
+            'takeaway' => 'takeaway',
+            default => 'dine_in',
+        };
         $identity = implode('|', [
             $this->version(),
             $request->route()?->getName() ?? $request->path(),
@@ -59,6 +64,7 @@ class CustomerApiCache
             http_build_query($request->query()),
             $customerId,
             $locale,
+            $orderMode,
         ]);
 
         return 'customer-api-cache:response:'.hash('sha256', $identity);

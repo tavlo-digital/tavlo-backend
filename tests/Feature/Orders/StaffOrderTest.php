@@ -29,6 +29,7 @@ class StaffOrderTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        config()->set('services.staff_commands.enabled', false);
 
         $this->vendor = Vendor::factory()->create(['country' => 'Austria']);
         $this->vendor->vendorSetting()->create([

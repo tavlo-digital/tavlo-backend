@@ -35,6 +35,7 @@ class ProcessCustomerCommand implements ShouldQueue
         public readonly string $operation,
         public readonly array $payload,
         public readonly ?string $locale = null,
+        public readonly ?string $orderMode = null,
     ) {}
 
     public function middleware(): array
@@ -98,6 +99,9 @@ class ProcessCustomerCommand implements ShouldQueue
             $request->attributes->set('customer_command_id', $this->commandId);
             if ($this->locale) {
                 $request->headers->set('Accept-Language', $this->locale);
+            }
+            if ($this->orderMode) {
+                $request->headers->set('X-Order-Mode', $this->orderMode);
             }
 
             $response = $this->execute($cart, $request);

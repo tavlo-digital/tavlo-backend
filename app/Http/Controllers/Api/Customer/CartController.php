@@ -12,6 +12,7 @@ use App\Services\CustomerCommandBus;
 use App\Services\LocaleService;
 use App\Services\MenuCustomizationService;
 use App\Services\NotificationService;
+use App\Services\OrderSessionService;
 use App\Services\OrderSharingService;
 use App\Services\TableStatePatchService;
 use App\Services\TaxCalculationService;
@@ -32,6 +33,7 @@ class CartController extends Controller
         private readonly TableStatePatchService $statePatches,
         private readonly OrderSharingService $orderSharing,
         private readonly CustomerCommandBus $commands,
+        private readonly OrderSessionService $orderSessions,
     ) {}
 
     private function queuedCommandResponse(
@@ -59,6 +61,7 @@ class CartController extends Controller
                 $operation,
                 $payload,
                 $request->header('Accept-Language'),
+                $this->orderSessions->mode($request),
             );
         } catch (\Throwable $exception) {
             report($exception);
@@ -93,17 +96,7 @@ class CartController extends Controller
      */
     private function activeSession(Request $request): ?TableScanSession
     {
-        $query = TableScanSession::where('customer_id', $request->user()->id)
-            ->where('status', 'active');
-
-        $orderMode = $request->header('X-Order-Mode');
-        if ($orderMode === 'pickup') {
-            $query->where('type', 'pickup');
-        } elseif ($orderMode === 'dine-in') {
-            $query->where('type', 'dine_in');
-        }
-
-        return $query->latest('scanned_at')->first();
+        return $this->orderSessions->activeForCustomer((int) $request->user()->id, $request);
     }
 
     /**
@@ -112,7 +105,7 @@ class CartController extends Controller
      */
     private function activeSharingSession(Request $request): ?TableScanSession
     {
-        return TableScanSession::query()
+        $query = TableScanSession::query()
             ->select('table_scan_sessions.*')
             ->addSelect([
                 'sharing_vendor_country' => Vendor::query()
@@ -125,8 +118,11 @@ class CartController extends Controller
                     ->limit(1),
             ])
             ->where('customer_id', $request->user()->id)
-            ->where('status', 'active')
+            ->where('status', 'active');
+
+        return $this->orderSessions->applyMode($query, $request)
             ->latest('scanned_at')
+            ->latest('id')
             ->first();
     }
 
@@ -137,15 +133,7 @@ class CartController extends Controller
      */
     private function tableSessionIds(TableScanSession $session): array
     {
-        if ($session->restaurant_table_id === null) {
-            return [$session->id];
-        }
-
-        return TableScanSession::where('restaurant_table_id', $session->restaurant_table_id)
-            ->where('vendor_id', $session->vendor_id)
-            ->where('status', 'active')
-            ->pluck('id')
-            ->all();
+        return $this->orderSessions->groupSessionIds($session);
     }
 
     private function customerName($customer): string
@@ -398,23 +386,21 @@ class CartController extends Controller
             ? $this->customizations->menuItemName($item->menuItem, $vendor, $locale)
             : ($item->menuItem?->name ?? 'an item');
         $realtimeCart = $this->realtimeCartMetadata($mySession, $request);
-        if ($mySession->restaurant_table_id) {
-            NotificationService::notifyTableCustomers(
-                $mySession->restaurant_table_id,
-                'cart_updated',
-                "{$customerName} added {$itemName} to the cart.",
-                [
-                    'template' => 'cart.item_added',
-                    'customer_id' => $request->user()->id,
-                    'customer_name' => $customerName,
-                    'menu_item_id' => $item->menu_item_id,
-                    'item_name' => $itemName,
-                    'command_id' => $request->attributes->get('customer_command_id'),
-                    'command_status' => $request->attributes->get('customer_command_id') ? 'completed' : null,
-                    ...$realtimeCart,
-                ],
-            );
-        }
+        $this->orderSessions->notifyCustomers(
+            $mySession,
+            'cart_updated',
+            "{$customerName} added {$itemName} to the cart.",
+            [
+                'template' => 'cart.item_added',
+                'customer_id' => $request->user()->id,
+                'customer_name' => $customerName,
+                'menu_item_id' => $item->menu_item_id,
+                'item_name' => $itemName,
+                'command_id' => $request->attributes->get('customer_command_id'),
+                'command_status' => $request->attributes->get('customer_command_id') ? 'completed' : null,
+                ...$realtimeCart,
+            ],
+        );
 
         return response()->json([
             ...$this->itemPayload($item, $mySession->vendor?->country, $vendor, $locale),
@@ -519,23 +505,21 @@ class CartController extends Controller
             ? $this->customizations->menuItemName($item->menuItem, $vendor, $locale)
             : ($item->menuItem?->name ?? 'an item');
         $realtimeCart = $this->realtimeCartMetadata($mySession, $request);
-        if ($mySession->restaurant_table_id) {
-            NotificationService::notifyTableCustomers(
-                $mySession->restaurant_table_id,
-                'cart_updated',
-                "{$customerName} updated {$itemName} in the cart.",
-                [
-                    'template' => 'cart.item_updated',
-                    'customer_id' => $request->user()->id,
-                    'customer_name' => $customerName,
-                    'menu_item_id' => $item->menu_item_id,
-                    'item_name' => $itemName,
-                    'command_id' => $request->attributes->get('customer_command_id'),
-                    'command_status' => $request->attributes->get('customer_command_id') ? 'completed' : null,
-                    ...$realtimeCart,
-                ],
-            );
-        }
+        $this->orderSessions->notifyCustomers(
+            $mySession,
+            'cart_updated',
+            "{$customerName} updated {$itemName} in the cart.",
+            [
+                'template' => 'cart.item_updated',
+                'customer_id' => $request->user()->id,
+                'customer_name' => $customerName,
+                'menu_item_id' => $item->menu_item_id,
+                'item_name' => $itemName,
+                'command_id' => $request->attributes->get('customer_command_id'),
+                'command_status' => $request->attributes->get('customer_command_id') ? 'completed' : null,
+                ...$realtimeCart,
+            ],
+        );
 
         return response()->json([
             ...$this->itemPayload($item, $mySession->vendor?->country, $vendor, $locale),
@@ -591,23 +575,21 @@ class CartController extends Controller
 
         $customerName = $this->customerName($request->user());
         $realtimeCart = $this->realtimeCartMetadata($mySession, $request);
-        if ($mySession->restaurant_table_id) {
-            NotificationService::notifyTableCustomers(
-                $mySession->restaurant_table_id,
-                'cart_updated',
-                "{$customerName} removed {$itemName} from the cart.",
-                [
-                    'template' => 'cart.item_removed',
-                    'customer_id' => $request->user()->id,
-                    'customer_name' => $customerName,
-                    'menu_item_id' => $menuItemId,
-                    'item_name' => $itemName,
-                    'command_id' => $request->attributes->get('customer_command_id'),
-                    'command_status' => $request->attributes->get('customer_command_id') ? 'completed' : null,
-                    ...$realtimeCart,
-                ],
-            );
-        }
+        $this->orderSessions->notifyCustomers(
+            $mySession,
+            'cart_updated',
+            "{$customerName} removed {$itemName} from the cart.",
+            [
+                'template' => 'cart.item_removed',
+                'customer_id' => $request->user()->id,
+                'customer_name' => $customerName,
+                'menu_item_id' => $menuItemId,
+                'item_name' => $itemName,
+                'command_id' => $request->attributes->get('customer_command_id'),
+                'command_status' => $request->attributes->get('customer_command_id') ? 'completed' : null,
+                ...$realtimeCart,
+            ],
+        );
 
         return response()->json([
             'cart' => $this->cartPayloadForSession($realtimeCart['cart'], $mySession),
@@ -782,21 +764,19 @@ class CartController extends Controller
             $personSnapshot = collect($history['people'])
                 ->first(fn (array $p) => $p['session_id'] === $mySession->id);
 
-            if ($mySession->restaurant_table_id) {
-                NotificationService::notifyTableCustomers(
-                    $mySession->restaurant_table_id,
-                    'order_updated',
-                    "{$customerName} updated their order draft.",
-                    [
-                        'template' => 'order.draft_updated',
-                        'customer_id' => $request->user()->id,
-                        'customer_name' => $customerName,
-                        'order_id' => $existingOrder->id,
-                        'order_snapshots' => [NotificationService::orderSnapshot($existingOrder->fresh()->load('paidBy'))],
-                        'person_snapshot' => $personSnapshot,
-                    ],
-                );
-            }
+            $this->orderSessions->notifyCustomers(
+                $mySession,
+                'order_updated',
+                "{$customerName} updated their order draft.",
+                [
+                    'template' => 'order.draft_updated',
+                    'customer_id' => $request->user()->id,
+                    'customer_name' => $customerName,
+                    'order_id' => $existingOrder->id,
+                    'order_snapshots' => [NotificationService::orderSnapshot($existingOrder->fresh()->load('paidBy'))],
+                    'person_snapshot' => $personSnapshot,
+                ],
+            );
 
             return response()->json($history);
         }
@@ -815,7 +795,9 @@ class CartController extends Controller
                 'currency' => $currency,
                 'payment_pending' => false,
                 'payment_received' => false,
-                'order_type' => $mySession->type === 'pickup' ? 'takeaway' : 'dine-in',
+                'order_type' => $this->orderSessions->isOffPremise($mySession)
+                    ? $mySession->type
+                    : 'dine-in',
             ]);
         });
 
@@ -830,22 +812,20 @@ class CartController extends Controller
         $personSnapshot = collect($history['people'])
             ->first(fn (array $p) => $p['session_id'] === $mySession->id);
 
-        if ($mySession->restaurant_table_id) {
-            NotificationService::notifyTableCustomers(
-                $mySession->restaurant_table_id,
-                'order_updated',
-                "{$customerName} created an order draft.",
-                [
-                    'template' => 'order.draft_created',
-                    'customer_id' => $request->user()->id,
-                    'customer_name' => $customerName,
-                    'order_snapshots' => $freshDraft
-                        ? [NotificationService::orderSnapshot($freshDraft)]
-                        : [],
-                    'person_snapshot' => $personSnapshot,
-                ],
-            );
-        }
+        $this->orderSessions->notifyCustomers(
+            $mySession,
+            'order_updated',
+            "{$customerName} created an order draft.",
+            [
+                'template' => 'order.draft_created',
+                'customer_id' => $request->user()->id,
+                'customer_name' => $customerName,
+                'order_snapshots' => $freshDraft
+                    ? [NotificationService::orderSnapshot($freshDraft)]
+                    : [],
+                'person_snapshot' => $personSnapshot,
+            ],
+        );
 
         return response()->json($history, 201);
     }
@@ -893,24 +873,22 @@ class CartController extends Controller
         );
 
         $customerName = $this->customerName($request->user());
-        if ($mySession->restaurant_table_id) {
-            NotificationService::notifyTableCustomers(
-                $mySession->restaurant_table_id,
-                'order_updated',
-                "{$customerName} updated item sharing on the order.",
-                [
-                    'template' => 'order.sharing_updated',
-                    'customer_id' => $request->user()->id,
-                    'customer_name' => $customerName,
-                    'order_id' => $result['order']->id,
-                    'order_snapshots' => $result['order_snapshots'],
-                    'removed_order_ids' => $result['removed_order_ids'],
-                    'state_patch' => $result['state_patch'],
-                    'command_id' => $request->attributes->get('customer_command_id'),
-                    'command_status' => $request->attributes->get('customer_command_id') ? 'completed' : null,
-                ],
-            );
-        }
+        $this->orderSessions->notifyCustomers(
+            $mySession,
+            'order_updated',
+            "{$customerName} updated item sharing on the order.",
+            [
+                'template' => 'order.sharing_updated',
+                'customer_id' => $request->user()->id,
+                'customer_name' => $customerName,
+                'order_id' => $result['order']->id,
+                'order_snapshots' => $result['order_snapshots'],
+                'removed_order_ids' => $result['removed_order_ids'],
+                'state_patch' => $result['state_patch'],
+                'command_id' => $request->attributes->get('customer_command_id'),
+                'command_status' => $request->attributes->get('customer_command_id') ? 'completed' : null,
+            ],
+        );
 
         return response()->json([
             'message' => 'Item sharing updated.',
@@ -987,7 +965,9 @@ class CartController extends Controller
                 'currency' => $currency,
                 'payment_pending' => false,
                 'payment_received' => false,
-                'order_type' => $mySession->type === 'pickup' ? 'takeaway' : 'dine-in',
+                'order_type' => $this->orderSessions->isOffPremise($mySession)
+                    ? $mySession->type
+                    : 'dine-in',
             ]);
             $draftOrder = $order;
         }
@@ -1055,23 +1035,21 @@ class CartController extends Controller
 
         $customerName = $this->customerName($request->user());
 
-        if ($mySession->restaurant_table_id) {
-            NotificationService::notifyTableCustomers(
-                $mySession->restaurant_table_id,
-                'order_updated',
-                "{$customerName} confirmed their order.",
-                [
-                    'template' => 'order.confirmed',
-                    'customer_id' => $request->user()->id,
-                    'customer_name' => $customerName,
-                    'order_id' => $order->id,
-                    'order_snapshots' => [NotificationService::orderSnapshot($order->load('paidBy'), true)],
-                    'person_snapshot' => $personSnapshot,
-                    ...$this->realtimeCartMetadata($mySession, $request),
-                ],
-                false,
-            );
-        }
+        $this->orderSessions->notifyCustomers(
+            $mySession,
+            'order_updated',
+            "{$customerName} confirmed their order.",
+            [
+                'template' => 'order.confirmed',
+                'customer_id' => $request->user()->id,
+                'customer_name' => $customerName,
+                'order_id' => $order->id,
+                'order_snapshots' => [NotificationService::orderSnapshot($order->load('paidBy'), true)],
+                'person_snapshot' => $personSnapshot,
+                ...$this->realtimeCartMetadata($mySession, $request),
+            ],
+            false,
+        );
 
         NotificationService::notifyOperations(
             $mySession->vendor_id,
@@ -1172,14 +1150,7 @@ class CartController extends Controller
             'customer:id,first_name,last_name',
             'restaurantTable:id,number,name',
             'vendor:id,vendor_public_id,restaurant_name,country',
-        ])->where('status', 'active');
-
-        if ($mySession->restaurant_table_id === null) {
-            $sessionsQuery->where('id', $mySession->id);
-        } else {
-            $sessionsQuery->where('restaurant_table_id', $mySession->restaurant_table_id)
-                ->where('vendor_id', $mySession->vendor_id);
-        }
+        ])->whereIn('id', $this->tableSessionIds($mySession));
 
         $sessions = $sessionsQuery->get();
 
@@ -1220,7 +1191,7 @@ class CartController extends Controller
                 $ownedCartItems = $allCartItems->filter(function (CartItem $ci) use ($s, $order) {
                     if ($order->status === 'draft') {
                         return (int) $ci->table_scan_session_id === (int) $s->id
-                            && $ci->order_id === null;
+                            && ($ci->order_id === null || (int) $ci->order_id === (int) $order->id);
                     }
 
                     return (int) $ci->order_id === (int) $order->id;
@@ -1291,7 +1262,10 @@ class CartController extends Controller
             'session' => [
                 'id' => $mySession->id,
                 'status' => $mySession->status,
+                'type' => $mySession->type,
+                'pin' => $mySession->pin !== '' ? $mySession->pin : null,
                 'scanned_at' => $this->dateTimes->formatDateTime($mySession->scanned_at, $vendor),
+                'scheduled_for' => $this->dateTimes->formatDateTime($mySession->scheduled_for, $vendor),
             ],
             'people' => $people,
             'summary' => [

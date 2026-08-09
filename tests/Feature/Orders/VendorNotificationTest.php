@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Orders;
 
+use App\Jobs\DeliverOperationalNotification;
 use App\Models\Customer;
 use App\Models\Notification;
 use App\Models\TeamMember;
@@ -9,6 +10,7 @@ use App\Models\Vendor;
 use App\Services\NotificationService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Defer\DeferredCallbackCollection;
+use Illuminate\Support\Facades\Queue;
 use Tests\TestCase;
 
 class VendorNotificationTest extends TestCase
@@ -24,6 +26,7 @@ class VendorNotificationTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        config()->set('services.staff_commands.enabled', false);
 
         $this->vendor = Vendor::factory()->create();
         $this->waiter = $this->member('waiter');
@@ -32,6 +35,7 @@ class VendorNotificationTest extends TestCase
 
     public function test_operational_notifications_are_scoped_to_each_actor(): void
     {
+        Queue::fake();
         Notification::create([
             'customer_id' => Customer::factory()->create()->id,
             'vendor_id' => $this->vendor->id,
@@ -55,6 +59,7 @@ class VendorNotificationTest extends TestCase
             ],
         );
         $this->invokeDeferredCallbacks();
+        Queue::pushed(DeliverOperationalNotification::class)->sole()->handle();
 
         $vendorResponse = $this->getJson('/api/vendor/notifications', $this->headers($this->vendor));
         $vendorResponse->assertOk()
@@ -84,6 +89,7 @@ class VendorNotificationTest extends TestCase
 
     public function test_silent_notifications_are_realtime_only_and_not_unread(): void
     {
+        Queue::fake();
         NotificationService::notifyOperations(
             $this->vendor->id,
             'cart_updated',
@@ -93,6 +99,7 @@ class VendorNotificationTest extends TestCase
             true,
         );
         $this->invokeDeferredCallbacks();
+        Queue::pushed(DeliverOperationalNotification::class)->sole()->handle();
 
         $this->getJson('/api/vendor/notifications', $this->headers($this->vendor))
             ->assertOk()

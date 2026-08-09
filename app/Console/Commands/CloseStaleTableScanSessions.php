@@ -19,24 +19,34 @@ class CloseStaleTableScanSessions extends Command
     {
         $closed = 0;
 
-        $tableIds = TableScanSession::query()
+        $sessionGroups = TableScanSession::query()
             ->where('status', 'active')
-            ->distinct()
-            ->pluck('restaurant_table_id');
+            ->get()
+            ->groupBy(fn (TableScanSession $session) => $session->restaurant_table_id !== null
+                ? "table:{$session->vendor_id}:{$session->restaurant_table_id}"
+                : "off-premise:{$session->vendor_id}:{$session->type}:{$session->pin}");
 
-        foreach ($tableIds as $tableId) {
-            $sessions = TableScanSession::query()
-                ->where('restaurant_table_id', $tableId)
-                ->where('status', 'active')
-                ->get();
+        foreach ($sessionGroups as $sessions) {
+            $tableId = $sessions->first()?->restaurant_table_id;
 
             if ($sessions->isEmpty() || ! $this->shouldClose($sessions)) {
                 continue;
             }
 
             $customerIds = $sessions->pluck('customer_id')->filter()->unique();
+            $sessionIds = $sessions->pluck('id');
+            $groupOrders = Order::query()
+                ->whereIn('table_scan_session_id', $sessionIds)
+                ->get();
+            $orderIds = $groupOrders->pluck('id')->map(fn ($id) => (int) $id)->values()->all();
+            $completedOffPremise = $tableId === null
+                && $groupOrders->where('status', '!=', Order::STATUS_DRAFT)->isNotEmpty()
+                && $groupOrders->where('status', '!=', Order::STATUS_DRAFT)->every(
+                    fn (Order $order) => $order->payment_received
+                        && in_array($order->status, [Order::STATUS_PICKED_UP, Order::STATUS_CANCELLED], true)
+                );
 
-            Order::whereIn('table_scan_session_id', $sessions->pluck('id'))
+            Order::whereIn('table_scan_session_id', $sessionIds)
                 ->whereNotIn('status', Order::TERMINAL_STATUSES)
                 ->update([
                     'status' => 'cancelled',
@@ -45,7 +55,7 @@ class CloseStaleTableScanSessions extends Command
                 ]);
 
             TableScanSession::query()
-                ->whereIn('id', $sessions->pluck('id'))
+                ->whereIn('id', $sessionIds)
                 ->update([
                     'status' => 'closed',
                     'closed_at' => now(),
@@ -54,23 +64,31 @@ class CloseStaleTableScanSessions extends Command
             NotificationService::notifyCustomers(
                 $customerIds,
                 'session_expire',
-                'Your table session has expired due to inactivity.',
+                $completedOffPremise
+                    ? 'Your pickup session has been completed.'
+                    : 'Your table session has expired due to inactivity.',
                 $sessions->first()?->vendor_id,
                 [
-                    'template' => 'session.expired',
+                    'template' => $completedOffPremise ? 'session.closed' : 'session.expired',
                     'table_id' => $tableId,
+                    'order_ids' => $orderIds,
+                    'order_mode' => $sessions->first()?->type,
                 ],
             );
             NotificationService::notifyOperations(
                 (int) $sessions->first()->vendor_id,
                 'table_session_changed',
-                'A table session expired due to inactivity.',
+                $completedOffPremise
+                    ? 'A pickup session was completed.'
+                    : 'A table session expired due to inactivity.',
                 [NotificationService::VENDOR, NotificationService::WAITER, NotificationService::KITCHEN],
                 [
                     'resources' => ['orders', 'tables', 'dashboard', 'notifications'],
                     'template' => 'staff.table_session_changed',
                     'table_id' => $tableId,
                     'table_label' => $tableId,
+                    'order_ids' => $orderIds,
+                    'order_mode' => $sessions->first()?->type,
                     'severity' => 'info',
                     'sound' => null,
                     'source_actor_type' => 'system',
@@ -92,6 +110,36 @@ class CloseStaleTableScanSessions extends Command
     {
         $sessionIds = $sessions->pluck('id');
 
+        $orders = Order::query()
+            ->whereIn('table_scan_session_id', $sessionIds)
+            ->where('status', '!=', Order::STATUS_CANCELLED)
+            ->get();
+        $realOrders = $orders->reject(fn (Order $order) => $order->status === Order::STATUS_DRAFT);
+        $draftOrders = $orders->where('status', Order::STATUS_DRAFT);
+        $isOffPremise = $sessions->first()?->restaurant_table_id === null;
+
+        if ($isOffPremise && $realOrders->isNotEmpty()) {
+            if ($realOrders->contains(fn (Order $order) => ! $order->payment_received)) {
+                return false;
+            }
+
+            if ($realOrders->contains(fn (Order $order) => ! in_array(
+                $order->status,
+                [Order::STATUS_PICKED_UP, Order::STATUS_CANCELLED],
+                true,
+            ))) {
+                return false;
+            }
+
+            if ($draftOrders->isEmpty()) {
+                return true;
+            }
+
+            if ($draftOrders->contains(fn (Order $order) => $order->payment_pending)) {
+                return false;
+            }
+        }
+
         $hasRecentActivity = CustomerSessionActivity::query()
             ->whereIn('table_scan_session_id', $sessionIds)
             ->where('created_at', '>=', now()->subMinutes(10))
@@ -101,16 +149,15 @@ class CloseStaleTableScanSessions extends Command
             return false;
         }
 
-        $orders = Order::query()
-            ->whereIn('table_scan_session_id', $sessionIds)
-            ->where('status', '!=', 'cancelled')
-            ->get();
-
-        $realOrders = $orders->reject(fn (Order $o) => $o->status === 'draft');
-
         if ($realOrders->isNotEmpty()) {
             if ($realOrders->contains(fn (Order $order) => ! $order->payment_received)) {
                 return false;
+            }
+
+            if ($isOffPremise) {
+                $newestDraftUpdate = $draftOrders->max('updated_at');
+
+                return ! $newestDraftUpdate || $newestDraftUpdate->lt(now()->subMinutes(10));
             }
 
             $paidOrderIds = $realOrders
@@ -125,8 +172,11 @@ class CloseStaleTableScanSessions extends Command
             return true;
         }
 
-        $draftOrders = $orders->where('status', 'draft');
         if ($draftOrders->isNotEmpty()) {
+            if ($draftOrders->contains(fn (Order $order) => $order->payment_pending)) {
+                return false;
+            }
+
             $newestDraftUpdate = $draftOrders->max('updated_at');
 
             return ! $newestDraftUpdate || $newestDraftUpdate->lt(now()->subMinutes(10));

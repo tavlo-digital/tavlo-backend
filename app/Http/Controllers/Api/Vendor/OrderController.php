@@ -12,10 +12,12 @@ use App\Models\TableScanSession;
 use App\Models\TableSession;
 use App\Models\TeamMember;
 use App\Models\Vendor;
+use App\Services\KitchenOrderReleaseService;
 use App\Services\LocaleService;
 use App\Services\MediaService;
 use App\Services\MenuCustomizationService;
 use App\Services\NotificationService;
+use App\Services\OrderSessionService;
 use App\Services\PaymentMethodDetailsService;
 use App\Services\StaffCommandBus;
 use App\Services\TableStatePatchService;
@@ -42,6 +44,8 @@ class OrderController extends Controller
         private readonly MediaService $media,
         private readonly VendorDateTimeService $dateTimes,
         private readonly PaymentMethodDetailsService $paymentMethods,
+        private readonly OrderSessionService $orderSessions,
+        private readonly KitchenOrderReleaseService $kitchenReleases,
     ) {}
 
     /**
@@ -60,6 +64,7 @@ class OrderController extends Controller
             'restaurantTable:id,number,name',
         ])
             ->where('vendor_id', $vendor->id)
+            ->where('type', OrderSessionService::DINE_IN)
             ->where('status', 'active')
             ->orderBy('scanned_at')
             ->get();
@@ -84,15 +89,41 @@ class OrderController extends Controller
         $takeawayQuery = $vendor->orders()
             ->where(function ($q) {
                 $q->whereNull('table_scan_session_id')
-                    ->orWhereHas('tableScanSession', fn ($sq) => $sq->where('type', 'pickup'));
+                    ->orWhereHas('tableScanSession', fn ($sq) => $sq->whereIn('type', [
+                        OrderSessionService::PICKUP,
+                        OrderSessionService::TAKEAWAY,
+                    ]));
             })
             ->where('order_type', '!=', 'dine-in')
+            ->where(function ($query) {
+                $query->where('status', '!=', Order::STATUS_DRAFT)
+                    ->orWhere(function ($cashDraft) {
+                        $cashDraft->where('status', Order::STATUS_DRAFT)
+                            ->where('payment_method', 'cash')
+                            ->where('payment_pending', true)
+                            ->where('payment_received', false);
+                    });
+            })
             ->with([
                 'customer:id,first_name,last_name,email,phone,customer_public_id',
+                'tableScanSession:id,vendor_id,customer_id,type,pin,scheduled_for,scanned_at',
                 'payments:id,order_id,stripe_payment_intent_id,status,payment_method,payment_method_details,paid_at',
                 'coveredPayments:id,stripe_payment_intent_id,status,payment_method,payment_method_details,paid_at',
             ])
             ->orderByDesc('created_at');
+
+        if ($request->user() instanceof TeamMember && $request->user()->role === 'kitchen') {
+            $takeawayQuery->where(function (Builder $visibility): void {
+                $visibility->whereNotNull('kitchen_released_at')
+                    ->orWhere(function (Builder $scheduledPickup): void {
+                        $scheduledPickup->where('payment_received', true)
+                            ->whereHas('tableScanSession', function (Builder $session): void {
+                                $session->where('type', OrderSessionService::PICKUP)
+                                    ->whereNotNull('scheduled_for');
+                            });
+                    });
+            });
+        }
 
         if ($statusFilter) {
             $takeawayQuery->where('status', $statusFilter);
@@ -341,29 +372,94 @@ class OrderController extends Controller
 
         $order = $this->resolveOrder($orderId, $request);
 
-        $order->update([
-            'payment_received' => true,
-            'payment_confirmed_at' => now(),
-            'payment_pending' => false,
-            // This endpoint records an in-person cash collection regardless
-            // of whether the customer previously selected another method.
-            'payment_method' => 'cash',
-            ...(array_key_exists('tipAmount', $data)
-                ? ['tip_amount' => round((float) $data['tipAmount'], 2)]
-                : []),
-            ...(array_key_exists('paymentNote', $data)
-                ? ['payment_note' => $data['paymentNote']]
-                : []),
-        ]);
+        $payment = OrderPayment::query()
+            ->with(['orders.tableScanSession', 'order.tableScanSession'])
+            ->where('payment_method', 'cash')
+            ->whereNotIn('status', ['succeeded', 'canceled', 'failed'])
+            ->where(function (Builder $query) use ($order) {
+                $query->where('order_id', $order->id)
+                    ->orWhereHas('orders', fn (Builder $covered) => $covered->where('orders.id', $order->id));
+            })
+            ->latest('id')
+            ->first();
 
-        $statePatch = $this->statePatches->build('payment.cash_confirmed', [$order->id]);
+        $coveredOrders = $payment?->orders->isNotEmpty()
+            ? $payment->orders
+            : collect([$order]);
+        $coveredOrderIds = $coveredOrders->pluck('id')->map(fn ($id) => (int) $id)->values();
+        $offPremiseUnpaidIds = $coveredOrders
+            ->filter(fn (Order $coveredOrder) => ! $coveredOrder->payment_received
+                && $coveredOrder->tableScanSession
+                && $this->orderSessions->isOffPremise($coveredOrder->tableScanSession))
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->values();
+        $paidAt = now();
 
+        DB::transaction(function () use ($coveredOrders, $payment, $paidAt, $data) {
+            foreach ($coveredOrders as $coveredOrder) {
+                $updates = [
+                    'payment_received' => true,
+                    'payment_confirmed_at' => $paidAt,
+                    'payment_pending' => false,
+                    'payment_method' => 'cash',
+                    ...(array_key_exists('paymentNote', $data)
+                        ? ['payment_note' => $data['paymentNote']]
+                        : []),
+                ];
+
+                if ($coveredOrder->is($coveredOrders->first()) && array_key_exists('tipAmount', $data)) {
+                    $updates['tip_amount'] = round((float) $data['tipAmount'], 2);
+                }
+
+                $session = $coveredOrder->tableScanSession;
+                if ($session && $this->orderSessions->isOffPremise($session)
+                    && $coveredOrder->status === Order::STATUS_DRAFT) {
+                    $updates['status'] = Order::STATUS_CONFIRMED;
+                    $updates['confirmed_at'] = $paidAt;
+                }
+
+                $coveredOrder->update($updates);
+
+                if ($session && $this->orderSessions->isOffPremise($session)) {
+                    CartItem::query()
+                        ->where('order_id', $coveredOrder->id)
+                        ->whereNull('received_at')
+                        ->update(['received_at' => $paidAt]);
+                }
+            }
+
+            $payment?->update(['status' => 'succeeded', 'paid_at' => $paidAt]);
+        });
+
+        $statePatch = $this->statePatches->build('payment.cash_confirmed', $coveredOrderIds);
+
+        $order->refresh()->load('tableScanSession');
+        $orderSnapshots = Order::with('paidBy:id,first_name,last_name')
+            ->whereIn('id', $coveredOrderIds)
+            ->get()
+            ->map(fn (Order $coveredOrder) => NotificationService::orderSnapshot($coveredOrder))
+            ->values()
+            ->all();
         $this->notifySessionCustomers($order, 'payment_updated', 'Your cash payment has been confirmed.', [
             'template' => 'payment.cash_confirmed',
             'order_id' => $order->id,
-            'order_snapshots' => [NotificationService::orderSnapshot($order->fresh()->load('paidBy'))],
+            'order_snapshots' => $orderSnapshots,
             'state_patch' => $statePatch,
         ]);
+
+        if ($offPremiseUnpaidIds->isNotEmpty()) {
+            Order::with('tableScanSession')
+                ->whereIn('id', $offPremiseUnpaidIds)
+                ->get()
+                ->each(function (Order $confirmedOrder) use ($request): void {
+                    $this->kitchenReleases->notifyPaidOffPremiseOrder(
+                        $confirmedOrder,
+                        $request->user() instanceof TeamMember ? 'team_member' : 'vendor',
+                        $request->user()?->id,
+                    );
+                });
+        }
         $this->notifyOperations(
             $request,
             $order,
@@ -396,6 +492,16 @@ class OrderController extends Controller
         }
 
         $order = $this->resolveOrder($orderId, $request);
+        if ($this->isUnpaidOffPremiseDraft($order)) {
+            return response()->json([
+                'message' => 'Pickup and takeaway orders cannot be prepared before payment is confirmed.',
+            ], 409);
+        }
+        if ($this->isWaitingForKitchenRelease($order)) {
+            return response()->json([
+                'message' => 'This scheduled pickup has not entered the kitchen preparation window yet.',
+            ], 409);
+        }
 
         $now = now();
 
@@ -456,6 +562,16 @@ class OrderController extends Controller
         }
 
         $order = $this->resolveOrder($orderId, $request);
+        if ($this->isUnpaidOffPremiseDraft($order)) {
+            return response()->json([
+                'message' => 'Pickup and takeaway orders cannot be prepared before payment is confirmed.',
+            ], 409);
+        }
+        if ($this->isWaitingForKitchenRelease($order)) {
+            return response()->json([
+                'message' => 'This scheduled pickup has not entered the kitchen preparation window yet.',
+            ], 409);
+        }
 
         $transition = DB::transaction(function () use ($order, $cartItemId, $data) {
             $item = $this->linkedCartItemsQuery($order)
@@ -815,17 +931,56 @@ class OrderController extends Controller
      */
     public function markPickedUp(Request $request, string $orderId): JsonResponse
     {
+        if ($queued = $this->queuedStaffCommand(
+            $request,
+            $this->staffCommands,
+            'order.picked_up',
+            ['order_id' => $orderId],
+            $this->staffCommandResourcesForOrderRoute($request, $orderId),
+        )) {
+            return $queued;
+        }
+
         $order = $this->resolveOrder($orderId, $request);
 
-        $order->update([
-            'status' => 'picked_up',
-            'picked_up_at' => now(),
-        ]);
+        if (! $order->tableScanSession || ! $this->orderSessions->isOffPremise($order->tableScanSession)) {
+            return response()->json(['message' => 'Only pickup and takeaway orders can be marked picked up.'], 409);
+        }
+
+        if (! $order->payment_received || $order->status === Order::STATUS_DRAFT) {
+            return response()->json(['message' => 'Payment must be confirmed before pickup.'], 409);
+        }
+
+        if ($order->status === Order::STATUS_PICKED_UP) {
+            return response()->json($this->formatOrder($order->fresh()->load('customer')));
+        }
+
+        if (in_array($order->status, [Order::STATUS_CANCELLED, Order::STATUS_SERVED], true)) {
+            return response()->json(['message' => 'This order can no longer be marked picked up.'], 409);
+        }
+
+        $items = $this->loadLinkedCartItems($order);
+        if ($items->isEmpty() || $items->contains(fn (CartItem $item) => $item->ready_at === null)) {
+            return response()->json(['message' => 'All order items must be ready before pickup.'], 409);
+        }
+
+        $now = now();
+
+        DB::transaction(function () use ($order, $items, $now): void {
+            $items->each(fn (CartItem $item) => $item->update([
+                'picked_up_at' => $item->picked_up_at ?? $now,
+            ]));
+
+            $order->update([
+                'status' => Order::STATUS_PICKED_UP,
+                'picked_up_at' => $order->picked_up_at ?? $now,
+            ]);
+        });
 
         $this->notifySessionCustomers($order, 'order_updated', 'Your order has been picked up.', [
             'template' => 'order.picked_up',
             'order_id' => $order->id,
-            'order_snapshots' => [NotificationService::orderSnapshot($order->fresh()->load('paidBy'))],
+            'order_snapshots' => [NotificationService::orderSnapshot($order->fresh()->load('paidBy'), true)],
         ]);
         $this->notifyOperations($request, $order, 'order_picked_up', 'An order was picked up.', silent: true);
 
@@ -1253,7 +1408,7 @@ class OrderController extends Controller
 
         $pickupStatus = match ($rawStatus) {
             'picked_up' => 'picked-up',
-            default => 'pending',
+            default => $readyAt ? 'ready' : 'pending',
         };
 
         $timeline = [];
@@ -1283,7 +1438,8 @@ class OrderController extends Controller
 
         $items = $linkedItems->map(function (CartItem $ci) use ($order, $isDraftSession, $vendorCountry, $vendor, $locale) {
             $isOwner = $isDraftSession
-                ? ($ci->table_scan_session_id == $order->table_scan_session_id && $ci->order_id === null)
+                ? ($ci->table_scan_session_id == $order->table_scan_session_id
+                    && ($ci->order_id === null || $ci->order_id == $order->id))
                 : ($ci->order_id == $order->id);
 
             $itemTaxCategory = $ci->menuItem?->tax_category ?? 'food';
@@ -1342,6 +1498,8 @@ class OrderController extends Controller
                 'ready_at' => $ci->ready_at?->toISOString(),
                 'servedAt' => $ci->served_at?->toISOString(),
                 'served_at' => $ci->served_at?->toISOString(),
+                'pickedUpAt' => $ci->picked_up_at?->toISOString(),
+                'picked_up_at' => $ci->picked_up_at?->toISOString(),
             ];
         })->values()->all();
 
@@ -1377,6 +1535,12 @@ class OrderController extends Controller
             'status' => $rawStatus,
             'displayStatus' => $displayStatus,
             'pickupStatus' => $pickupStatus,
+            'orderMode' => $order->tableScanSession?->type ?? $order->order_type,
+            'scheduledFor' => $order->tableScanSession?->scheduled_for?->toISOString(),
+            'kitchenReleasedAt' => $order->kitchen_released_at?->toISOString(),
+            'pickupTime' => ($order->tableScanSession?->scheduled_for
+                ?? $order->confirmed_at?->copy()->addMinutes(20)
+                ?? $order->created_at?->copy()->addMinutes(20))?->toISOString(),
             'itemsCount' => $itemsCount,
             'items' => $items,
             'amount' => $total,
@@ -1397,6 +1561,7 @@ class OrderController extends Controller
             'paymentNote' => $order->payment_note,
             'readyAt' => $readyAt?->toISOString(),
             'servedAt' => $order->served_at?->toISOString(),
+            'pickedUpAt' => $order->picked_up_at?->toISOString(),
             'cancelledAt' => $order->cancelled_at?->toISOString(),
             'cancelledReason' => $order->cancelled_reason,
             'timeline' => $timeline,
@@ -1611,7 +1776,7 @@ class OrderController extends Controller
             : TableScanSession::find($order->table_scan_session_id);
 
         if ($session) {
-            NotificationService::notifyTableCustomers($session->restaurant_table_id, $event, $message, $metadata, false);
+            $this->orderSessions->notifyCustomers($session, $event, $message, $metadata, false);
         }
     }
 
@@ -1702,6 +1867,21 @@ class OrderController extends Controller
         return $query->where(function ($q) use ($orderId) {
             $q->where('order_public_id', $orderId)->orWhere('id', $orderId);
         })->firstOrFail();
+    }
+
+    private function isUnpaidOffPremiseDraft(Order $order): bool
+    {
+        return $order->status === Order::STATUS_DRAFT
+            && ! $order->payment_received
+            && $order->tableScanSession
+            && $this->orderSessions->isOffPremise($order->tableScanSession);
+    }
+
+    private function isWaitingForKitchenRelease(Order $order): bool
+    {
+        return $order->tableScanSession
+            && $this->orderSessions->isOffPremise($order->tableScanSession)
+            && $order->kitchen_released_at === null;
     }
 
     private function resolveSession(Vendor $vendor, string $sessionId): TableSession
