@@ -42,13 +42,15 @@ jobs:
       - name: Deploy files via rsync
         uses: burnett01/rsync-deployments@7.0.1
         with:
-          switches: -avz --delete
+          switches: -rlvzc --delete --omit-dir-times --no-perms --no-owner --no-group
+
             --exclude='.git/'
             --exclude='node_modules/'
             --exclude='vendor/'
             --exclude='public/storage/'
             --exclude='.npm-cache/'
             --exclude='storage/'
+            --exclude='cron.log'
 
           path: ./
           remote_path: ./applications/ynfjqwuxxs/public_html
@@ -65,7 +67,7 @@ jobs:
           port: 22
           script: |
             set -e
-            cd ${{ secrets.STAGING_DEPLOY_PATH }}
+            cd ./applications/ynfjqwuxxs/public_html
 
             # Install PHP dependencies only when Composer configuration changes.
             COMPOSER_HASH="$(sha256sum composer.json composer.lock | sha256sum | cut -d ' ' -f 1)"
