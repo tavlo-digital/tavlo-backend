@@ -42,8 +42,13 @@ jobs:
       - name: Deploy files via rsync
         uses: burnett01/rsync-deployments@7.0.1
         with:
-          switches: -rlvzc --delete --omit-dir-times --no-perms --no-owner --no-group
-
+          switches: >-
+            -rlvzc
+            --delete
+            --omit-dir-times
+            --no-perms
+            --no-owner
+            --no-group
             --exclude='.git/'
             --exclude='node_modules/'
             --exclude='vendor/'
