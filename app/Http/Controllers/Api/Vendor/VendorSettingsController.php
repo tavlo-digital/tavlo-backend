@@ -602,6 +602,7 @@ class VendorSettingsController extends Controller
             // ---- core vendor ----
             'id' => (string) $vendor->id,
             'vendorPublicId' => $vendor->vendor_public_id,
+            'slug' => $vendor->slug,
             'name' => $vendor->name,
             'restaurantName' => $vendor->restaurant_name,
             'legalEntityName' => $vendor->legal_entity_name,

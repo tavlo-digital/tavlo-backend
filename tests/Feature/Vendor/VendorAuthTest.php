@@ -22,12 +22,38 @@ class VendorAuthTest extends TestCase
             'password_confirmation' => 'password123',
         ])
             ->assertCreated()
-            ->assertJsonStructure(['user', 'token']);
+            ->assertJsonStructure(['user', 'token'])
+            ->assertJsonPath('user.slug', 'new-vendor');
 
         $this->assertDatabaseHas('vendors', [
             'name' => 'New Vendor',
             'email' => 'vendor@example.com',
             'country' => null,
+            'slug' => 'new-vendor',
+        ]);
+    }
+
+    public function test_vendor_registration_generates_a_unique_slug_for_duplicate_names(): void
+    {
+        Vendor::factory()->create([
+            'name' => 'New Vendor',
+            'restaurant_name' => null,
+            'slug' => 'new-vendor',
+        ]);
+
+        $this->postJson('/api/vendor/register', [
+            'name' => 'New Vendor',
+            'phone' => '+43123456780',
+            'email' => 'another-vendor@example.com',
+            'password' => 'password123',
+            'password_confirmation' => 'password123',
+        ])
+            ->assertCreated()
+            ->assertJsonPath('user.slug', 'new-vendor-2');
+
+        $this->assertDatabaseHas('vendors', [
+            'email' => 'another-vendor@example.com',
+            'slug' => 'new-vendor-2',
         ]);
     }
 

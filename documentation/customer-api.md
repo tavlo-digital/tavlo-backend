@@ -45,6 +45,14 @@ Example response:
 }
 ```
 
+`vendor.slug` is always a non-empty, unique URL slug. Legacy vendor rows are
+backfilled during deployment and new vendors receive a slug automatically.
+
+For compatibility, older QR redirect clients may resolve a takeaway token with
+`GET /api/customer/pickup/status?token={token}`. It returns the same vendor
+identity plus `"type": "takeaway"`; new clients should continue using the
+shared `/table/status` route above.
+
 ### Start a session
 
 `POST /api/customer/table/scan`
@@ -67,6 +75,9 @@ Set `scheduled_for` to `null` for ASAP. Takeaway request body:
   "token": "vendor-takeaway-qr-token"
 }
 ```
+
+Takeaway QR sessions are always stored as ASAP. The server ignores any
+`scheduled_for` value sent by a stale client when `X-Order-Mode: takeaway`.
 
 Example `201` response:
 

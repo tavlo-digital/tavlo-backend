@@ -118,7 +118,7 @@ class AuthController extends Controller
             $hasActiveSubscription = $vendor->subscriptions()
                 ->whereIn('status', ['active', 'trialing'])
                 ->exists();
-            if (!$hasActiveSubscription) {
+            if (! $hasActiveSubscription) {
                 $status = 'pending';
             }
         }
@@ -131,6 +131,7 @@ class AuthController extends Controller
             'actorType' => 'vendor',
             'role' => 'manager',
             'name' => $vendor->name,
+            'slug' => $vendor->slug,
             'restaurantName' => $vendor->restaurant_name,
             'country' => $vendor->country,
             'phone' => $vendor->phone,
@@ -162,6 +163,7 @@ class AuthController extends Controller
             'actorType' => 'team_member',
             'role' => $member->role,
             'name' => $member->name,
+            'slug' => $vendor?->slug,
             'restaurantName' => $vendor?->restaurant_name,
             'country' => $vendor?->country,
             'phone' => null,

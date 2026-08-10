@@ -483,6 +483,12 @@ class TableScanController extends Controller
         $mode = $this->sessions->mode($request);
         $customer = $request->user();
 
+        // A vendor QR always represents an ASAP takeaway. Do not trust a stale
+        // client-supplied schedule to change the semantics of the scanned QR.
+        if ($mode === OrderSessionService::TAKEAWAY) {
+            $data['scheduled_for'] = null;
+        }
+
         $session = DB::transaction(function () use ($vendor, $mode, $customer, $data) {
             $existing = TableScanSession::query()
                 ->where('vendor_id', $vendor->id)

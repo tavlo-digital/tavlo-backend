@@ -3,8 +3,12 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
+use Illuminate\Support\Str;
 use Laravel\Sanctum\HasApiTokens;
 
 class Vendor extends Authenticatable
@@ -13,14 +17,40 @@ class Vendor extends Authenticatable
 
     protected static function booted(): void
     {
-        static::creating(function (Vendor $vendor) {
+        static::saving(function (Vendor $vendor) {
             if (empty($vendor->vendor_public_id)) {
                 do {
                     $id = 'VID-'.str_pad(random_int(1000, 9999), 4, '0', STR_PAD_LEFT);
                 } while (static::where('vendor_public_id', $id)->exists());
                 $vendor->vendor_public_id = $id;
             }
+
+            if (trim((string) $vendor->slug) === '') {
+                $vendor->slug = static::generateUniqueSlug(
+                    $vendor->restaurant_name
+                        ?: $vendor->name
+                        ?: $vendor->vendor_public_id,
+                    $vendor->exists ? $vendor->getKey() : null,
+                );
+            }
         });
+    }
+
+    public static function generateUniqueSlug(string $value, int|string|null $ignoreId = null): string
+    {
+        $base = Str::limit(Str::slug($value) ?: 'vendor', 240, '');
+        $slug = $base;
+        $suffix = 2;
+
+        while (static::query()
+            ->where('slug', $slug)
+            ->when($ignoreId !== null, fn ($query) => $query->whereKeyNot($ignoreId))
+            ->exists()) {
+            $ending = '-'.$suffix++;
+            $slug = Str::limit($base, 255 - strlen($ending), '').$ending;
+        }
+
+        return $slug;
     }
 
     protected $fillable = [
@@ -67,72 +97,72 @@ class Vendor extends Authenticatable
         ];
     }
 
-    public function requestChanges(): \Illuminate\Database\Eloquent\Relations\HasMany
+    public function requestChanges(): HasMany
     {
         return $this->hasMany(VendorRequestChange::class);
     }
 
-    public function subscriptions(): \Illuminate\Database\Eloquent\Relations\HasMany
+    public function subscriptions(): HasMany
     {
         return $this->hasMany(Subscription::class);
     }
 
-    public function activities(): \Illuminate\Database\Eloquent\Relations\HasMany
+    public function activities(): HasMany
     {
         return $this->hasMany(VendorActivity::class);
     }
 
-    public function menuCategories(): \Illuminate\Database\Eloquent\Relations\HasMany
+    public function menuCategories(): HasMany
     {
         return $this->hasMany(MenuCategory::class);
     }
 
-    public function menuItems(): \Illuminate\Database\Eloquent\Relations\HasMany
+    public function menuItems(): HasMany
     {
         return $this->hasMany(MenuItem::class);
     }
 
-    public function modifierGroups(): \Illuminate\Database\Eloquent\Relations\HasMany
+    public function modifierGroups(): HasMany
     {
         return $this->hasMany(ModifierGroup::class);
     }
 
-    public function inventoryItems(): \Illuminate\Database\Eloquent\Relations\HasMany
+    public function inventoryItems(): HasMany
     {
         return $this->hasMany(InventoryItem::class);
     }
 
-    public function inventoryCategories(): \Illuminate\Database\Eloquent\Relations\HasMany
+    public function inventoryCategories(): HasMany
     {
         return $this->hasMany(InventoryCategory::class);
     }
 
-    public function inventorySettings(): \Illuminate\Database\Eloquent\Relations\HasOne
+    public function inventorySettings(): HasOne
     {
         return $this->hasOne(InventorySettings::class);
     }
 
-    public function orders(): \Illuminate\Database\Eloquent\Relations\HasMany
+    public function orders(): HasMany
     {
         return $this->hasMany(Order::class);
     }
 
-    public function reviews(): \Illuminate\Database\Eloquent\Relations\HasMany
+    public function reviews(): HasMany
     {
         return $this->hasMany(Review::class);
     }
 
-    public function reservations(): \Illuminate\Database\Eloquent\Relations\HasMany
+    public function reservations(): HasMany
     {
         return $this->hasMany(Reservation::class);
     }
 
-    public function vendorSetting(): \Illuminate\Database\Eloquent\Relations\HasOne
+    public function vendorSetting(): HasOne
     {
         return $this->hasOne(VendorSetting::class);
     }
 
-    public function countryRecord(): \Illuminate\Database\Eloquent\Relations\BelongsTo
+    public function countryRecord(): BelongsTo
     {
         return $this->belongsTo(Country::class, 'country', 'code');
     }
@@ -190,32 +220,32 @@ class Vendor extends Authenticatable
         return $countryRecord?->timezone ?: 'UTC';
     }
 
-    public function restaurantTables(): \Illuminate\Database\Eloquent\Relations\HasMany
+    public function restaurantTables(): HasMany
     {
         return $this->hasMany(RestaurantTable::class);
     }
 
-    public function teamMembers(): \Illuminate\Database\Eloquent\Relations\HasMany
+    public function teamMembers(): HasMany
     {
         return $this->hasMany(TeamMember::class);
     }
 
-    public function takeawayQr(): \Illuminate\Database\Eloquent\Relations\HasOne
+    public function takeawayQr(): HasOne
     {
         return $this->hasOne(VendorTakeawayQr::class);
     }
 
-    public function tableSessions(): \Illuminate\Database\Eloquent\Relations\HasMany
+    public function tableSessions(): HasMany
     {
         return $this->hasMany(TableSession::class);
     }
 
-    public function paymentMethods(): \Illuminate\Database\Eloquent\Relations\HasMany
+    public function paymentMethods(): HasMany
     {
         return $this->hasMany(PaymentMethod::class);
     }
 
-    public function orderPayments(): \Illuminate\Database\Eloquent\Relations\HasMany
+    public function orderPayments(): HasMany
     {
         return $this->hasMany(OrderPayment::class);
     }

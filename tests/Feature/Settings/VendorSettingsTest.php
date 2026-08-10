@@ -44,6 +44,7 @@ class VendorSettingsTest extends TestCase
         $response->assertOk()
             ->assertJsonStructure([
                 'id',
+                'slug',
                 'restaurantName',
                 'acceptOnSite',
                 'stripeEnabled',
@@ -61,6 +62,8 @@ class VendorSettingsTest extends TestCase
                     '*' => ['code', 'name', 'nativeName', 'flag', 'direction'],
                 ],
             ]);
+
+        $response->assertJsonPath('slug', $this->vendor->slug);
 
         $payload = $response->json();
         $this->assertArrayNotHasKey('acceptCash', $payload);

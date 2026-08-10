@@ -101,8 +101,16 @@ class OffPremiseOrderFlowTest extends TestCase
             ->assertJsonPath('orderMode', 'takeaway')
             ->assertJsonPath('vendor.slug', $this->vendor->slug);
 
+        $this->getJson("/api/customer/pickup/status?token={$qr->qr_token}")
+            ->assertOk()
+            ->assertJsonPath('type', 'takeaway')
+            ->assertJsonPath('vendor.slug', $this->vendor->slug);
+
         $this->asCustomer($this->headers($customer, 'takeaway'))
-            ->postJson('/api/customer/table/scan', ['token' => $qr->qr_token])
+            ->postJson('/api/customer/table/scan', [
+                'token' => $qr->qr_token,
+                'scheduled_for' => now()->addDay()->toISOString(),
+            ])
             ->assertCreated()
             ->assertJsonPath('session.type', 'takeaway')
             ->assertJsonPath('session.scheduledFor', null);

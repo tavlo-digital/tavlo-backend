@@ -99,6 +99,7 @@ class TeamAccessTest extends TestCase
             ->assertJsonPath('user.actorType', 'team_member')
             ->assertJsonPath('user.role', 'kitchen')
             ->assertJsonPath('user.vendorId', (string) $this->vendor->id)
+            ->assertJsonPath('user.slug', $this->vendor->slug)
             ->assertJsonStructure(['token']);
     }
 
