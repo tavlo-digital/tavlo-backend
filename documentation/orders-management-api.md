@@ -16,6 +16,11 @@ collection contains both pickup and takeaway orders; each entry exposes
 `orderMode`, `scheduledFor`, `kitchenReleasedAt`, `pickupTime`, and
 `pickupStatus`.
 
+Each formatted order includes its `customer` owner and an optional `paidBy`
+customer. When `paidBy` is present, waiter clients should attribute the order
+and its items to that payer rather than to the owner. Both objects contain a
+stable string `id` and display `name`.
+
 Vendor and waiter actors receive every paid pickup/takeaway order immediately.
 Kitchen actors also receive paid scheduled pickup orders with a null
 `kitchenReleasedAt` so the kitchen Pickup tab can show the future schedule. Such

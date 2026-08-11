@@ -148,6 +148,32 @@ class OrderManagementTest extends TestCase
             ->assertJsonCount(2, 'sessions.0.orders');
     }
 
+    public function test_index_identifies_the_order_owner_and_the_customer_paying_for_it(): void
+    {
+        $owner = Customer::factory()->create([
+            'first_name' => 'Order',
+            'last_name' => 'Owner',
+        ]);
+        $payer = Customer::factory()->create([
+            'first_name' => 'Bill',
+            'last_name' => 'Payer',
+        ]);
+        $session = $this->scanSession($owner);
+        $this->order($session, [
+            'customer_id' => $owner->id,
+            'paid_by' => $payer->id,
+            'payment_received' => true,
+            'payment_pending' => false,
+        ]);
+
+        $this->getJson("/api/vendor/{$this->vendor->id}/orders", $this->vendorHeaders())
+            ->assertOk()
+            ->assertJsonPath('sessions.0.orders.0.customer.id', (string) $owner->id)
+            ->assertJsonPath('sessions.0.orders.0.customer.name', 'Order Owner')
+            ->assertJsonPath('sessions.0.orders.0.paidBy.id', (string) $payer->id)
+            ->assertJsonPath('sessions.0.orders.0.paidBy.name', 'Bill Payer');
+    }
+
     public function test_index_loads_active_languages_only_once_while_formatting_orders(): void
     {
         $session = $this->scanSession();

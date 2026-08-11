@@ -71,6 +71,7 @@ class OrderController extends Controller
 
         $sessionOrders = Order::with([
             'customer:id,first_name,last_name,email,phone,customer_public_id',
+            'paidBy:id,first_name,last_name',
             'payments:id,order_id,stripe_payment_intent_id,status,payment_method,payment_method_details,paid_at',
             'coveredPayments:id,stripe_payment_intent_id,status,payment_method,payment_method_details,paid_at',
         ])
@@ -106,6 +107,7 @@ class OrderController extends Controller
             })
             ->with([
                 'customer:id,first_name,last_name,email,phone,customer_public_id',
+                'paidBy:id,first_name,last_name',
                 'tableScanSession:id,vendor_id,customer_id,type,pin,scheduled_for,scanned_at',
                 'payments:id,order_id,stripe_payment_intent_id,status,payment_method,payment_method_details,paid_at',
                 'coveredPayments:id,stripe_payment_intent_id,status,payment_method,payment_method_details,paid_at',
@@ -1508,6 +1510,13 @@ class OrderController extends Controller
             ? trim(($order->customer->first_name ?? '').' '.($order->customer->last_name ?? ''))
             : null;
         $customerName = $customerName !== '' ? $customerName : null;
+        $paidBy = $order->relationLoaded('paidBy')
+            ? $order->paidBy
+            : $order->paidBy()->select(['customers.id', 'first_name', 'last_name'])->first();
+        $paidByName = $paidBy
+            ? trim(($paidBy->first_name ?? '').' '.($paidBy->last_name ?? ''))
+            : null;
+        $paidByName = $paidByName !== '' ? $paidByName : null;
         $payment = $this->orderPayment($order);
         $paymentDetails = $this->paymentMethods->vendorDetails($payment, $order->payment_method);
 
@@ -1532,6 +1541,10 @@ class OrderController extends Controller
             'customerName' => $customerName,
             'customerPhone' => $order->customer?->phone,
             'customerEmail' => $order->customer?->email,
+            'paidBy' => $paidBy ? [
+                'id' => (string) $paidBy->id,
+                'name' => $paidByName ?? 'Guest',
+            ] : null,
             'status' => $rawStatus,
             'displayStatus' => $displayStatus,
             'pickupStatus' => $pickupStatus,

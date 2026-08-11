@@ -430,6 +430,7 @@ class NotificationService
     {
         $order->loadMissing([
             'customer:id,first_name,last_name,email,phone',
+            'paidBy:id,first_name,last_name',
             'vendor:id,country',
             'tableScanSession.restaurantTable:id,number,name',
         ]);
@@ -447,6 +448,9 @@ class NotificationService
         $table = $order->tableScanSession?->restaurantTable;
         $customerName = $order->customer
             ? trim(($order->customer->first_name ?? '').' '.($order->customer->last_name ?? ''))
+            : null;
+        $paidByName = $order->paidBy
+            ? trim(($order->paidBy->first_name ?? '').' '.($order->paidBy->last_name ?? ''))
             : null;
         $displayStatus = match ($order->status) {
             'confirmed' => 'received',
@@ -475,7 +479,17 @@ class NotificationService
             },
             'tableScanSessionId' => $order->table_scan_session_id ? (string) $order->table_scan_session_id : null,
             'placedBy' => $order->placed_by ?? ($order->customer_id ? 'customer' : 'waiter'),
+            'customer' => $order->customer ? [
+                'id' => (string) $order->customer->id,
+                'name' => $customerName !== '' ? $customerName : null,
+                'email' => $order->customer->email,
+                'phone' => $order->customer->phone,
+            ] : null,
             'customerName' => $customerName !== '' ? $customerName : null,
+            'paidBy' => $order->paidBy ? [
+                'id' => (string) $order->paidBy->id,
+                'name' => $paidByName !== '' ? $paidByName : 'Guest',
+            ] : null,
             'status' => $order->status,
             'displayStatus' => $displayStatus,
             'pickupStatus' => $pickupStatus,
