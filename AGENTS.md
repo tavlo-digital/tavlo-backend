@@ -5,9 +5,9 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 ## Rules
 
 ### API Documentation
-After writing any new API endpoint, always update the corresponding documentation file in `documentation/`:
-- Customer API → `documentation/customer-api.md`
-- Vendor API → match the relevant file (e.g. `documentation/orders-management-api.md`, `documentation/menu-management-api.md`, etc.)
+After writing or changing an API endpoint, update the corresponding documentation file in the sibling `../tavlo-api-docs/` project:
+- Customer API → `../tavlo-api-docs/customer-api.md`
+- Vendor API → match the relevant file (e.g. `../tavlo-api-docs/orders-management-api.md`, `../tavlo-api-docs/menu-management-api.md`, etc.)
 
 Document every new route: method, URL, auth requirement, request body, and example response.
 
@@ -39,5 +39,4 @@ php artisan test tests/Feature/            # full feature suite
 All API routes return JSON. `Customer` and `Vendor` each have their own Sanctum guard defined in `config/auth.php` — tokens are scoped per model. The `User` model is for the admin panel only.
 
 Controllers live under `app/Http/Controllers/Api/{Customer,Vendor}/`. There is no shared base controller beyond Laravel's default.
-
 

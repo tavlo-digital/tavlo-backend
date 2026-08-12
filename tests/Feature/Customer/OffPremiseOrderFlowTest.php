@@ -291,6 +291,33 @@ class OffPremiseOrderFlowTest extends TestCase
         $this->assertNotNull(CartItem::query()->sole()->received_at);
     }
 
+    public function test_pickup_cash_request_is_rejected_when_vendor_disables_it(): void
+    {
+        [, $headers] = $this->startPickup();
+        $this->vendor->vendorSetting()->update([
+            'accept_on_site' => false,
+            'accept_pickup_cash' => true,
+        ]);
+
+        $this->asCustomer($headers)->postJson('/api/customer/cart/items', [
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 1,
+        ])->assertCreated();
+        $this->asCustomer($headers)->postJson('/api/customer/table/order/draft')->assertCreated();
+
+        $this->asCustomer($headers)
+            ->postJson('/api/customer/payments/request-cash')
+            ->assertUnprocessable()
+            ->assertJsonPath(
+                'message',
+                'Cash payment is not available for pickup orders at this restaurant.'
+            );
+
+        $order = Order::query()->sole();
+        $this->assertFalse($order->payment_pending);
+        $this->assertFalse($order->payment_received);
+    }
+
     /** @return array{Customer, array<string, string>, string} */
     private function startPickup(?\DateTimeInterface $scheduledFor = null): array
     {

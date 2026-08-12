@@ -47,6 +47,7 @@ class VendorSettingsTest extends TestCase
                 'slug',
                 'restaurantName',
                 'acceptOnSite',
+                'acceptPickupCash',
                 'stripeEnabled',
                 'stripeAccountId',
                 'stripeOnboardingComplete',
@@ -146,6 +147,7 @@ class VendorSettingsTest extends TestCase
             "/api/vendor/{$this->vendor->vendor_public_id}/settings",
             [
                 'acceptOnSite' => false,
+                'acceptPickupCash' => true,
                 'stripeEnabled' => true,
             ],
             $this->authHeaders()
@@ -154,13 +156,41 @@ class VendorSettingsTest extends TestCase
         $response->assertOk()
             ->assertJsonFragment([
                 'acceptOnSite' => false,
+                'acceptPickupCash' => false,
                 'stripeEnabled' => true,
             ]);
 
         $this->assertDatabaseHas('vendor_settings', [
             'vendor_id' => $this->vendor->id,
             'accept_on_site' => false,
+            'accept_pickup_cash' => false,
             'stripe_enabled' => true,
+        ]);
+    }
+
+    public function test_cannot_enable_pickup_cash_while_on_site_payments_are_disabled(): void
+    {
+        $this->putJson(
+            "/api/vendor/{$this->vendor->vendor_public_id}/settings",
+            [
+                'acceptOnSite' => false,
+                'acceptPickupCash' => false,
+            ],
+            $this->authHeaders()
+        )->assertOk();
+
+        $this->putJson(
+            "/api/vendor/{$this->vendor->vendor_public_id}/settings",
+            ['acceptPickupCash' => true],
+            $this->authHeaders()
+        )
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('acceptPickupCash');
+
+        $this->assertDatabaseHas('vendor_settings', [
+            'vendor_id' => $this->vendor->id,
+            'accept_on_site' => false,
+            'accept_pickup_cash' => false,
         ]);
     }
 

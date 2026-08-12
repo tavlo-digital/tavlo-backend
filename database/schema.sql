@@ -765,6 +765,7 @@ CREATE TABLE public.vendor_settings (
     is_live_and_discoverable boolean NOT NULL DEFAULT false,
     business_hours json,
     accept_on_site boolean NOT NULL DEFAULT true,
+    accept_pickup_cash boolean NOT NULL DEFAULT true,
     stripe_enabled boolean NOT NULL DEFAULT false,
     currency character varying NOT NULL DEFAULT 'EUR' :: character varying,
     service_fee_rate numeric NOT NULL DEFAULT '0' :: numeric,

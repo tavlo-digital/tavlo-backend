@@ -6,12 +6,14 @@ use App\Http\Controllers\Controller;
 use App\Models\Vendor;
 use App\Models\VendorRequestChange;
 use App\Models\VendorSetting;
+use App\Services\CustomerApiCache;
 use App\Services\LocaleService;
 use App\Services\MediaService;
 use App\Services\VendorMediaService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 
 class VendorSettingsController extends Controller
 {
@@ -19,6 +21,7 @@ class VendorSettingsController extends Controller
         private readonly VendorMediaService $mediaService,
         private readonly MediaService $media,
         private readonly LocaleService $locales,
+        private readonly CustomerApiCache $customerApiCache,
     ) {}
 
     /**
@@ -73,6 +76,7 @@ class VendorSettingsController extends Controller
             'businessHours' => ['sometimes', 'nullable', 'array'],
             // payment
             'acceptOnSite' => ['sometimes', 'nullable', 'boolean'],
+            'acceptPickupCash' => ['sometimes', 'nullable', 'boolean'],
             'stripeEnabled' => ['sometimes', 'nullable', 'boolean'],
             // tax & receipts
             'serviceFeeRate' => ['sometimes', 'nullable', 'numeric', 'min:0', 'max:100'],
@@ -152,6 +156,24 @@ class VendorSettingsController extends Controller
             'showWebsitePublic' => ['sometimes', 'nullable', 'boolean'],
         ]);
 
+        // Pickup cash is a child option of on-site payments. Turning the
+        // parent off always clears the child, including stale client payloads.
+        if (($data['acceptOnSite'] ?? null) === false) {
+            $data['acceptPickupCash'] = false;
+        } elseif (($data['acceptPickupCash'] ?? false) === true) {
+            $acceptOnSite = array_key_exists('acceptOnSite', $data)
+                ? $data['acceptOnSite'] === true
+                : (bool) ($vendor->vendorSetting?->accept_on_site ?? true);
+
+            if (! $acceptOnSite) {
+                throw ValidationException::withMessages([
+                    'acceptPickupCash' => [
+                        'Pickup cash can only be enabled when on-site payments are enabled.',
+                    ],
+                ]);
+            }
+        }
+
         // ---- Update core vendor fields ----
         $vendorFields = [];
         if (isset($data['restaurantName'])) {
@@ -187,6 +209,7 @@ class VendorSettingsController extends Controller
             'isLiveAndDiscoverable' => 'is_live_and_discoverable',
             'businessHours' => 'business_hours',
             'acceptOnSite' => 'accept_on_site',
+            'acceptPickupCash' => 'accept_pickup_cash',
             'stripeEnabled' => 'stripe_enabled',
             'serviceFeeRate' => 'service_fee_rate',
             'invoicePrefix' => 'invoice_prefix',
@@ -350,6 +373,10 @@ class VendorSettingsController extends Controller
                 ['vendor_id' => $vendor->id],
                 $settingsData
             );
+        }
+
+        if (! empty($vendorFields) || ! empty($settingsData)) {
+            $this->customerApiCache->invalidate();
         }
 
         return $this->show($vendorId);
@@ -627,6 +654,8 @@ class VendorSettingsController extends Controller
             'businessHours' => $settings->business_hours ?? VendorSetting::defaultBusinessHours(),
             // payment
             'acceptOnSite' => $settings->accept_on_site ?? true,
+            'acceptPickupCash' => (bool) (($settings->accept_on_site ?? true)
+                && ($settings->accept_pickup_cash ?? true)),
             'stripeEnabled' => (bool) $settings->stripe_enabled,
             'stripeAccountId' => $settings->stripe_account_id,
             'stripeOnboardingComplete' => (bool) $settings->stripe_onboarding_complete,

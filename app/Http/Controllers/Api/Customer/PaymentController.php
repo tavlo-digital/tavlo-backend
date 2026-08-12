@@ -90,10 +90,14 @@ class PaymentController extends Controller
         }
 
         $settings = $vendor->vendorSetting;
+        $isOffPremise = $this->orderSessions->isOffPremise($this->orderSessions->mode($request));
 
         return response()->json([
             'method' => [
-                'on-site' => (bool) ($settings?->accept_on_site ?? true),
+                'on-site' => $isOffPremise
+                    ? (bool) (($settings?->accept_on_site ?? true)
+                        && ($settings?->accept_pickup_cash ?? true))
+                    : (bool) ($settings?->accept_on_site ?? true),
                 'stripe' => (bool) (
                     $settings?->stripe_enabled
                     && $settings->stripe_account_id
@@ -770,6 +774,21 @@ class PaymentController extends Controller
         }
         if ($pending = $this->pendingCommandResponse($payerSession)) {
             return $pending;
+        }
+
+        $payerSession->loadMissing('vendor.vendorSetting');
+        $settings = $payerSession->vendor?->vendorSetting;
+        $acceptsCash = $this->orderSessions->isOffPremise($payerSession)
+            ? (bool) (($settings?->accept_on_site ?? true)
+                && ($settings?->accept_pickup_cash ?? true))
+            : (bool) ($settings?->accept_on_site ?? true);
+
+        if (! $acceptsCash) {
+            return response()->json([
+                'message' => $this->orderSessions->isOffPremise($payerSession)
+                    ? 'Cash payment is not available for pickup orders at this restaurant.'
+                    : 'On-site payment is not available at this restaurant.',
+            ], 422);
         }
 
         // Match createIntent(): the authenticated payer and their active table

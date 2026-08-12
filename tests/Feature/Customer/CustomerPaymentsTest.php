@@ -108,6 +108,30 @@ class CustomerPaymentsTest extends TestCase
             ->assertJsonPath('method.stripe', true);
     }
 
+    public function test_payment_methods_uses_pickup_cash_setting_for_off_premise_orders(): void
+    {
+        $this->settings->update([
+            'accept_on_site' => true,
+            'accept_pickup_cash' => false,
+        ]);
+
+        $url = "/api/customer/payment-methods?restaurant_id={$this->vendor->vendor_public_id}";
+
+        $this->getJson($url)
+            ->assertOk()
+            ->assertJsonPath('method.on-site', true);
+
+        $this->withHeader('X-Order-Mode', 'pickup')
+            ->getJson($url)
+            ->assertOk()
+            ->assertJsonPath('method.on-site', false);
+
+        $this->withHeader('X-Order-Mode', 'takeaway')
+            ->getJson($url)
+            ->assertOk()
+            ->assertJsonPath('method.on-site', false);
+    }
+
     public function test_payment_methods_accepts_vendor_public_id_alias_and_wrapped_identifier(): void
     {
         $this->settings->update([
