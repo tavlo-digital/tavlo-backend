@@ -389,6 +389,7 @@ CREATE TABLE public.orders (
     payment_received boolean NOT NULL DEFAULT false,
     payment_confirmed_at timestamp without time zone,
     payment_note text,
+    note text,
     ready_at timestamp without time zone,
     picked_up_at timestamp without time zone,
     order_number bigint,

@@ -1099,6 +1099,95 @@ class TableCartTest extends TestCase
             ->assertJsonPath('people.0.personal_items.0.quantity', 1);
     }
 
+    public function test_draft_order_accepts_updates_and_clears_optional_note(): void
+    {
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/cart/items', ['menu_item_id' => $this->menuItem->id])
+            ->assertCreated();
+
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/table/order/draft', ['note' => 'Please pack sauces separately.'])
+            ->assertCreated()
+            ->assertJsonPath('people.0.orders.0.note', 'Please pack sauces separately.');
+
+        $order = Order::where('customer_id', $this->customer->id)->sole();
+        $this->assertSame('Please pack sauces separately.', $order->note);
+
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/table/order/draft', ['note' => null])
+            ->assertOk()
+            ->assertJsonPath('people.0.orders.0.note', null);
+
+        $this->assertNull($order->fresh()->note);
+    }
+
+    public function test_confirm_order_accepts_and_clears_optional_note(): void
+    {
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/cart/items', ['menu_item_id' => $this->menuItem->id])
+            ->assertCreated();
+
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/table/order/confirmed', ['note' => 'Allergy: no peanuts.'])
+            ->assertOk()
+            ->assertJsonPath('people.0.orders.0.note', 'Allergy: no peanuts.');
+
+        $this->assertDatabaseHas('orders', [
+            'customer_id' => $this->customer->id,
+            'status' => Order::STATUS_CONFIRMED,
+            'note' => 'Allergy: no peanuts.',
+        ]);
+
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/cart/items', ['menu_item_id' => $this->menuItem->id])
+            ->assertCreated();
+
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/table/order/confirmed', ['note' => null])
+            ->assertOk()
+            ->assertJsonPath('people.0.orders.0.note', null);
+
+        $this->assertNull(
+            Order::where('customer_id', $this->customer->id)->sole()->note
+        );
+    }
+
+    public function test_confirm_order_preserves_draft_note_when_note_is_omitted(): void
+    {
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/cart/items', ['menu_item_id' => $this->menuItem->id])
+            ->assertCreated();
+
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/table/order/draft', ['note' => 'Ring the bell at collection.'])
+            ->assertCreated();
+
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/table/order/confirmed')
+            ->assertOk()
+            ->assertJsonPath('people.0.orders.0.note', 'Ring the bell at collection.');
+
+        $this->assertSame(
+            'Ring the bell at collection.',
+            Order::where('customer_id', $this->customer->id)->sole()->note
+        );
+    }
+
+    public function test_order_note_is_limited_to_500_characters(): void
+    {
+        $note = str_repeat('x', 501);
+
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/table/order/draft', ['note' => $note])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('note');
+
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/table/order/confirmed', ['note' => $note])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('note');
+    }
+
     public function test_confirm_order_merges_open_items_into_existing_unpaid_submitted_order(): void
     {
         $existingOrder = Order::create([
@@ -1133,6 +1222,7 @@ class TableCartTest extends TestCase
             'order_type' => 'dine-in',
             'payment_pending' => true,
             'payment_received' => false,
+            'note' => 'Keep this draft note.',
         ]);
 
         $newItem = CartItem::create([
@@ -1163,12 +1253,14 @@ class TableCartTest extends TestCase
         $response->assertOk()
             ->assertJsonPath('people.0.orders_count', 1)
             ->assertJsonPath('people.0.orders.0.id', $existingOrder->id)
-            ->assertJsonPath('people.0.orders.0.status', Order::STATUS_IN_PROGRESS);
+            ->assertJsonPath('people.0.orders.0.status', Order::STATUS_IN_PROGRESS)
+            ->assertJsonPath('people.0.orders.0.note', 'Keep this draft note.');
 
         $this->assertDatabaseMissing('orders', ['id' => $draftOrder->id]);
         $this->assertSame($existingOrder->id, $newItem->fresh()->order_id);
         $this->assertSame([$existingOrder->id], $sharedItem->fresh()->shared_order_ids);
         $this->assertSame(11.55, (float) $existingOrder->fresh()->amount);
+        $this->assertSame('Keep this draft note.', $existingOrder->fresh()->note);
     }
 
     public function test_confirm_order_does_not_confirm_draft_from_a_different_active_session(): void

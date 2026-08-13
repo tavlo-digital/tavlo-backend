@@ -397,6 +397,7 @@ class NotificationService
             'payment_method' => $order->payment_method,
             'payment_pending' => (bool) $order->payment_pending,
             'payment_received' => (bool) $order->payment_received,
+            'note' => $order->note,
             'paid_by' => $paidBy ? [
                 'id' => $paidBy->id,
                 'name' => trim(($paidBy->first_name ?? '').' '.($paidBy->last_name ?? '')) ?: 'Guest',
@@ -535,6 +536,7 @@ class NotificationService
             'amount' => (float) $order->amount,
             'tip' => (float) ($order->tip_amount ?? 0),
             'paymentMethod' => $order->payment_method,
+            'note' => $order->note,
             'paymentPending' => (bool) $order->payment_pending,
             'paymentReceived' => (bool) $order->payment_received,
             'readyAt' => $readyAt?->toISOString(),

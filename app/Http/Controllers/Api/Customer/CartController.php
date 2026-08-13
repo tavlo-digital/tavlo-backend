@@ -713,12 +713,20 @@ class CartController extends Controller
     /**
      * POST /api/customer/table/order/draft
      *
-     * Create a draft order from the customer's own cart items. No body required.
+     * Create a draft order from the customer's own cart items. An optional
+     * order-level note may be supplied.
      * Amount is computed live from owned cart_items at draft time. The order's
      * final amount is recalculated on confirm to include any shared-into items.
      */
     public function createOrderDraft(Request $request): JsonResponse
     {
+        $data = $request->validate([
+            'note' => ['sometimes', 'nullable', 'string', 'max:500'],
+        ]);
+        $noteAttributes = array_key_exists('note', $data)
+            ? ['note' => $data['note']]
+            : [];
+
         $mySession = $this->activeSession($request);
         if (! $mySession) {
             return response()->json(['message' => 'No active table session found.'], 422);
@@ -735,6 +743,10 @@ class CartController extends Controller
         $existingSubmittedOrder = $this->currentUnpaidSubmittedOrder($request->user()->id, $mySession->id);
 
         if ($existingSubmittedOrder) {
+            if ($noteAttributes !== []) {
+                $existingSubmittedOrder->update($noteAttributes);
+            }
+
             return response()->json($this->buildTableHistoryResponse($mySession, $request));
         }
 
@@ -757,7 +769,10 @@ class CartController extends Controller
         $customerName = $this->customerName($request->user());
 
         if ($existingOrder) {
-            $existingOrder->update(['amount' => $myTotal]);
+            $existingOrder->update([
+                'amount' => $myTotal,
+                ...$noteAttributes,
+            ]);
 
             $history = $this->buildTableHistoryResponse($mySession, $request);
 
@@ -781,7 +796,7 @@ class CartController extends Controller
             return response()->json($history);
         }
 
-        DB::transaction(function () use ($request, $mySession, $myTotal) {
+        DB::transaction(function () use ($request, $mySession, $myTotal, $noteAttributes) {
             $currency = $mySession->vendor?->currency ?? 'EUR';
 
             Order::create([
@@ -795,6 +810,7 @@ class CartController extends Controller
                 'currency' => $currency,
                 'payment_pending' => false,
                 'payment_received' => false,
+                ...$noteAttributes,
                 'order_type' => $this->orderSessions->isOffPremise($mySession)
                     ? $mySession->type
                     : 'dine-in',
@@ -907,6 +923,12 @@ class CartController extends Controller
      */
     public function createOrderConfirmed(Request $request): JsonResponse
     {
+        $data = $request->validate([
+            'note' => ['sometimes', 'nullable', 'string', 'max:500'],
+        ]);
+        $noteProvided = array_key_exists('note', $data);
+        $noteAttributes = $noteProvided ? ['note' => $data['note']] : [];
+
         $customerId = $request->user()->id;
 
         $mySession = $this->activeSession($request);
@@ -965,6 +987,7 @@ class CartController extends Controller
                 'currency' => $currency,
                 'payment_pending' => false,
                 'payment_received' => false,
+                ...$noteAttributes,
                 'order_type' => $this->orderSessions->isOffPremise($mySession)
                     ? $mySession->type
                     : 'dine-in',
@@ -990,7 +1013,7 @@ class CartController extends Controller
             ], 422);
         }
 
-        $order = DB::transaction(function () use ($order, $draftOrder, $mySession, $vendorCountry, $serviceFeeRate, $openItems) {
+        $order = DB::transaction(function () use ($order, $draftOrder, $mySession, $vendorCountry, $serviceFeeRate, $openItems, $noteProvided, $noteAttributes) {
             $targetOrder = Order::whereKey($order->id)->lockForUpdate()->firstOrFail();
             $draftToMerge = $draftOrder && (int) $draftOrder->id !== (int) $targetOrder->id
                 ? Order::whereKey($draftOrder->id)->lockForUpdate()->first()
@@ -1015,6 +1038,12 @@ class CartController extends Controller
                 'amount' => $total,
                 'service_fee' => $serviceFee,
             ];
+
+            if ($noteProvided) {
+                $updates = [...$updates, ...$noteAttributes];
+            } elseif ($draftToMerge?->note !== null && $targetOrder->note === null) {
+                $updates['note'] = $draftToMerge->note;
+            }
 
             if ($targetOrder->status === Order::STATUS_DRAFT) {
                 $updates['status'] = Order::STATUS_CONFIRMED;
@@ -1375,6 +1404,7 @@ class CartController extends Controller
             'payment_received' => (bool) $o->payment_received,
             'payment_confirmed_at' => $this->dateTimes->formatDateTime($o->payment_confirmed_at, $vendor),
             'payment_note' => $o->payment_note,
+            'note' => $o->note,
             'transaction_id' => $o->transaction_id,
             'served_at' => $this->dateTimes->formatDateTime($o->served_at, $vendor),
             'cancelled_at' => $this->dateTimes->formatDateTime($o->cancelled_at, $vendor),

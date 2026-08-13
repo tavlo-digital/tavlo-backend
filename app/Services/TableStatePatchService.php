@@ -231,6 +231,7 @@ class TableStatePatchService
             'payment_received' => (bool) $order->payment_received,
             'payment_confirmed_at' => $order->payment_confirmed_at?->toISOString(),
             'payment_note' => $order->payment_note,
+            'note' => $order->note,
             'transaction_id' => $order->transaction_id,
             'served_at' => $order->served_at?->toISOString(),
             'cancelled_at' => $order->cancelled_at?->toISOString(),

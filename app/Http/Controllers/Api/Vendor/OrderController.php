@@ -1568,6 +1568,7 @@ class OrderController extends Controller
             'paymentProvider' => $paymentDetails['provider'],
             'paymentMethodLabel' => $paymentDetails['displayName'],
             'paymentMethodDetails' => $paymentDetails,
+            'note' => $order->note,
             'paymentPending' => (bool) $order->payment_pending,
             'paymentReceived' => (bool) $order->payment_received,
             'paymentConfirmedAt' => $order->payment_confirmed_at?->toISOString(),

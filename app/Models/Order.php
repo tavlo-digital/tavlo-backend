@@ -41,6 +41,7 @@ class Order extends Model
         'payment_received',
         'payment_confirmed_at',
         'payment_note',
+        'note',
         // extended fields
         'order_number',
         'order_type',
