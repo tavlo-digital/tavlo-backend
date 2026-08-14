@@ -7,7 +7,6 @@ use App\Models\Reservation;
 use App\Models\Vendor;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Str;
 
 class ReservationController extends Controller
 {
@@ -17,15 +16,21 @@ class ReservationController extends Controller
     public function index(Request $request, string $vendorId): JsonResponse
     {
         $vendor = $this->resolveVendor($vendorId);
+        $this->authorizeVendor($request, $vendor);
 
-        $query = $vendor->reservations()->with('customer:id,name,email,phone');
+        $filters = $request->validate([
+            'status' => ['nullable', 'string', 'in:pending,confirmed,cancelled,completed,no_show'],
+            'date' => ['nullable', 'date_format:Y-m-d'],
+        ]);
 
-        if ($request->filled('status')) {
-            $query->where('status', $request->query('status'));
+        $query = $vendor->reservations()->with('customer:id,first_name,last_name,email,phone');
+
+        if (isset($filters['status'])) {
+            $query->where('status', $filters['status']);
         }
 
-        if ($request->filled('date')) {
-            $query->whereDate('date', $request->query('date'));
+        if (isset($filters['date'])) {
+            $query->whereDate('date', $filters['date']);
         }
 
         $reservations = $query->orderBy('date')
@@ -41,9 +46,13 @@ class ReservationController extends Controller
      */
     public function updateStatus(Request $request, string $reservationId): JsonResponse
     {
-        $reservation = Reservation::where('reservation_public_id', $reservationId)
-            ->orWhere('id', $reservationId)
-            ->firstOrFail();
+        $query = Reservation::where('reservation_public_id', $reservationId);
+
+        if (ctype_digit($reservationId)) {
+            $query->orWhere('id', $reservationId);
+        }
+
+        $reservation = $query->firstOrFail();
 
         $this->authorizeVendor($request, $reservation->vendor);
 
@@ -64,12 +73,16 @@ class ReservationController extends Controller
 
     private function formatReservation(Reservation $r): array
     {
+        $customerName = $r->customer
+            ? trim(implode(' ', array_filter([$r->customer->first_name, $r->customer->last_name])))
+            : '';
+
         return [
             'id' => (string) $r->id,
             'reservationPublicId' => $r->reservation_public_id,
             'customer' => $r->customer ? [
                 'id' => (string) $r->customer->id,
-                'name' => $r->customer->name,
+                'name' => $customerName !== '' ? $customerName : ($r->guest_name ?? 'Guest'),
                 'email' => $r->customer->email,
                 'phone' => $r->customer->phone,
             ] : null,

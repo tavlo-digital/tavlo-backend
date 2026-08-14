@@ -141,6 +141,11 @@ class VendorSetting extends Model
         return app(\App\Services\MediaService::class)->url($value);
     }
 
+    public function getBackgroundImageUrlAttribute(?string $value): ?string
+    {
+        return app(\App\Services\MediaService::class)->url($value);
+    }
+
     /**
      * Returns the default business hours array.
      */

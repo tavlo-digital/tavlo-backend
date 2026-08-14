@@ -142,6 +142,11 @@ class Vendor extends Authenticatable
         return $this->hasOne(InventorySettings::class);
     }
 
+    public function inventoryPurchaseOrders(): HasMany
+    {
+        return $this->hasMany(InventoryPurchaseOrder::class);
+    }
+
     public function orders(): HasMany
     {
         return $this->hasMany(Order::class);

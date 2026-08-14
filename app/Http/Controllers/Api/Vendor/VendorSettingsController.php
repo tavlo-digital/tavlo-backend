@@ -574,6 +574,30 @@ class VendorSettingsController extends Controller
     }
 
     /**
+     * POST /api/vendor/{vendorId}/settings/background-image
+     */
+    public function uploadBackgroundImage(Request $request, string $vendorId): JsonResponse
+    {
+        $vendor = $this->resolveVendor($vendorId);
+        $this->authorizeVendor($request, $vendor);
+
+        $request->validate([
+            'background' => ['required', 'file', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
+        ]);
+
+        $path = $this->mediaService->uploadBackgroundImage($vendor, $request->file('background'));
+
+        $vendor->vendorSetting()->updateOrCreate(
+            ['vendor_id' => $vendor->id],
+            ['background_image_url' => $path]
+        );
+
+        $this->customerApiCache->invalidate();
+
+        return response()->json(['backgroundImageUrl' => $this->media->url($path)]);
+    }
+
+    /**
      * POST /api/vendor/{vendorId}/settings/delete-account
      */
     public function deleteAccount(Request $request, string $vendorId): JsonResponse

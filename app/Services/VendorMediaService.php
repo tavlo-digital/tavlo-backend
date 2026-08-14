@@ -28,6 +28,11 @@ class VendorMediaService
         return $this->media->replaceInDirectory($file, "vendors/{$vendor->id}/cover");
     }
 
+    public function uploadBackgroundImage(Vendor $vendor, UploadedFile $file): string
+    {
+        return $this->media->replaceInDirectory($file, "vendors/{$vendor->id}/background");
+    }
+
     /**
      * @deprecated Use MediaService::url() directly. Kept for back-compat.
      */

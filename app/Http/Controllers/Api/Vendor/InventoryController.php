@@ -3,15 +3,22 @@
 namespace App\Http\Controllers\Api\Vendor;
 
 use App\Http\Controllers\Controller;
+use App\Mail\InventoryPurchaseOrderMail;
 use App\Models\InventoryCategory;
 use App\Models\InventoryItem;
+use App\Models\InventoryPurchaseOrder;
 use App\Models\InventorySettings;
+use App\Models\InventoryStockMovement;
+use App\Models\MenuItemIngredient;
 use App\Models\Vendor;
 use App\Services\LocaleService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Validation\ValidationException;
+use Throwable;
 
 class InventoryController extends Controller
 {
@@ -23,6 +30,7 @@ class InventoryController extends Controller
     public function index(Request $request, string $vendorId): JsonResponse
     {
         $vendor = $this->resolveVendor($vendorId);
+        $this->authorizeVendor($request, $vendor);
 
         $items = $vendor->inventoryItems()
             ->with(['localizedTranslations', 'inventoryCategory.localizedTranslations'])
@@ -67,11 +75,9 @@ class InventoryController extends Controller
             ['name', 'supplier']
         );
         $name = $this->baseName($vendor, $data['name'] ?? null, $translations);
-        $supplier = $this->baseTranslatedValue(
-            $vendor,
+        $supplier = $this->optionalTranslatedValue(
             $data['supplier'] ?? null,
             $translations,
-            'supplier',
             'supplier'
         );
         $category = $this->resolveCategoryFromPayload($vendor, $data);
@@ -91,6 +97,16 @@ class InventoryController extends Controller
             'track_stock' => $data['trackStock'] ?? false,
             'nutrition' => $data['nutrition'] ?? null,
         ]);
+
+        $this->recordMovement(
+            $item,
+            'initial',
+            'Initial Stock',
+            0,
+            (float) $item->quantity,
+            $this->actorName($request),
+            'Inventory item created'
+        );
 
         $translationPayload = $translations !== []
             ? $translations
@@ -136,10 +152,11 @@ class InventoryController extends Controller
         $created = 0;
         $updated = 0;
         $errors = [];
+        $actorName = $this->actorName($request);
 
         foreach ($data['items'] as $index => $row) {
             try {
-                $result = DB::transaction(function () use ($vendor, $row): string {
+                $result = DB::transaction(function () use ($vendor, $row, $actorName): string {
                     $name = trim($row['ingredientName']);
                     $existing = $vendor->inventoryItems()
                         ->whereRaw('LOWER(name) = ?', [mb_strtolower($name)])
@@ -181,12 +198,22 @@ class InventoryController extends Controller
                     }
 
                     if ($existing) {
+                        $quantityBefore = (float) $existing->quantity;
                         $existing->update(array_merge(['name' => $name], $fields));
                         $this->locales->syncTranslations(
                             $existing,
                             'localizedTranslations',
                             ['en' => $translation],
                             ['name', 'supplier']
+                        );
+                        $this->recordMovement(
+                            $existing,
+                            'import',
+                            'Excel Import',
+                            $quantityBefore,
+                            (float) $existing->quantity,
+                            $actorName,
+                            'Bulk import update'
                         );
 
                         return 'updated';
@@ -208,6 +235,15 @@ class InventoryController extends Controller
                         ['en' => $translation],
                         ['name', 'supplier']
                     );
+                    $this->recordMovement(
+                        $item,
+                        'import',
+                        'Excel Import',
+                        0,
+                        (float) $item->quantity,
+                        $actorName,
+                        'Created by bulk import'
+                    );
 
                     return 'created';
                 });
@@ -217,7 +253,7 @@ class InventoryController extends Controller
                 } else {
                     $updated++;
                 }
-            } catch (\Throwable $exception) {
+            } catch (Throwable $exception) {
                 report($exception);
                 $errors[] = [
                     'row' => $index + 1,
@@ -236,6 +272,132 @@ class InventoryController extends Controller
     }
 
     /**
+     * GET /api/vendor/{vendorId}/inventory/items/{itemId}/details
+     */
+    public function details(Request $request, string $vendorId, int $itemId): JsonResponse
+    {
+        $vendor = $this->resolveVendor($vendorId);
+        $this->authorizeVendor($request, $vendor);
+        $locale = $this->locales->dashboardLanguage($vendor);
+
+        $item = $vendor->inventoryItems()->findOrFail($itemId);
+
+        $affectedMenuItems = MenuItemIngredient::query()
+            ->where('inventory_item_id', $item->id)
+            ->whereHas('menuItem', fn ($query) => $query->where('vendor_id', $vendor->id))
+            ->with('menuItem.itemTranslations')
+            ->orderBy('menu_item_id')
+            ->get()
+            ->filter(fn (MenuItemIngredient $ingredient) => $ingredient->menuItem !== null)
+            ->map(function (MenuItemIngredient $ingredient) use ($vendor, $locale) {
+                $menuItem = $ingredient->menuItem;
+
+                return [
+                    'id' => (string) $menuItem->id,
+                    'name' => $this->locales->translated(
+                        $menuItem,
+                        'itemTranslations',
+                        'name',
+                        $vendor,
+                        $locale,
+                        $menuItem->name
+                    ),
+                    'quantity' => (float) $ingredient->quantity,
+                    'unit' => $ingredient->unit,
+                    'isCritical' => (bool) $ingredient->is_critical,
+                    'available' => (bool) $menuItem->available,
+                ];
+            })
+            ->values();
+
+        $activityLog = $item->stockMovements()
+            ->latest()
+            ->limit(50)
+            ->get()
+            ->map(fn (InventoryStockMovement $movement) => $this->formatMovement($movement));
+
+        return response()->json([
+            'affectedMenuItems' => $affectedMenuItems,
+            'activityLog' => $activityLog,
+        ]);
+    }
+
+    /**
+     * POST /api/vendor/{vendorId}/inventory/items/{itemId}/adjust-stock
+     */
+    public function adjustStock(Request $request, string $vendorId, int $itemId): JsonResponse
+    {
+        $vendor = $this->resolveVendor($vendorId);
+        $this->authorizeVendor($request, $vendor);
+
+        $data = $request->validate([
+            'amount' => ['required', 'numeric', 'not_in:0'],
+            'type' => ['required', 'string', 'in:delivery,waste,correction'],
+            'reason' => ['nullable', 'string', 'max:500'],
+        ]);
+
+        $amount = (float) $data['amount'];
+        if ($data['type'] === 'delivery' && $amount < 0) {
+            throw ValidationException::withMessages([
+                'amount' => ['A delivery must increase stock.'],
+            ]);
+        }
+        if ($data['type'] === 'waste' && $amount > 0) {
+            throw ValidationException::withMessages([
+                'amount' => ['Waste must decrease stock.'],
+            ]);
+        }
+
+        [$item, $movement] = DB::transaction(function () use ($vendor, $itemId, $amount, $data, $request) {
+            $item = $vendor->inventoryItems()->whereKey($itemId)->lockForUpdate()->firstOrFail();
+            $quantityBefore = (float) $item->quantity;
+            $quantityAfter = round($quantityBefore + $amount, 2);
+
+            if ($quantityAfter < 0) {
+                throw ValidationException::withMessages([
+                    'amount' => ['This adjustment would make stock negative.'],
+                ]);
+            }
+            if ($quantityAfter === $quantityBefore) {
+                throw ValidationException::withMessages([
+                    'amount' => ['The adjustment is too small to change the stored quantity.'],
+                ]);
+            }
+
+            $item->update(['quantity' => $quantityAfter]);
+
+            $source = match ($data['type']) {
+                'delivery' => 'Supplier Delivery',
+                'waste' => 'Waste',
+                default => 'Manual Correction',
+            };
+
+            $movement = $this->recordMovement(
+                $item,
+                $data['type'],
+                $source,
+                $quantityBefore,
+                $quantityAfter,
+                $this->actorName($request),
+                $data['reason'] ?? null
+            );
+
+            return [$item, $movement];
+        });
+
+        $item->load(['localizedTranslations', 'inventoryCategory.localizedTranslations']);
+
+        return response()->json([
+            'item' => $this->formatItem(
+                $item,
+                $vendor,
+                $this->locales->dashboardLanguage($vendor)
+            ),
+            'activity' => $this->formatMovement($movement),
+        ]);
+    }
+
+    /**
      * PATCH /api/vendor/{vendorId}/inventory/items/{itemId}
      */
     public function update(Request $request, string $vendorId, int $itemId): JsonResponse
@@ -244,6 +406,7 @@ class InventoryController extends Controller
         $this->authorizeVendor($request, $vendor);
 
         $item = $vendor->inventoryItems()->findOrFail($itemId);
+        $quantityBefore = (float) $item->quantity;
 
         $data = $request->validate([
             'name' => ['sometimes', 'string', 'max:255'],
@@ -291,6 +454,18 @@ class InventoryController extends Controller
 
         $item->update($mapped);
 
+        if (array_key_exists('quantity', $mapped)) {
+            $this->recordMovement(
+                $item,
+                'correction',
+                'Manual Update',
+                $quantityBefore,
+                (float) $item->quantity,
+                $this->actorName($request),
+                'Stock changed while editing inventory item'
+            );
+        }
+
         if (array_key_exists('translations', $data)) {
             $this->locales->syncTranslations(
                 $item,
@@ -330,6 +505,109 @@ class InventoryController extends Controller
         $item->delete();
 
         return response()->json(['message' => 'Inventory item deleted']);
+    }
+
+    /**
+     * GET /api/vendor/{vendorId}/inventory/purchase-orders
+     */
+    public function purchaseOrdersIndex(Request $request, string $vendorId): JsonResponse
+    {
+        $vendor = $this->resolveVendor($vendorId);
+        $this->authorizeVendor($request, $vendor);
+
+        $purchaseOrders = $vendor->inventoryPurchaseOrders()
+            ->with('inventoryItem:id,name')
+            ->latest()
+            ->limit(100)
+            ->get()
+            ->map(fn (InventoryPurchaseOrder $purchaseOrder) => $this->formatPurchaseOrder($purchaseOrder));
+
+        return response()->json($purchaseOrders);
+    }
+
+    /**
+     * POST /api/vendor/{vendorId}/inventory/purchase-orders
+     */
+    public function storePurchaseOrder(Request $request, string $vendorId): JsonResponse
+    {
+        $vendor = $this->resolveVendor($vendorId);
+        $this->authorizeVendor($request, $vendor);
+
+        $data = $request->validate([
+            'supplierId' => ['required', 'string', 'max:255'],
+            'inventoryItemId' => ['required', 'integer'],
+            'quantity' => ['required', 'numeric', 'gt:0'],
+            'estimatedDeliveryDate' => ['nullable', 'date'],
+            'notes' => ['nullable', 'string', 'max:1000'],
+        ]);
+
+        $item = $vendor->inventoryItems()->findOrFail((int) $data['inventoryItemId']);
+        $storedSettings = $vendor->inventorySettings?->settings ?? [];
+        $suppliers = is_array($storedSettings['suppliers'] ?? null) ? $storedSettings['suppliers'] : [];
+        $supplier = collect($suppliers)->first(
+            fn ($candidate) => is_array($candidate)
+                && (string) ($candidate['id'] ?? '') === $data['supplierId']
+        );
+
+        if (! is_array($supplier) || ($supplier['status'] ?? 'inactive') !== 'active') {
+            throw ValidationException::withMessages([
+                'supplierId' => ['The selected supplier is not active or no longer exists.'],
+            ]);
+        }
+
+        $supportedIngredients = collect($supplier['supportedIngredients'] ?? [])
+            ->map(fn ($value) => mb_strtolower(trim((string) $value)));
+        $ingredientConfigs = collect($supplier['ingredientConfigs'] ?? [])
+            ->filter(fn ($config) => is_array($config));
+        $supportsItem = $supportedIngredients->contains(mb_strtolower($item->name))
+            || $supportedIngredients->contains((string) $item->id)
+            || $ingredientConfigs->contains(fn ($config) => (string) ($config['ingredientId'] ?? '') === (string) $item->id)
+            || $ingredientConfigs->contains(fn ($config) => mb_strtolower(trim((string) ($config['ingredientName'] ?? ''))) === mb_strtolower($item->name))
+            || mb_strtolower(trim((string) ($item->supplier ?? ''))) === mb_strtolower(trim((string) ($supplier['name'] ?? '')));
+        if (! $supportsItem) {
+            throw ValidationException::withMessages([
+                'supplierId' => ['The selected supplier is not linked to this inventory item.'],
+            ]);
+        }
+
+        $minimumQuantity = (float) ($supplier['minimumOrderQty'] ?? 0);
+        if ($minimumQuantity > 0 && (float) $data['quantity'] < $minimumQuantity) {
+            throw ValidationException::withMessages([
+                'quantity' => ["The supplier requires a minimum order quantity of {$minimumQuantity}."],
+            ]);
+        }
+
+        $orderingMethod = (string) ($supplier['orderingMethod'] ?? 'Phone');
+        if (! in_array($orderingMethod, ['Email', 'API', 'Phone'], true)) {
+            throw ValidationException::withMessages([
+                'supplierId' => ['The supplier has an unsupported ordering method.'],
+            ]);
+        }
+
+        $user = $request->user();
+        $purchaseOrder = $vendor->inventoryPurchaseOrders()->create([
+            'inventory_item_id' => $item->id,
+            'supplier_id' => (string) $supplier['id'],
+            'supplier_name' => (string) $supplier['name'],
+            'supplier_email' => $supplier['email'] ?? null,
+            'supplier_phone' => $supplier['phone'] ?? null,
+            'ordering_method' => $orderingMethod,
+            'ordering_url' => $supplier['orderingUrl'] ?? null,
+            'quantity' => (float) $data['quantity'],
+            'unit' => $item->unit,
+            'unit_cost' => (float) $item->cost_per_unit,
+            'currency' => $vendor->currency,
+            'estimated_delivery_date' => $data['estimatedDeliveryDate'] ?? null,
+            'notes' => $data['notes'] ?? null,
+            'status' => 'pending',
+            'created_by_type' => $user?->getTable(),
+            'created_by_id' => $user?->id,
+            'created_by_name' => $this->actorName($request),
+        ]);
+        $purchaseOrder->setRelation('inventoryItem', $item);
+        $this->dispatchPurchaseOrder($purchaseOrder);
+
+        return response()->json($this->formatPurchaseOrder($purchaseOrder->fresh('inventoryItem')), 201);
     }
 
     /**
@@ -405,6 +683,14 @@ class InventoryController extends Controller
             'suppliers.*.email' => ['nullable', 'email', 'max:255'],
             'suppliers.*.phone' => ['nullable', 'string', 'max:50'],
             'suppliers.*.supportedIngredients' => ['nullable', 'array'],
+            'suppliers.*.orderingUrl' => ['nullable', 'url:http,https', 'max:2048'],
+            'suppliers.*.orderCutoffTime' => ['nullable', 'date_format:H:i'],
+            'suppliers.*.minimumOrderQty' => ['nullable', 'numeric', 'min:0'],
+            'suppliers.*.ingredientConfigs' => ['nullable', 'array'],
+            'suppliers.*.ingredientConfigs.*.ingredientId' => ['required', 'string'],
+            'suppliers.*.ingredientConfigs.*.ingredientName' => ['required', 'string', 'max:255'],
+            'suppliers.*.ingredientConfigs.*.supplyUnit' => ['required', 'string', 'max:30'],
+            'suppliers.*.ingredientConfigs.*.supplierSku' => ['nullable', 'string', 'max:100'],
             'alerts' => ['nullable', 'array'],
             'alerts.dashboardAlerts' => ['nullable', 'boolean'],
             'alerts.emailAlerts' => ['nullable', 'boolean'],
@@ -783,6 +1069,136 @@ class InventoryController extends Controller
         ];
     }
 
+    private function recordMovement(
+        InventoryItem $item,
+        string $type,
+        string $source,
+        float $quantityBefore,
+        float $quantityAfter,
+        string $actorName,
+        ?string $note = null
+    ): ?InventoryStockMovement {
+        $quantityChange = round($quantityAfter - $quantityBefore, 3);
+        if ($quantityChange === 0.0) {
+            return null;
+        }
+
+        return $item->stockMovements()->create([
+            'vendor_id' => $item->vendor_id,
+            'type' => $type,
+            'source' => $source,
+            'quantity_change' => $quantityChange,
+            'quantity_before' => $quantityBefore,
+            'quantity_after' => $quantityAfter,
+            'actor_name' => $actorName,
+            'note' => $note,
+        ]);
+    }
+
+    private function formatMovement(InventoryStockMovement $movement): array
+    {
+        return [
+            'id' => (string) $movement->id,
+            'date' => $movement->created_at?->toISOString(),
+            'type' => $movement->type,
+            'source' => $movement->source,
+            'amount' => (float) $movement->quantity_change,
+            'quantityBefore' => (float) $movement->quantity_before,
+            'quantityAfter' => (float) $movement->quantity_after,
+            'note' => $movement->note,
+            'user' => $movement->actor_name ?? 'System',
+        ];
+    }
+
+    private function dispatchPurchaseOrder(InventoryPurchaseOrder $purchaseOrder): void
+    {
+        if ($purchaseOrder->ordering_method === 'Phone') {
+            $purchaseOrder->update(['status' => 'manual_action_required']);
+
+            return;
+        }
+
+        try {
+            if ($purchaseOrder->ordering_method === 'Email') {
+                if (! $purchaseOrder->supplier_email) {
+                    throw new \RuntimeException('The supplier has no ordering email.');
+                }
+
+                Mail::to($purchaseOrder->supplier_email)->send(
+                    new InventoryPurchaseOrderMail($purchaseOrder)
+                );
+            } else {
+                if (! $purchaseOrder->ordering_url) {
+                    throw new \RuntimeException('The supplier has no ordering API URL.');
+                }
+
+                Http::timeout(10)
+                    ->acceptJson()
+                    ->post($purchaseOrder->ordering_url, [
+                        'purchaseOrderId' => $purchaseOrder->purchase_order_public_id,
+                        'vendor' => $purchaseOrder->vendor?->restaurant_name ?: $purchaseOrder->vendor?->name,
+                        'ingredient' => $purchaseOrder->inventoryItem?->name,
+                        'quantity' => (float) $purchaseOrder->quantity,
+                        'unit' => $purchaseOrder->unit,
+                        'unitCost' => (float) $purchaseOrder->unit_cost,
+                        'totalCost' => round((float) $purchaseOrder->quantity * (float) $purchaseOrder->unit_cost, 2),
+                        'currency' => $purchaseOrder->currency,
+                        'estimatedDeliveryDate' => $purchaseOrder->estimated_delivery_date?->toDateString(),
+                        'notes' => $purchaseOrder->notes,
+                    ])
+                    ->throw();
+            }
+
+            $purchaseOrder->update([
+                'status' => 'sent',
+                'dispatched_at' => now(),
+                'dispatch_error' => null,
+            ]);
+        } catch (Throwable $exception) {
+            report($exception);
+            $purchaseOrder->update([
+                'status' => 'failed',
+                'dispatch_error' => $exception->getMessage(),
+            ]);
+        }
+    }
+
+    private function formatPurchaseOrder(InventoryPurchaseOrder $purchaseOrder): array
+    {
+        return [
+            'id' => (string) $purchaseOrder->id,
+            'purchaseOrderPublicId' => $purchaseOrder->purchase_order_public_id,
+            'inventoryItemId' => $purchaseOrder->inventory_item_id ? (string) $purchaseOrder->inventory_item_id : null,
+            'ingredientName' => $purchaseOrder->inventoryItem?->name,
+            'supplierId' => $purchaseOrder->supplier_id,
+            'supplierName' => $purchaseOrder->supplier_name,
+            'orderingMethod' => $purchaseOrder->ordering_method,
+            'quantity' => (float) $purchaseOrder->quantity,
+            'unit' => $purchaseOrder->unit,
+            'unitCost' => (float) $purchaseOrder->unit_cost,
+            'totalCost' => round((float) $purchaseOrder->quantity * (float) $purchaseOrder->unit_cost, 2),
+            'currency' => $purchaseOrder->currency,
+            'estimatedDeliveryDate' => $purchaseOrder->estimated_delivery_date?->toDateString(),
+            'notes' => $purchaseOrder->notes,
+            'status' => $purchaseOrder->status,
+            'dispatchError' => $purchaseOrder->dispatch_error,
+            'createdBy' => $purchaseOrder->created_by_name,
+            'createdAt' => $purchaseOrder->created_at?->toISOString(),
+        ];
+    }
+
+    private function actorName(Request $request): string
+    {
+        $user = $request->user();
+        if (! $user) {
+            return 'System';
+        }
+
+        return $user->getTable() === 'team_members'
+            ? ($user->name ?: 'Staff')
+            : 'Manager';
+    }
+
     private function baseName(Vendor $vendor, mixed $name, array $translations): string
     {
         return $this->baseTranslatedValue(
@@ -792,6 +1208,16 @@ class InventoryController extends Controller
             'name',
             'name'
         );
+    }
+
+    private function optionalTranslatedValue(mixed $value, array $translations, string $field): ?string
+    {
+        $value = is_string($value) ? trim($value) : '';
+        $value = $value ?: collect($translations)
+            ->pluck($field)
+            ->first(fn ($translation) => is_string($translation) && trim($translation) !== '');
+
+        return is_string($value) && trim($value) !== '' ? trim($value) : null;
     }
 
     private function baseTranslatedValue(

@@ -41,6 +41,7 @@ class CartItem extends Model
         'ready_at',
         'served_at',
         'picked_up_at',
+        'inventory_deducted_at',
     ];
 
     protected function casts(): array
@@ -57,6 +58,7 @@ class CartItem extends Model
             'ready_at'           => 'datetime',
             'served_at'          => 'datetime',
             'picked_up_at'       => 'datetime',
+            'inventory_deducted_at' => 'datetime',
         ];
     }
 

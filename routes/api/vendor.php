@@ -95,8 +95,12 @@ Route::middleware(['auth:vendor,team_member', 'vendor.staff.access'])->group(fun
     Route::get('{vendorId}/inventory/items', [InventoryController::class, 'index'])->name('inventory.index');
     Route::post('{vendorId}/inventory/items', [InventoryController::class, 'store'])->name('inventory.store');
     Route::post('{vendorId}/inventory/items/bulk', [InventoryController::class, 'bulkImport'])->name('inventory.bulk-import');
+    Route::get('{vendorId}/inventory/items/{itemId}/details', [InventoryController::class, 'details'])->name('inventory.details');
+    Route::post('{vendorId}/inventory/items/{itemId}/adjust-stock', [InventoryController::class, 'adjustStock'])->name('inventory.adjustStock');
     Route::patch('{vendorId}/inventory/items/{itemId}', [InventoryController::class, 'update'])->name('inventory.update');
     Route::delete('{vendorId}/inventory/items/{itemId}', [InventoryController::class, 'destroy'])->name('inventory.destroy');
+    Route::get('{vendorId}/inventory/purchase-orders', [InventoryController::class, 'purchaseOrdersIndex'])->name('inventory.purchaseOrders.index');
+    Route::post('{vendorId}/inventory/purchase-orders', [InventoryController::class, 'storePurchaseOrder'])->name('inventory.purchaseOrders.store');
     Route::get('{vendorId}/inventory/settings', [InventoryController::class, 'settings'])->name('inventory.settings');
     Route::put('{vendorId}/inventory/settings', [InventoryController::class, 'updateSettings'])->name('inventory.updateSettings');
     Route::get('{vendorId}/inventory/categories', [InventoryController::class, 'categoriesIndex'])->name('inventory.categories.index');
@@ -135,6 +139,7 @@ Route::middleware(['auth:vendor,team_member', 'vendor.staff.access'])->group(fun
     Route::get('{vendorId}/legal-info/status', [VendorSettingsController::class, 'getLegalChangeStatus'])->name('legalInfo.status');
     Route::post('{vendorId}/settings/logo', [VendorSettingsController::class, 'uploadLogo'])->name('settings.logo');
     Route::post('{vendorId}/settings/cover-photo', [VendorSettingsController::class, 'uploadCoverPhoto'])->name('settings.coverPhoto');
+    Route::post('{vendorId}/settings/background-image', [VendorSettingsController::class, 'uploadBackgroundImage'])->name('settings.backgroundImage');
     Route::get('{vendorId}/settings/export', [VendorSettingsController::class, 'exportData'])->name('settings.export');
     Route::post('{vendorId}/settings/delete-account', [VendorSettingsController::class, 'deleteAccount'])->name('settings.deleteAccount');
 

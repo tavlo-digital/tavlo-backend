@@ -17,6 +17,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
@@ -99,6 +100,9 @@ class MenuItemController extends Controller
         $data = $this->customizations->normalizeMenuPayloadCustomizations(
             $this->validatePayload($request, true)
         );
+        if (array_key_exists('ingredients', $data)) {
+            $data['ingredients'] = $this->normalizeRecipeIngredients($vendor, $data['ingredients']);
+        }
         $translations = $this->locales->normalizeTranslationPayload(
             $data['translations'] ?? [],
             ['name', 'description']
@@ -133,6 +137,7 @@ class MenuItemController extends Controller
             'fat' => $data['fat'] ?? 0,
             'carbs' => $data['carbs'] ?? 0,
             'protein' => $data['protein'] ?? 0,
+            'manual_nutrition_override' => $data['manualNutritionOverride'] ?? false,
             'vat_rate' => $vatRate,
             'tax_category' => $taxSlug,
             'dietary_preference' => $data['dietaryPreference'] ?? null,
@@ -157,6 +162,7 @@ class MenuItemController extends Controller
             ['name', 'description']
         );
 
+        $this->syncRecipeIngredients($item, $data['ingredients'] ?? []);
         $this->syncModifierGroups($item, $vendor, $data['modifierGroupIds'] ?? []);
 
         $item->load([
@@ -194,24 +200,44 @@ class MenuItemController extends Controller
             'category' => ['required', 'string', 'max:255'],
             'price' => ['required', 'numeric', 'min:0'],
             'description' => ['sometimes', 'nullable', 'string', 'max:5000'],
+            'translations' => ['sometimes', 'array'],
+            'imageUrl' => ['sometimes', 'nullable', 'string', 'max:2000'],
             'available' => ['sometimes', 'boolean'],
             'calories' => ['sometimes', 'integer', 'min:0'],
             'fat' => ['sometimes', 'numeric', 'min:0'],
             'carbs' => ['sometimes', 'numeric', 'min:0'],
             'protein' => ['sometimes', 'numeric', 'min:0'],
+            'manualNutritionOverride' => ['sometimes', 'boolean'],
             'taxCategory' => ['sometimes', 'nullable', 'string', 'max:64'],
             'dietaryPreference' => [
                 'sometimes',
                 'nullable',
                 'string',
                 'max:64',
-                Rule::exists('dietary_preferences', 'slug')->where('is_active', true),
             ],
             'allergies' => ['sometimes', 'array'],
             'allergies.*' => ['string', 'max:64'],
             'specialTags' => ['sometimes', 'array'],
             'specialTags.*' => ['string', 'max:64'],
+            'hasDiscount' => ['sometimes', 'boolean'],
             'discountPercent' => ['sometimes', 'numeric', 'min:0', 'max:100'],
+            'ingredients' => ['sometimes', 'array'],
+            'ingredients.*.ingredientName' => ['required_with:ingredients', 'string', 'max:255'],
+            'ingredients.*.quantity' => ['required_with:ingredients', 'numeric', 'min:0'],
+            'ingredients.*.isCritical' => ['sometimes', 'boolean'],
+            'modifierGroupNames' => ['sometimes', 'array'],
+            'modifierGroupNames.*' => ['string', 'max:255'],
+            'paidAddons' => ['sometimes', 'array', 'max:10'],
+            'paidAddons.*.name' => ['required_with:paidAddons', 'string', 'max:255'],
+            'paidAddons.*.price' => ['required_with:paidAddons', 'numeric', 'min:0'],
+            'paidAddons.*.taxCategory' => ['sometimes', 'nullable', 'string', 'max:64'],
+            'paidAddons.*.translations' => ['sometimes', 'array'],
+            'freeAddons' => ['sometimes', 'array', 'max:10'],
+            'freeAddons.*.name' => ['required_with:freeAddons', 'string', 'max:255'],
+            'freeAddons.*.translations' => ['sometimes', 'array'],
+            'removableItems' => ['sometimes', 'array', 'max:10'],
+            'removableItems.*.name' => ['required_with:removableItems', 'string', 'max:255'],
+            'removableItems.*.translations' => ['sometimes', 'array'],
         ];
 
         $categoryMap = [];
@@ -278,23 +304,65 @@ class MenuItemController extends Controller
 
                     foreach ([
                         'description',
+                        'translations',
+                        'imageUrl',
                         'available',
                         'calories',
                         'fat',
                         'carbs',
                         'protein',
+                        'manualNutritionOverride',
                         'taxCategory',
                         'dietaryPreference',
                         'allergies',
                         'specialTags',
+                        'hasDiscount',
                         'discountPercent',
+                        'ingredients',
+                        'paidAddons',
+                        'freeAddons',
+                        'removableItems',
                     ] as $field) {
                         if (array_key_exists($field, $row)) {
                             $payload[$field] = $row[$field];
                         }
                     }
 
-                    if (array_key_exists('discountPercent', $row)) {
+                    if (array_key_exists('taxCategory', $payload) && $payload['taxCategory'] !== null) {
+                        $payload['taxCategory'] = $this->normalizeImportSlug((string) $payload['taxCategory']);
+                    }
+                    if (array_key_exists('dietaryPreference', $payload) && $payload['dietaryPreference'] !== null) {
+                        $dietaryPreference = $this->normalizeImportSlug((string) $payload['dietaryPreference']);
+                        $payload['dietaryPreference'] = $dietaryPreference === 'none' ? null : $dietaryPreference;
+                    }
+                    foreach (['allergies', 'specialTags'] as $listField) {
+                        if (array_key_exists($listField, $payload)) {
+                            $payload[$listField] = collect($payload[$listField])
+                                ->map(fn ($value) => $this->normalizeImportSlug((string) $value))
+                                ->filter()
+                                ->values()
+                                ->all();
+                        }
+                    }
+                    if (array_key_exists('paidAddons', $payload)) {
+                        $payload['paidAddons'] = collect($payload['paidAddons'])
+                            ->map(function (array $addon) {
+                                if (! empty($addon['taxCategory'])) {
+                                    $addon['taxCategory'] = $this->normalizeImportSlug((string) $addon['taxCategory']);
+                                }
+
+                                return $addon;
+                            })
+                            ->all();
+                    }
+                    if (array_key_exists('modifierGroupNames', $row)) {
+                        $payload['modifierGroupIds'] = $this->resolveModifierGroupIdsByName(
+                            $vendor,
+                            $row['modifierGroupNames']
+                        );
+                    }
+
+                    if (array_key_exists('discountPercent', $row) && ! array_key_exists('hasDiscount', $row)) {
                         $payload['hasDiscount'] = (float) $row['discountPercent'] > 0;
                     }
 
@@ -375,6 +443,9 @@ class MenuItemController extends Controller
         $data = $this->customizations->normalizeMenuPayloadCustomizations(
             $this->validatePayload($request, false)
         );
+        if (array_key_exists('ingredients', $data)) {
+            $data['ingredients'] = $this->normalizeRecipeIngredients($vendor, $data['ingredients']);
+        }
 
         $mapped = [];
 
@@ -393,6 +464,7 @@ class MenuItemController extends Controller
             'fat' => 'fat',
             'carbs' => 'carbs',
             'protein' => 'protein',
+            'manualNutritionOverride' => 'manual_nutrition_override',
             'dietaryPreference' => 'dietary_preference',
             'hasDiscount' => 'has_discount',
             'discountPercent' => 'discount_percent',
@@ -465,6 +537,9 @@ class MenuItemController extends Controller
 
             if (array_key_exists('modifierGroupIds', $data)) {
                 $this->syncModifierGroups($item, $vendor, $data['modifierGroupIds'] ?? []);
+            }
+            if (array_key_exists('ingredients', $data)) {
+                $this->syncRecipeIngredients($item, $data['ingredients']);
             }
         }
 
@@ -560,6 +635,7 @@ class MenuItemController extends Controller
             'fat' => ['sometimes', 'numeric', 'min:0'],
             'carbs' => ['sometimes', 'numeric', 'min:0'],
             'protein' => ['sometimes', 'numeric', 'min:0'],
+            'manualNutritionOverride' => ['sometimes', 'boolean'],
             'taxCategory' => ['sometimes', 'nullable', 'string', 'max:64'],
             'taxCategoryId' => ['sometimes', 'nullable', 'integer', 'exists:tax_categories,id'],
             'dietaryPreference' => [
@@ -595,6 +671,7 @@ class MenuItemController extends Controller
             'translations' => ['sometimes'],
             'ingredients' => ['sometimes', 'array'],
             'ingredients.*.ingredientId' => ['sometimes', 'string'],
+            'ingredients.*.inventoryItemId' => ['sometimes', 'integer'],
             'ingredients.*.ingredientName' => ['sometimes', 'string', 'max:255'],
             'ingredients.*.quantity' => ['required_with:ingredients', 'numeric', 'min:0'],
             'ingredients.*.unit' => ['sometimes', 'string', 'max:32'],
@@ -755,6 +832,7 @@ class MenuItemController extends Controller
             'fat' => (float) $item->fat,
             'carbs' => (float) $item->carbs,
             'protein' => (float) $item->protein,
+            'manualNutritionOverride' => (bool) $item->manual_nutrition_override,
             'vatRate' => $item->liveVatRate(),
             'taxCategory' => $item->tax_category,
             'dietaryPreference' => $item->dietary_preference,
@@ -799,6 +877,63 @@ class MenuItemController extends Controller
             'orderedCount' => (int) $item->ordered_count,
             'sortOrder' => (int) $item->sort_order,
         ];
+    }
+
+    private function normalizeRecipeIngredients(Vendor $vendor, array $ingredients): array
+    {
+        $normalized = [];
+        $usedIds = [];
+
+        foreach ($ingredients as $index => $ingredient) {
+            if (! is_array($ingredient)) {
+                continue;
+            }
+
+            $inventoryItemId = $ingredient['ingredientId'] ?? $ingredient['inventoryItemId'] ?? null;
+            $inventoryItem = $inventoryItemId
+                ? $vendor->inventoryItems()->whereKey((int) $inventoryItemId)->first()
+                : $vendor->inventoryItems()
+                    ->whereRaw('LOWER(name) = ?', [mb_strtolower(trim((string) ($ingredient['ingredientName'] ?? '')))])
+                    ->first();
+
+            if (! $inventoryItem) {
+                $name = trim((string) ($ingredient['ingredientName'] ?? $inventoryItemId ?? ''));
+                throw ValidationException::withMessages([
+                    "ingredients.{$index}.ingredientName" => ["Inventory ingredient \"{$name}\" does not exist."],
+                ]);
+            }
+
+            if (in_array((int) $inventoryItem->id, $usedIds, true)) {
+                throw ValidationException::withMessages([
+                    "ingredients.{$index}.ingredientName" => ["Inventory ingredient \"{$inventoryItem->name}\" is listed more than once."],
+                ]);
+            }
+            $usedIds[] = (int) $inventoryItem->id;
+
+            $normalized[] = [
+                'ingredientId' => (string) $inventoryItem->id,
+                'ingredientName' => $inventoryItem->name,
+                'quantity' => (float) ($ingredient['quantity'] ?? 0),
+                'unit' => trim((string) ($ingredient['unit'] ?? '')) ?: $inventoryItem->unit,
+                'isCritical' => (bool) ($ingredient['isCritical'] ?? false),
+            ];
+        }
+
+        return $normalized;
+    }
+
+    private function syncRecipeIngredients(MenuItem $item, array $ingredients): void
+    {
+        $item->recipeIngredients()->delete();
+
+        foreach ($ingredients as $ingredient) {
+            $item->recipeIngredients()->create([
+                'inventory_item_id' => (int) $ingredient['ingredientId'],
+                'quantity' => (float) $ingredient['quantity'],
+                'unit' => $ingredient['unit'],
+                'is_critical' => (bool) ($ingredient['isCritical'] ?? false),
+            ]);
+        }
     }
 
     private function syncModifierGroups(MenuItem $item, $vendor, array $ids): void
@@ -1022,19 +1157,23 @@ class MenuItemController extends Controller
                 $newItem->tags()->attach($tagIds);
             }
 
-            $ingredients = DB::table('menu_item_ingredients')
-                ->where('menu_item_id', $oldItem->id)
-                ->get();
-            foreach ($ingredients as $ingredient) {
-                DB::table('menu_item_ingredients')->insert([
-                    'menu_item_id' => $newItem->id,
-                    'inventory_item_id' => $ingredient->inventory_item_id,
-                    'quantity' => $ingredient->quantity,
-                    'unit' => $ingredient->unit,
-                    'is_critical' => $ingredient->is_critical,
-                    'created_at' => now(),
-                    'updated_at' => now(),
-                ]);
+            if (array_key_exists('ingredients', $data)) {
+                $this->syncRecipeIngredients($newItem, $data['ingredients']);
+            } else {
+                $ingredients = DB::table('menu_item_ingredients')
+                    ->where('menu_item_id', $oldItem->id)
+                    ->get();
+                foreach ($ingredients as $ingredient) {
+                    DB::table('menu_item_ingredients')->insert([
+                        'menu_item_id' => $newItem->id,
+                        'inventory_item_id' => $ingredient->inventory_item_id,
+                        'quantity' => $ingredient->quantity,
+                        'unit' => $ingredient->unit,
+                        'is_critical' => $ingredient->is_critical,
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ]);
+                }
             }
 
             return $newItem;
@@ -1059,5 +1198,44 @@ class MenuItemController extends Controller
     private function normalizeImportKey(string $value): string
     {
         return mb_strtolower(trim($value));
+    }
+
+    private function normalizeImportSlug(string $value): string
+    {
+        return Str::slug(trim($value));
+    }
+
+    private function resolveModifierGroupIdsByName(Vendor $vendor, array $names): array
+    {
+        $nameMap = [];
+        $groups = $vendor->modifierGroups()
+            ->where('is_active', true)
+            ->with('localizedTranslations')
+            ->get();
+
+        foreach ($groups as $group) {
+            $groupNames = collect([$group->name])
+                ->merge($group->localizedTranslations->pluck('name'))
+                ->filter();
+            foreach ($groupNames as $groupName) {
+                $nameMap[$this->normalizeImportKey((string) $groupName)] = (int) $group->id;
+            }
+        }
+
+        return collect($names)
+            ->map(function ($name) use ($nameMap) {
+                $name = trim((string) $name);
+                $id = $nameMap[$this->normalizeImportKey($name)] ?? null;
+                if (! $id) {
+                    throw ValidationException::withMessages([
+                        'modifierGroupNames' => ["Modifier group \"{$name}\" does not exist."],
+                    ]);
+                }
+
+                return $id;
+            })
+            ->unique()
+            ->values()
+            ->all();
     }
 }

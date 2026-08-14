@@ -4,8 +4,8 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Str;
 
@@ -27,6 +27,7 @@ class MenuItem extends Model
         'fat',
         'carbs',
         'protein',
+        'manual_nutrition_override',
         'vat_rate',
         'tax_category',
         'dietary_preference',
@@ -59,6 +60,7 @@ class MenuItem extends Model
             'rating' => 'decimal:2',
             'available' => 'boolean',
             'has_discount' => 'boolean',
+            'manual_nutrition_override' => 'boolean',
             'allergies' => 'array',
             'special_tags' => 'array',
             'paid_addons' => 'array',

@@ -12,6 +12,7 @@ use App\Models\TableScanSession;
 use App\Models\TableSession;
 use App\Models\TeamMember;
 use App\Models\Vendor;
+use App\Services\InventoryConsumptionService;
 use App\Services\KitchenOrderReleaseService;
 use App\Services\LocaleService;
 use App\Services\MediaService;
@@ -46,6 +47,7 @@ class OrderController extends Controller
         private readonly PaymentMethodDetailsService $paymentMethods,
         private readonly OrderSessionService $orderSessions,
         private readonly KitchenOrderReleaseService $kitchenReleases,
+        private readonly InventoryConsumptionService $inventoryConsumption,
     ) {}
 
     /**
@@ -299,6 +301,10 @@ class OrderController extends Controller
         }
 
         $order->update($mapped);
+
+        if (in_array($order->status, Order::COMPLETED_STATUSES, true)) {
+            $this->inventoryConsumption->deductForCompletedOrder($order);
+        }
 
         $this->notifySessionCustomers($order, 'order_updated', 'Your order status has been updated.', [
             'template' => 'order.status_updated',
@@ -641,6 +647,10 @@ class OrderController extends Controller
         }
 
         if ($transition['outcome'] === 'unchanged') {
+            if ($data['status'] === CartItem::STATUS_SERVED) {
+                $this->inventoryConsumption->deductForCompletedOrder($order);
+            }
+
             return response()->json($this->formatOrder(
                 $order->fresh()->load(['customer', 'tableScanSession.restaurantTable'])
             ));
@@ -648,6 +658,10 @@ class OrderController extends Controller
 
         /** @var CartItem $item */
         $item = $transition['item'];
+
+        if ($data['status'] === CartItem::STATUS_SERVED) {
+            $this->inventoryConsumption->deductForCompletedOrder($order->fresh());
+        }
 
         $template = match ($data['status']) {
             'preparing' => 'cart.item_preparing',
@@ -797,6 +811,8 @@ class OrderController extends Controller
 
         $order = $order->fresh()->load(['customer', 'tableScanSession.restaurantTable']);
         $servedItemIds = $transition['served_item_ids'];
+
+        $this->inventoryConsumption->deductForCompletedOrder($order);
 
         if ($servedItemIds !== []) {
             $affectedItems = CartItem::query()->whereKey($servedItemIds)->get();
@@ -954,6 +970,8 @@ class OrderController extends Controller
         }
 
         if ($order->status === Order::STATUS_PICKED_UP) {
+            $this->inventoryConsumption->deductForCompletedOrder($order);
+
             return response()->json($this->formatOrder($order->fresh()->load('customer')));
         }
 
@@ -978,6 +996,8 @@ class OrderController extends Controller
                 'picked_up_at' => $order->picked_up_at ?? $now,
             ]);
         });
+
+        $this->inventoryConsumption->deductForCompletedOrder($order->fresh());
 
         $this->notifySessionCustomers($order, 'order_updated', 'Your order has been picked up.', [
             'template' => 'order.picked_up',
@@ -1020,6 +1040,8 @@ class OrderController extends Controller
             'status' => 'served',
             'served_at' => $now,
         ]);
+
+        $this->inventoryConsumption->deductForCompletedOrder($order->fresh());
 
         $this->notifySessionCustomers($order, 'order_updated', 'Your order has been served. Enjoy!', [
             'template' => 'order.served',
