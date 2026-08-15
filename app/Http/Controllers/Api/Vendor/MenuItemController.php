@@ -197,7 +197,8 @@ class MenuItemController extends Controller
         ]);
         $rowRules = [
             'name' => ['required', 'string', 'max:255'],
-            'category' => ['required', 'string', 'max:255'],
+            'category' => ['required_without:categoryId', 'string', 'max:255'],
+            'categoryId' => ['sometimes', 'integer'],
             'price' => ['required', 'numeric', 'min:0'],
             'description' => ['sometimes', 'nullable', 'string', 'max:5000'],
             'translations' => ['sometimes', 'array'],
@@ -243,12 +244,14 @@ class MenuItemController extends Controller
         $categoryMap = [];
         $categories = $vendor->menuCategories()
             ->where('is_active', true)
-            ->with(['masterCategory', 'localizedTranslations'])
+            ->with(['masterCategory.localizedTranslations', 'localizedTranslations'])
             ->get();
+        $categoriesById = $categories->keyBy('id');
 
         foreach ($categories as $category) {
             $names = collect([$category->display_name])
                 ->merge($category->localizedTranslations->pluck('name'))
+                ->merge($category->masterCategory?->localizedTranslations->pluck('name') ?? [])
                 ->filter();
 
             foreach ($names as $name) {
@@ -274,14 +277,19 @@ class MenuItemController extends Controller
             }
             $row = $rowValidator->validated();
             $name = trim($row['name']);
-            $categoryName = trim($row['category']);
-            $category = $categoryMap[$this->normalizeImportKey($categoryName)] ?? null;
+            $categoryName = trim((string) ($row['category'] ?? ''));
+            $category = array_key_exists('categoryId', $row)
+                ? $categoriesById->get((int) $row['categoryId'])
+                : ($categoryMap[$this->normalizeImportKey($categoryName)] ?? null);
 
             if (! $category) {
+                $categoryError = $categoryName !== ''
+                    ? "Category \"{$categoryName}\" does not exist."
+                    : "Category ID {$row['categoryId']} does not exist for this vendor.";
                 $errors[] = [
                     'row' => $index + 2,
                     'name' => $name,
-                    'message' => "Category \"{$categoryName}\" does not exist.",
+                    'message' => $categoryError,
                 ];
 
                 continue;

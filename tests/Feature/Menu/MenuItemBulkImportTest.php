@@ -75,6 +75,31 @@ class MenuItemBulkImportTest extends TestCase
         $this->assertSame(['gluten', 'dairy'], $item->allergies);
     }
 
+    public function test_bulk_import_uses_the_validated_vendor_category_id(): void
+    {
+        $this->postJson('/api/vendor/menu/items/bulk', [
+            'items' => [[
+                'name' => 'Category ID Item',
+                'categoryId' => $this->category->id,
+                'price' => 9.5,
+            ]],
+        ], $this->headers())
+            ->assertOk()
+            ->assertJson([
+                'created' => 1,
+                'updated' => 0,
+                'skipped' => 0,
+                'errors' => [],
+            ]);
+
+        $this->assertDatabaseHas('menu_items', [
+            'vendor_id' => $this->vendor->id,
+            'menu_category_id' => $this->category->id,
+            'name' => 'Category ID Item',
+            'price' => 9.5,
+        ]);
+    }
+
     public function test_bulk_import_updates_existing_item_and_preserves_omitted_fields(): void
     {
         $item = $this->vendor->menuItems()->create([
