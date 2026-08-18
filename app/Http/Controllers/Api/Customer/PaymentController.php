@@ -339,6 +339,12 @@ class PaymentController extends Controller
             Order::whereIn('id', $orders->pluck('id'))
                 ->update(['paid_by' => null]);
 
+            // Coverage is gone, so the owner controls their draft again and its
+            // items return to the open cart.
+            foreach ($orders as $releasedOrder) {
+                PaymentGuardService::thawDraftItems($releasedOrder);
+            }
+
             // Shares the owner opted into while covered live on a side order;
             // with the coverage gone they fold back into the main order.
             $removedOrderIds = collect();
@@ -1365,6 +1371,13 @@ class PaymentController extends Controller
             Order::whereIn('id', $coveredOrderIds)
                 ->where('payment_received', false)
                 ->update(['payment_pending' => false]);
+
+            // The checkout is off, so unlocked drafts go back to behaving like
+            // ordinary carts.
+            Order::whereIn('id', $coveredOrderIds)
+                ->where('payment_received', false)
+                ->get()
+                ->each(fn (Order $order) => PaymentGuardService::thawDraftItems($order));
         }
 
         return $coveredOrderIds;

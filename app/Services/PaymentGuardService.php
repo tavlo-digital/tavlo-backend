@@ -113,4 +113,24 @@ class PaymentGuardService
             ->whereNull('order_id')
             ->update(['order_id' => $order->id]);
     }
+
+    /**
+     * Release a draft's items back into the open pool when its lock is lifted —
+     * the coverage was released, or the payment was cancelled. Without this the
+     * items stay bound and a repeat of the same menu item would stack as a
+     * second line instead of merging, long after the lock is gone.
+     *
+     * Items already sent to the kitchen keep their order: they are submitted,
+     * not merely locked.
+     */
+    public static function thawDraftItems(Order $order): void
+    {
+        if ($order->status !== 'draft') {
+            return;
+        }
+
+        CartItem::where('order_id', $order->id)
+            ->whereNull('received_at')
+            ->update(['order_id' => null]);
+    }
 }

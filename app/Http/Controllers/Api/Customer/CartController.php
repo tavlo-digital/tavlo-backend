@@ -190,6 +190,15 @@ class CartController extends Controller
             ->map(fn ($id) => (int) $id)
             ->all();
 
+        // A draft is not a submitted order, so its items are still cart items.
+        // They carry an order_id once the draft locks, and the customer must
+        // keep seeing what they added even while somebody else pays for it.
+        $draftOrderIds = Order::whereIn('table_scan_session_id', $sessionIds)
+            ->where('status', 'draft')
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
         $mySession = $sessions->firstWhere('id', $mySession->id) ?? $mySession;
         $vendorCountry = $this->vendorCountry($mySession);
         $serviceFeeRate = $this->serviceFeeRate($mySession);
@@ -202,9 +211,10 @@ class CartController extends Controller
             'label' => $this->locales->translatedTaxCategoryName($g['tax_category'], $vendorCountry, $locale),
         ]), $groups);
 
-        $people = $sessions->map(function (TableScanSession $s) use ($orderedOrderIds, $vendorCountry, $serviceFeeRate, $vendor, $locale, $translateTaxGroups) {
+        $people = $sessions->map(function (TableScanSession $s) use ($orderedOrderIds, $draftOrderIds, $vendorCountry, $serviceFeeRate, $vendor, $locale, $translateTaxGroups) {
             $personItems = $s->cartItems
-                ->filter(fn (CartItem $item) => $item->order_id === null
+                ->filter(fn (CartItem $item) => ($item->order_id === null
+                    || in_array((int) $item->order_id, $draftOrderIds, true))
                     && ! $this->cartItemBelongsToOrderedOrder($item, $orderedOrderIds))
                 ->values();
 
