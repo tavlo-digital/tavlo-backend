@@ -14,6 +14,7 @@ use App\Services\MenuCustomizationService;
 use App\Services\NotificationService;
 use App\Services\OrderSessionService;
 use App\Services\OrderSharingService;
+use App\Services\PaymentGuardService;
 use App\Services\TableStatePatchService;
 use App\Services\TaxCalculationService;
 use App\Services\VendorDateTimeService;
@@ -473,6 +474,12 @@ class CartController extends Controller
             ], 409);
         }
 
+        if ($lockedOrder = $this->lockedOrderForCartItem($item)) {
+            return response()->json([
+                'message' => 'This item is locked while its order is being paid.',
+            ], 409);
+        }
+
         $updates = array_filter(
             array_intersect_key($data, array_flip(['quantity', 'notes'])),
             fn ($v) => $v !== null
@@ -566,6 +573,12 @@ class CartController extends Controller
         if ($item->received_at) {
             return response()->json([
                 'message' => 'This item has already been submitted and cannot be removed.',
+            ], 409);
+        }
+
+        if ($lockedOrder = $this->lockedOrderForCartItem($item)) {
+            return response()->json([
+                'message' => 'This item is locked while its order is being paid.',
             ], 409);
         }
 
@@ -1218,7 +1231,11 @@ class CartController extends Controller
 
             $orderPayloads = $personOrders->map(function (Order $order) use ($s, $allCartItems, $mySession, $ordersById, $sessionCustomerNames, $vendorCountry, $vendor, $locale, &$personCartItems) {
                 $ownedCartItems = $allCartItems->filter(function (CartItem $ci) use ($s, $order) {
-                    if ($order->status === 'draft') {
+                    // An open draft implicitly owns its session's unassigned
+                    // items. A locked one does not: its items were bound to it
+                    // when it locked, and anything added since belongs to the
+                    // next draft.
+                    if ($order->status === 'draft' && ! PaymentGuardService::orderIsCartLocked($order)) {
                         return (int) $ci->table_scan_session_id === (int) $s->id
                             && ($ci->order_id === null || (int) $ci->order_id === (int) $order->id);
                     }
@@ -1423,7 +1440,37 @@ class CartController extends Controller
             ->where('table_scan_session_id', $sessionId)
             ->whereIn('status', ['draft', 'confirmed'])
             ->where('payment_received', false)
+            // An order somebody has committed to paying for is closed to new
+            // items: the next add opens a fresh order instead of joining one
+            // that is already being settled.
+            ->where('payment_pending', false)
+            ->whereNull('paid_by')
             ->latest('id')
+            ->first();
+    }
+
+    /**
+     * The locked order a cart item belongs to, if any — either because the item
+     * sits in that order, or because it has been shared into it. Editing such
+     * an item would change a total somebody is already paying.
+     */
+    private function lockedOrderForCartItem(CartItem $item): ?Order
+    {
+        $orderIds = collect([$item->order_id])
+            ->merge(is_array($item->shared_order_ids) ? $item->shared_order_ids : [])
+            ->filter()
+            ->map(fn ($id) => (int) $id)
+            ->unique();
+
+        if ($orderIds->isEmpty()) {
+            return null;
+        }
+
+        return Order::whereIn('id', $orderIds)
+            ->where(fn ($query) => $query
+                ->where('payment_received', true)
+                ->orWhere('payment_pending', true)
+                ->orWhereNotNull('paid_by'))
             ->first();
     }
 

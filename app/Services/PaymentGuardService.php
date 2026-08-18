@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\CartItem;
 use App\Models\Order;
 use App\Models\OrderPayment;
 use Illuminate\Database\Eloquent\Builder;
@@ -76,5 +77,40 @@ class PaymentGuardService
                     ));
             })
             ->exists();
+    }
+
+    /**
+     * True once somebody has committed to paying for an order, so its cart
+     * items may no longer be added to, edited or removed: another guest covers
+     * it, a payment is in progress, or it is already settled.
+     */
+    public static function orderIsCartLocked(Order $order): bool
+    {
+        return (bool) $order->payment_received
+            || (bool) $order->payment_pending
+            || $order->paid_by !== null;
+    }
+
+    /**
+     * Freeze a draft order's claim on its session's cart items.
+     *
+     * A draft owns every unassigned cart item in its session implicitly, so
+     * without this a guest's later additions would silently join an order
+     * somebody is already paying for — and adding the same menu item again
+     * would increment a line that is being paid. Binding the current items to
+     * the order at lock time fixes the claim: anything added afterwards stays
+     * unassigned and is picked up by the next draft instead.
+     *
+     * Only drafts need this; a confirmed order already owns its items outright.
+     */
+    public static function freezeDraftItems(Order $order): void
+    {
+        if ($order->status !== 'draft' || ! $order->table_scan_session_id) {
+            return;
+        }
+
+        CartItem::where('table_scan_session_id', $order->table_scan_session_id)
+            ->whereNull('order_id')
+            ->update(['order_id' => $order->id]);
     }
 }

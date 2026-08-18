@@ -195,6 +195,12 @@ class PaymentController extends Controller
                 ->whereNull('paid_by')
                 ->update(['paid_by' => $payer->id]);
 
+            // Covering an order locks it, so fix its claim on the session's
+            // items before the owner can add anything else to it.
+            foreach ($orders as $coveredDraft) {
+                PaymentGuardService::freezeDraftItems($coveredDraft);
+            }
+
             // The owner's personal opt-in shares move to their side order so
             // the payer covers only the owner's own items.
             $affectedOrderIds = $orders->pluck('id')
@@ -715,6 +721,8 @@ class PaymentController extends Controller
                         'payment_pending' => true,
                         'payment_received' => false,
                     ]);
+
+                    PaymentGuardService::freezeDraftItems($lockedOrder);
                 }
 
                 return $intent;
@@ -910,6 +918,8 @@ class PaymentController extends Controller
                     'payment_pending' => true,
                     'payment_received' => false,
                 ]);
+
+                PaymentGuardService::freezeDraftItems($lockedOrder);
             }
         });
 
@@ -1045,6 +1055,8 @@ class PaymentController extends Controller
                     'payment_pending' => true,
                     'payment_received' => false,
                 ]);
+
+                PaymentGuardService::freezeDraftItems($coveredOrder);
 
                 if ($payment->orders->contains('id', $coveredOrder->id)) {
                     $payment->orders()->updateExistingPivot($coveredOrder->id, [
@@ -1585,6 +1597,8 @@ class PaymentController extends Controller
                 'payment_pending' => true,
                 'payment_received' => false,
             ]);
+
+            PaymentGuardService::freezeDraftItems($order);
         }
     }
 
