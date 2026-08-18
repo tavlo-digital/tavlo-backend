@@ -242,6 +242,43 @@ class KitchenOffPremiseReleaseTest extends TestCase
         );
     }
 
+    public function test_pickup_list_drops_orders_collected_on_an_earlier_day(): void
+    {
+        [$today] = $this->offPremiseOrder(null, ready: true);
+        $today->update(['status' => Order::STATUS_PICKED_UP, 'picked_up_at' => now()]);
+
+        [$yesterday] = $this->offPremiseOrder(null, ready: true);
+        $yesterday->update([
+            'status' => Order::STATUS_PICKED_UP,
+            'picked_up_at' => now()->subDay(),
+        ]);
+        $yesterday->forceFill(['created_at' => now()->subDay()])->saveQuietly();
+
+        $this->getJson($this->ordersUrl(), $this->headers($this->member('waiter')))
+            ->assertOk()
+            ->assertJsonCount(1, 'takeaway')
+            ->assertJsonPath('takeaway.0.id', (string) $today->id);
+    }
+
+    public function test_pickup_list_keeps_uncollected_orders_regardless_of_age(): void
+    {
+        [$stale] = $this->offPremiseOrder(null, ready: true);
+        $stale->forceFill(['created_at' => now()->subDays(3)])->saveQuietly();
+
+        // A pickup booked for tomorrow must survive today's cutoff too.
+        [$scheduled] = $this->offPremiseOrder(now()->addDay());
+
+        $response = $this->getJson($this->ordersUrl(), $this->headers($this->member('waiter')))
+            ->assertOk()
+            ->assertJsonCount(2, 'takeaway');
+
+        $returnedIds = collect($response->json('takeaway'))->pluck('id')->all();
+        $this->assertEqualsCanonicalizing(
+            [(string) $stale->id, (string) $scheduled->id],
+            $returnedIds,
+        );
+    }
+
     /** @return array{Order, CartItem} */
     private function offPremiseOrder(?CarbonInterface $scheduledFor, bool $ready = false): array
     {

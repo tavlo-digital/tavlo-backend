@@ -107,6 +107,17 @@ class OrderController extends Controller
                             ->where('payment_received', false);
                     });
             })
+            // Finished pickups are only service history, so cap them at the vendor's current day.
+            // Anything still awaiting collection stays regardless of age — including pickups
+            // scheduled for a future day — so no outstanding order silently drops off staff screens.
+            ->where(function (Builder $recency) use ($vendor) {
+                $recency->whereNotIn('status', [Order::STATUS_PICKED_UP, Order::STATUS_CANCELLED])
+                    ->orWhere(
+                        'created_at',
+                        '>=',
+                        $this->dateTimes->vendorNow($vendor)->startOfDay()->utc(),
+                    );
+            })
             ->with([
                 'customer:id,first_name,last_name,email,phone,customer_public_id',
                 'paidBy:id,first_name,last_name',
