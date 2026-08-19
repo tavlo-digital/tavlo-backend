@@ -467,6 +467,108 @@ class TableCartTest extends TestCase
         $this->assertCount(1, $people[$otherSession->id]['personal_items']);
     }
 
+    public function test_get_cart_keeps_items_another_guest_shared_into_a_submitted_order(): void
+    {
+        $draft = Order::create([
+            'order_public_id' => 'ord-draft-owner-share',
+            'customer_id' => $this->customer->id,
+            'vendor_id' => $this->vendor->id,
+            'table_scan_session_id' => $this->session->id,
+            'status' => 'draft',
+            'amount' => 3.50,
+            'currency' => 'EUR',
+        ]);
+
+        $other = Customer::factory()->create(['first_name' => 'Bob', 'last_name' => 'Jones']);
+        $otherSession = TableScanSession::create([
+            'vendor_id' => $this->vendor->id,
+            'restaurant_table_id' => $this->table->id,
+            'customer_id' => $other->id,
+            'pin' => '',
+            'status' => 'active',
+            'scanned_at' => now(),
+        ]);
+
+        // The side order ShareOrderService opens for a guest whose own order is
+        // covered by somebody else — created as `confirmed`, never a draft.
+        $sideOrder = Order::create([
+            'order_public_id' => 'ord-side-share',
+            'customer_id' => $other->id,
+            'vendor_id' => $this->vendor->id,
+            'table_scan_session_id' => $otherSession->id,
+            'status' => 'confirmed',
+            'amount' => 0,
+            'currency' => 'EUR',
+        ]);
+
+        $item = CartItem::create([
+            'table_scan_session_id' => $this->session->id,
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 1,
+            'order_id' => $draft->id,
+            'shared_order_ids' => [$sideOrder->id],
+        ]);
+        $item->forceFill(['created_at' => now()->subMinute()])->save();
+
+        $response = $this->withHeaders($this->headers)
+            ->getJson('/api/customer/cart');
+
+        $response->assertOk();
+
+        $people = collect($response->json('people'))->keyBy('session_id');
+        $this->assertCount(1, $people[$this->session->id]['personal_items']);
+        $this->assertSame($item->id, $people[$this->session->id]['personal_items'][0]['id']);
+    }
+
+    public function test_get_cart_reports_each_shared_line_as_the_owner_share(): void
+    {
+        $other = Customer::factory()->create(['first_name' => 'Bob', 'last_name' => 'Jones']);
+        $otherSession = TableScanSession::create([
+            'vendor_id' => $this->vendor->id,
+            'restaurant_table_id' => $this->table->id,
+            'customer_id' => $other->id,
+            'pin' => '',
+            'status' => 'active',
+            'scanned_at' => now(),
+        ]);
+
+        $theirOrder = Order::create([
+            'order_public_id' => 'ord-share-halves',
+            'customer_id' => $other->id,
+            'vendor_id' => $this->vendor->id,
+            'table_scan_session_id' => $otherSession->id,
+            'status' => 'draft',
+            'amount' => 0,
+            'currency' => 'EUR',
+        ]);
+
+        $item = CartItem::create([
+            'table_scan_session_id' => $this->session->id,
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 2,
+            'shared_order_ids' => [$theirOrder->id],
+        ]);
+        $item->forceFill(['created_at' => now()->subMinute()])->save();
+
+        $response = $this->withHeaders($this->headers)
+            ->getJson('/api/customer/cart');
+
+        $response->assertOk();
+
+        $mine = collect($response->json('people'))
+            ->firstWhere('session_id', $this->session->id);
+        $line = $mine['personal_items'][0];
+
+        // The line is 2 x 3.85; split with Bob it costs this customer half.
+        $this->assertSame(7.7, $line['line_total']);
+        $this->assertSame(2, $line['shared_between']);
+        $this->assertSame(3.85, $line['my_share']);
+
+        // The row has to agree with the total the cart bills, which already
+        // divides a shared line by its sharers.
+        $this->assertSame($line['my_share'], $mine['totals']['grand_total']);
+    }
+
     public function test_get_cart_hides_items_after_order_is_confirmed(): void
     {
         $item = CartItem::create([
@@ -576,6 +678,88 @@ class TableCartTest extends TestCase
             'menu_item_id' => $this->menuItem->id,
             'quantity' => 5,
         ]);
+    }
+
+    public function test_add_item_opens_a_new_line_when_the_existing_one_is_shared(): void
+    {
+        $other = Customer::factory()->create(['first_name' => 'Bob', 'last_name' => 'Jones']);
+        $otherSession = TableScanSession::create([
+            'vendor_id' => $this->vendor->id,
+            'restaurant_table_id' => $this->table->id,
+            'customer_id' => $other->id,
+            'pin' => '',
+            'status' => 'active',
+            'scanned_at' => now(),
+        ]);
+
+        $theirOrder = Order::create([
+            'order_public_id' => 'ord-share-split',
+            'customer_id' => $other->id,
+            'vendor_id' => $this->vendor->id,
+            'table_scan_session_id' => $otherSession->id,
+            'status' => 'draft',
+            'amount' => 0,
+            'currency' => 'EUR',
+        ]);
+
+        // My line, split with Bob: he agreed to half of exactly this quantity.
+        $shared = CartItem::create([
+            'table_scan_session_id' => $this->session->id,
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 1,
+            'shared_order_ids' => [$theirOrder->id],
+        ]);
+
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/cart/items', [
+                'menu_item_id' => $this->menuItem->id,
+                'quantity' => 1,
+            ])->assertCreated();
+
+        $lines = CartItem::where('table_scan_session_id', $this->session->id)
+            ->where('menu_item_id', $this->menuItem->id)
+            ->get();
+
+        $this->assertCount(2, $lines);
+        $this->assertSame(1, (int) $shared->fresh()->quantity);
+        $this->assertSame(
+            [],
+            $lines->firstWhere('id', '!=', $shared->id)->shared_order_ids ?? []
+        );
+    }
+
+    public function test_add_item_opens_a_new_line_when_the_existing_one_is_bound_to_a_locked_order(): void
+    {
+        $covered = Order::create([
+            'order_public_id' => 'ord-covered-bind',
+            'customer_id' => $this->customer->id,
+            'vendor_id' => $this->vendor->id,
+            'table_scan_session_id' => $this->session->id,
+            'status' => 'draft',
+            'amount' => 3.85,
+            'currency' => 'EUR',
+            'paid_by' => Customer::factory()->create()->id,
+        ]);
+
+        $bound = CartItem::create([
+            'table_scan_session_id' => $this->session->id,
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 1,
+            'order_id' => $covered->id,
+        ]);
+
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/cart/items', [
+                'menu_item_id' => $this->menuItem->id,
+                'quantity' => 1,
+            ])->assertCreated();
+
+        $lines = CartItem::where('table_scan_session_id', $this->session->id)
+            ->where('menu_item_id', $this->menuItem->id)
+            ->get();
+
+        $this->assertCount(2, $lines);
+        $this->assertSame(1, (int) $bound->fresh()->quantity);
     }
 
     public function test_add_item_accepts_customization_options(): void
@@ -1300,6 +1484,158 @@ class TableCartTest extends TestCase
             ->assertJsonPath('message', 'Your cart is empty. Add items before confirming your order.');
 
         $this->assertSame('draft', $order->fresh()->status);
+    }
+
+    public function test_history_prices_a_draft_from_the_items_it_lists(): void
+    {
+        $other = Customer::factory()->create(['first_name' => 'Bob', 'last_name' => 'Jones']);
+        $otherSession = TableScanSession::create([
+            'vendor_id' => $this->vendor->id,
+            'restaurant_table_id' => $this->table->id,
+            'customer_id' => $other->id,
+            'pin' => '',
+            'status' => 'active',
+            'scanned_at' => now(),
+        ]);
+
+        // Both drafts carry a stale amount, as any cart edit since the last
+        // re-price would leave behind.
+        $myOrder = Order::create([
+            'order_public_id' => 'ord-live-mine',
+            'customer_id' => $this->customer->id,
+            'vendor_id' => $this->vendor->id,
+            'table_scan_session_id' => $this->session->id,
+            'status' => Order::STATUS_DRAFT,
+            'amount' => 0.5,
+            'service_fee' => 0,
+            'currency' => 'EUR',
+        ]);
+
+        $theirOrder = Order::create([
+            'order_public_id' => 'ord-live-theirs',
+            'customer_id' => $other->id,
+            'vendor_id' => $this->vendor->id,
+            'table_scan_session_id' => $otherSession->id,
+            'status' => Order::STATUS_DRAFT,
+            'amount' => 99.0,
+            'service_fee' => 0,
+            'currency' => 'EUR',
+        ]);
+
+        // Mine: two unassigned lines of my own, 2 x 3.85 each.
+        CartItem::create([
+            'table_scan_session_id' => $this->session->id,
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 2,
+        ]);
+
+        // Bob's line, split with me: half of 3.85 lands on each order.
+        CartItem::create([
+            'table_scan_session_id' => $otherSession->id,
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 1,
+            'shared_order_ids' => [$myOrder->id],
+        ]);
+
+        $response = $this->withHeaders($this->headers)
+            ->getJson('/api/customer/table/history');
+
+        $response->assertOk();
+
+        $orders = collect($response->json('people'))
+            ->flatMap(fn (array $person) => $person['orders'])
+            ->keyBy('id');
+
+        // 7.70 of my own plus my 1.93 half of Bob's line, and three lines listed.
+        $this->assertSame(9.63, $orders[$myOrder->id]['amount']);
+        $this->assertCount(2, $orders[$myOrder->id]['items']);
+
+        // Bob keeps his own line at his half of it, not its full 3.85.
+        $this->assertSame(1.93, $orders[$theirOrder->id]['amount']);
+        $this->assertCount(1, $orders[$theirOrder->id]['items']);
+    }
+
+    public function test_order_draft_is_not_created_when_there_is_nothing_left_to_draft(): void
+    {
+        $payer = Customer::factory()->create(['first_name' => 'Bob', 'last_name' => 'Jones']);
+
+        // My order is covered by Bob, which closes it to new items and binds
+        // the ones it had.
+        $covered = Order::create([
+            'order_public_id' => 'ord-covered-draft',
+            'customer_id' => $this->customer->id,
+            'vendor_id' => $this->vendor->id,
+            'table_scan_session_id' => $this->session->id,
+            'status' => Order::STATUS_DRAFT,
+            'amount' => 3.85,
+            'currency' => 'EUR',
+            'paid_by' => $payer->id,
+        ]);
+
+        CartItem::create([
+            'table_scan_session_id' => $this->session->id,
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 1,
+            'order_id' => $covered->id,
+        ]);
+
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/table/order/draft')
+            ->assertOk();
+
+        // A second, empty draft would show up on the payment step as another
+        // order card under the same name with no items and no amount.
+        $this->assertSame(
+            1,
+            Order::where('table_scan_session_id', $this->session->id)->count(),
+        );
+    }
+
+    public function test_update_order_keeps_my_own_unbound_items_in_the_order_amount(): void
+    {
+        $other = Customer::factory()->create(['first_name' => 'Bob', 'last_name' => 'Jones']);
+        $otherSession = TableScanSession::create([
+            'vendor_id' => $this->vendor->id,
+            'restaurant_table_id' => $this->table->id,
+            'customer_id' => $other->id,
+            'pin' => '',
+            'status' => 'active',
+            'scanned_at' => now(),
+        ]);
+
+        $order = Order::create([
+            'order_public_id' => 'ord-share-keeps-own',
+            'customer_id' => $this->customer->id,
+            'vendor_id' => $this->vendor->id,
+            'table_scan_session_id' => $this->session->id,
+            'status' => Order::STATUS_DRAFT,
+            'amount' => 7.7,
+            'currency' => 'EUR',
+            'order_type' => 'dine-in',
+        ]);
+
+        // My own two lines: added to the cart, so still unassigned — a draft is
+        // not confirmed, and nothing has locked it into binding them.
+        CartItem::create([
+            'table_scan_session_id' => $this->session->id,
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 2,
+        ]);
+
+        $theirItem = CartItem::create([
+            'table_scan_session_id' => $otherSession->id,
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 1,
+        ]);
+
+        $this->withHeaders($this->headers)
+            ->putJson("/api/customer/table/order/update/{$order->id}", [
+                'shared_item' => $theirItem->id,
+            ])
+            ->assertOk();
+
+        // 2 x 3.85 of my own, plus half of Bob's 3.85 line.
+        $this->assertSame(9.63, (float) $order->fresh()->amount);
     }
 
     public function test_update_order_rejects_duplicate_shared_item(): void

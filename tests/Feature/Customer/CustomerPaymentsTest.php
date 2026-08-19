@@ -13,6 +13,7 @@ use App\Models\RestaurantTable;
 use App\Models\TableScanSession;
 use App\Models\Vendor;
 use App\Models\VendorSetting;
+use App\Services\CheckoutHoldService;
 use App\Services\StripePaymentService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -1244,6 +1245,334 @@ class CustomerPaymentsTest extends TestCase
         $this->assertTrue($order->fresh()->payment_pending);
     }
 
+    public function test_checkout_hold_locks_pay_for_and_sharing_without_any_payment(): void
+    {
+        [$tablemate, $tablemateSession] = $this->tablemate();
+
+        $myOrder = $this->order(['payment_pending' => false]);
+        $mateOrder = $this->order([
+            'table_scan_session_id' => $tablemateSession->id,
+            'payment_pending' => false,
+        ], $tablemate);
+
+        $myItem = CartItem::create([
+            'table_scan_session_id' => $this->session->id,
+            'menu_item_id' => $this->menuItem->id,
+            'order_id' => $myOrder->id,
+            'quantity' => 1,
+        ]);
+
+        // Opening the payment step. No Stripe intent and no cash request yet —
+        // a cash checkout never creates one, which is exactly the window that
+        // used to leave the order editable behind the payer's back.
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/payments/checkout-hold')
+            ->assertOk()
+            ->assertJsonPath('held', [$myOrder->id]);
+
+        $myOrder->refresh();
+        $this->assertTrue((bool) $myOrder->payment_pending);
+        $this->assertSame($this->customer->id, (int) $myOrder->checkout_hold_by);
+
+        $mateToken = $tablemate->createToken('test', ['role:customer'])->plainTextToken;
+        $mateHeaders = ['Authorization' => "Bearer {$mateToken}", 'Accept' => 'application/json'];
+
+        $this->app['auth']->forgetGuards();
+        $this->withHeaders($mateHeaders)
+            ->postJson('/api/customer/payments/pay-for', ['order_id' => $myOrder->order_public_id])
+            ->assertStatus(409);
+
+        $this->withHeaders($mateHeaders)
+            ->putJson("/api/customer/table/order/update/{$mateOrder->id}", [
+                'shared_item' => $myItem->id,
+            ])
+            ->assertStatus(409);
+
+        $this->assertNull($myOrder->fresh()->paid_by);
+        $this->assertSame([], array_map('intval', $myItem->fresh()->shared_order_ids ?? []));
+
+        // Back out of the payment step: the claim is dropped and the table can
+        // act on the order again.
+        $this->app['auth']->forgetGuards();
+        $this->withHeaders($this->headers)
+            ->deleteJson('/api/customer/payments/checkout-hold')
+            ->assertOk()
+            ->assertJsonPath('released', [$myOrder->id]);
+
+        $myOrder->refresh();
+        $this->assertFalse((bool) $myOrder->payment_pending);
+        $this->assertNull($myOrder->checkout_hold_by);
+
+        $this->app['auth']->forgetGuards();
+        $this->withHeaders($mateHeaders)
+            ->postJson('/api/customer/payments/pay-for', ['order_id' => $myOrder->order_public_id])
+            ->assertOk();
+
+        $this->assertSame($tablemate->id, (int) $myOrder->fresh()->paid_by);
+    }
+
+    public function test_pay_for_cannot_be_released_while_the_orders_owner_is_checking_out(): void
+    {
+        [$mate, $mateSession] = $this->tablemate();
+
+        $this->session->update(['type' => 'pickup', 'pin' => '5150']);
+        $mateSession->update(['type' => 'pickup', 'pin' => '5150']);
+
+        // We are covering each other: they cover my order, I cover theirs.
+        $myOrder = $this->order([
+            'status' => Order::STATUS_DRAFT,
+            'payment_pending' => false,
+            'order_type' => 'pickup',
+            'paid_by' => $mate->id,
+        ]);
+
+        $theirOrder = Order::create([
+            'order_public_id' => 'ord-mate-covered',
+            'customer_id' => $mate->id,
+            'vendor_id' => $this->vendor->id,
+            'table_scan_session_id' => $mateSession->id,
+            'status' => Order::STATUS_DRAFT,
+            'amount' => 3.85,
+            'currency' => 'EUR',
+            'paid_by' => $this->customer->id,
+        ]);
+
+        CartItem::create([
+            'table_scan_session_id' => $mateSession->id,
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 1,
+            'order_id' => $theirOrder->id,
+        ]);
+
+        // I open the payment step. My total is built from what I owe and what
+        // they cover for me, so their coverage may not move under me.
+        $this->withHeaders($this->pickupHeaders())
+            ->postJson('/api/customer/payments/checkout-hold')
+            ->assertOk();
+
+        $mateToken = $mate->createToken('test', ['role:customer'])->plainTextToken;
+        $mateHeaders = [
+            'Authorization' => "Bearer {$mateToken}",
+            'Accept' => 'application/json',
+            'X-Order-Mode' => 'pickup',
+        ];
+
+        $this->app['auth']->forgetGuards();
+        $this->withHeaders($mateHeaders)
+            ->deleteJson("/api/customer/payments/pay-for/{$myOrder->order_public_id}")
+            ->assertStatus(409)
+            ->assertJsonPath('message', 'This order is locked while its owner is checking out.');
+
+        $this->assertSame($mate->id, (int) $myOrder->fresh()->paid_by);
+
+        // Once I step back out, they can uncheck it again.
+        $this->app['auth']->forgetGuards();
+        $this->withHeaders($this->pickupHeaders())
+            ->deleteJson('/api/customer/payments/checkout-hold')
+            ->assertOk();
+
+        $this->app['auth']->forgetGuards();
+        $this->withHeaders($mateHeaders)
+            ->deleteJson("/api/customer/payments/pay-for/{$myOrder->order_public_id}")
+            ->assertOk();
+
+        $this->assertNull($myOrder->fresh()->paid_by);
+    }
+
+    public function test_releasing_a_hold_keeps_a_covered_order_items_bound_to_it(): void
+    {
+        [$owner, $ownerSession] = $this->tablemate();
+
+        // Pickup, where an order stays a draft right through checkout — the
+        // flow where a covered draft can be part of a payment at all. A pickup
+        // group is the sessions sharing a PIN, not a table.
+        $this->session->update(['type' => 'pickup', 'pin' => '4242']);
+        $ownerSession->update(['type' => 'pickup', 'pin' => '4242']);
+
+        // I cover the owner's draft, which binds their items to it.
+        $covered = Order::create([
+            'order_public_id' => 'ord-covered-hold-release',
+            'customer_id' => $owner->id,
+            'vendor_id' => $this->vendor->id,
+            'table_scan_session_id' => $ownerSession->id,
+            'status' => Order::STATUS_DRAFT,
+            'amount' => 3.85,
+            'currency' => 'EUR',
+            'paid_by' => $this->customer->id,
+        ]);
+
+        $theirItem = CartItem::create([
+            'table_scan_session_id' => $ownerSession->id,
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 1,
+            'order_id' => $covered->id,
+        ]);
+
+        $this->order([
+            'status' => Order::STATUS_DRAFT,
+            'payment_pending' => false,
+            'order_type' => 'pickup',
+        ]);
+
+        $held = $this->withHeaders($this->pickupHeaders())
+            ->postJson('/api/customer/payments/checkout-hold')
+            ->assertOk()
+            ->json('held');
+
+        // The claim has to reach the order I am covering, or the rest of this
+        // proves nothing.
+        $this->assertContains($covered->id, $held);
+
+        $this->app['auth']->forgetGuards();
+        $this->withHeaders($this->pickupHeaders())
+            ->deleteJson('/api/customer/payments/checkout-hold')
+            ->assertOk();
+
+        // Stepping back out of the checkout drops my claim, but I am still
+        // covering their order — so their line stays on it. Unbinding it would
+        // hand it to whatever draft they open next.
+        $this->assertSame($covered->id, (int) $theirItem->fresh()->order_id);
+        $this->assertSame($this->customer->id, (int) $covered->fresh()->paid_by);
+    }
+
+    public function test_checkout_hold_keeps_the_draft_items_on_the_order(): void
+    {
+        // Pickup keeps the order a draft right through checkout, which is the
+        // flow where a draft is payable at all.
+        $this->session->update(['type' => 'pickup']);
+
+        $this->order([
+            'status' => 'draft',
+            'payment_pending' => false,
+            'order_type' => 'pickup',
+        ]);
+
+        // Added to the cart, not yet bound to the draft — which is how a draft
+        // holds its items until it locks or is confirmed.
+        CartItem::create([
+            'table_scan_session_id' => $this->session->id,
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 1,
+        ]);
+
+        $this->withHeaders($this->pickupHeaders())
+            ->postJson('/api/customer/payments/checkout-hold')
+            ->assertOk();
+
+        // Marking the draft pending stops it implicitly owning unassigned
+        // items, so the hold has to bind them or the payer's own lines vanish
+        // from the order they are about to pay.
+        $this->app['auth']->forgetGuards();
+        $items = $this->withHeaders($this->pickupHeaders())
+            ->getJson('/api/customer/table/history')
+            ->assertOk()
+            ->json('people.0.orders.0.items');
+
+        $this->assertCount(1, $items);
+
+        $this->app['auth']->forgetGuards();
+        $this->withHeaders($this->pickupHeaders())
+            ->deleteJson('/api/customer/payments/checkout-hold')
+            ->assertOk();
+
+        // Back on step 1 the line is an ordinary cart item again.
+        $this->assertDatabaseHas('cart_items', [
+            'table_scan_session_id' => $this->session->id,
+            'order_id' => null,
+        ]);
+    }
+
+    public function test_holder_can_still_pay_the_orders_they_hold(): void
+    {
+        $myOrder = $this->order(['payment_pending' => false]);
+
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/payments/checkout-hold')
+            ->assertOk();
+
+        // The hold marks the order pending, which is what locks everyone else
+        // out — it must not lock out the payer it belongs to.
+        $this->app['auth']->forgetGuards();
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/payments/create-intent')
+            ->assertOk();
+
+        $this->app['auth']->forgetGuards();
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/payments/checkout-hold')
+            ->assertOk()
+            ->assertJsonPath('held', [$myOrder->id]);
+    }
+
+    public function test_checkout_hold_is_refused_while_another_guest_holds_the_order(): void
+    {
+        [$tablemate] = $this->tablemate();
+
+        $myOrder = $this->order(['payment_pending' => false]);
+
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/payments/checkout-hold')
+            ->assertOk();
+
+        // The tablemate covers nothing of mine, so their own hold attempt must
+        // not silently steal my claim.
+        $mateToken = $tablemate->createToken('test', ['role:customer'])->plainTextToken;
+        $mateHeaders = ['Authorization' => "Bearer {$mateToken}", 'Accept' => 'application/json'];
+
+        $this->app['auth']->forgetGuards();
+        $this->withHeaders($mateHeaders)
+            ->postJson('/api/customer/payments/pay-for', ['order_id' => $myOrder->order_public_id])
+            ->assertStatus(409);
+
+        $this->assertSame($this->customer->id, (int) $myOrder->fresh()->checkout_hold_by);
+    }
+
+    public function test_release_checkout_hold_also_cancels_the_payment_intent(): void
+    {
+        $myOrder = $this->order(['payment_pending' => false]);
+
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/payments/create-intent')
+            ->assertOk();
+
+        $this->assertTrue((bool) $myOrder->fresh()->payment_pending);
+
+        $this->app['auth']->forgetGuards();
+        $this->withHeaders($this->headers)
+            ->deleteJson('/api/customer/payments/checkout-hold')
+            ->assertOk();
+
+        $myOrder->refresh();
+        $this->assertFalse((bool) $myOrder->payment_pending);
+        $this->assertNull($myOrder->checkout_hold_by);
+        $this->assertSame(
+            0,
+            OrderPayment::where('order_id', $myOrder->id)
+                ->whereNotIn('status', ['canceled', 'failed', 'payment_failed'])
+                ->count(),
+        );
+    }
+
+    public function test_expired_checkout_holds_are_released_by_the_sweeper(): void
+    {
+        $myOrder = $this->order(['payment_pending' => false]);
+
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/payments/checkout-hold')
+            ->assertOk();
+
+        // The payer closed the tab: no back, no payment, nothing.
+        $myOrder->forceFill([
+            'checkout_hold_at' => now()->subMinutes(CheckoutHoldService::TTL_MINUTES + 1),
+        ])->save();
+
+        $this->artisan('payments:release-stale-checkout-holds')->assertSuccessful();
+
+        $myOrder->refresh();
+        $this->assertFalse((bool) $myOrder->payment_pending);
+        $this->assertNull($myOrder->checkout_hold_by);
+    }
+
     public function test_pay_for_is_locked_while_the_owner_checkout_is_open(): void
     {
         [$tablemate] = $this->tablemate();
@@ -1873,6 +2202,12 @@ class CustomerPaymentsTest extends TestCase
         ])->postJson('/api/customer/payments/create-intent')
             ->assertStatus(409)
             ->assertJsonPath('message', 'This order is assigned to another payer.');
+    }
+
+    /** Headers for the pickup flow, where an order stays a draft through checkout. */
+    private function pickupHeaders(): array
+    {
+        return array_merge($this->headers, ['X-Order-Mode' => 'pickup']);
     }
 
     private function tablemate(): array

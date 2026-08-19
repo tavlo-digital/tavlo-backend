@@ -20,6 +20,7 @@ use App\Services\TaxCalculationService;
 use App\Services\VendorDateTimeService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
@@ -182,14 +183,6 @@ class CartController extends Controller
             ->whereIn('id', $sessionIds)
             ->get();
 
-        $orderedStatuses = array_merge(Order::ACTIVE_STATUSES, Order::COMPLETED_STATUSES);
-
-        $orderedOrderIds = Order::whereIn('table_scan_session_id', $sessionIds)
-            ->whereIn('status', $orderedStatuses)
-            ->pluck('id')
-            ->map(fn ($id) => (int) $id)
-            ->all();
-
         // A draft is not a submitted order, so its items are still cart items.
         // They carry an order_id once the draft locks, and the customer must
         // keep seeing what they added even while somebody else pays for it.
@@ -211,11 +204,18 @@ class CartController extends Controller
             'label' => $this->locales->translatedTaxCategoryName($g['tax_category'], $vendorCountry, $locale),
         ]), $groups);
 
-        $people = $sessions->map(function (TableScanSession $s) use ($orderedOrderIds, $draftOrderIds, $vendorCountry, $serviceFeeRate, $vendor, $locale, $translateTaxGroups) {
+        $people = $sessions->map(function (TableScanSession $s) use ($draftOrderIds, $vendorCountry, $serviceFeeRate, $vendor, $locale, $translateTaxGroups) {
+            // Ownership decides visibility: a line leaves its owner's cart only
+            // once the owner's own order is submitted. Another guest taking a
+            // share of it never hides it — the owner still owes their half and
+            // has to be able to see and confirm it. That share can even land on
+            // a side order, which ShareOrderService creates as `confirmed`, so
+            // keying visibility off shared_order_ids emptied the owner's cart
+            // the moment somebody split one of their items. Shared lines come
+            // back locked, not invisible.
             $personItems = $s->cartItems
-                ->filter(fn (CartItem $item) => ($item->order_id === null
+                ->filter(fn (CartItem $item) => $item->order_id === null
                     || in_array((int) $item->order_id, $draftOrderIds, true))
-                    && ! $this->cartItemBelongsToOrderedOrder($item, $orderedOrderIds))
                 ->values();
 
             $personTaxGroups = TaxCalculationService::computeTaxGroups($personItems, $vendorCountry, true);
@@ -273,17 +273,6 @@ class CartController extends Controller
             ->all();
 
         return $payload;
-    }
-
-    private function cartItemBelongsToOrderedOrder(CartItem $item, array $orderedOrderIds): bool
-    {
-        if (empty($orderedOrderIds)) {
-            return false;
-        }
-
-        $itemOrderIds = array_map('intval', is_array($item->shared_order_ids) ? $item->shared_order_ids : []);
-
-        return ! empty(array_intersect($itemOrderIds, $orderedOrderIds));
     }
 
     /**
@@ -356,12 +345,21 @@ class CartController extends Controller
         $item = DB::transaction(function () use ($mySession, $data, $customizations) {
             TableScanSession::whereKey($mySession->id)->lockForUpdate()->first();
 
+            // A locked line never absorbs the add — it opens a new one instead.
+            // Somebody else has committed money to the line at exactly the
+            // quantity they saw: a guest covering the order (which binds the
+            // line to it, so order_id is set) or splitting this single item
+            // (which only fills shared_order_ids, leaving order_id null). Both
+            // agreed to a number, and growing the line behind their back would
+            // charge them for something they never saw.
             $existing = CartItem::where('table_scan_session_id', $mySession->id)
                 ->where('menu_item_id', $data['menu_item_id'])
                 ->whereNull('order_id')
+                ->whereNull('received_at')
                 ->lockForUpdate()
                 ->get()
-                ->first(fn (CartItem $cartItem) => $this->cartCustomizationsMatch($cartItem, $customizations));
+                ->first(fn (CartItem $cartItem) => empty($cartItem->shared_order_ids)
+                    && $this->cartCustomizationsMatch($cartItem, $customizations));
 
             if ($existing) {
                 $existing->update([
@@ -819,6 +817,15 @@ class CartController extends Controller
             return response()->json($history);
         }
 
+        // Nothing to draft. This happens to a guest whose order somebody else
+        // has covered: covering closes that order to new items and binds the
+        // ones it had, so the next draft would be created with no items and no
+        // amount — and then stand on the payment step as a second, empty order
+        // card under the same name, which reads as a duplicate.
+        if ($myCartItems->isEmpty()) {
+            return response()->json($this->buildTableHistoryResponse($mySession, $request));
+        }
+
         DB::transaction(function () use ($request, $mySession, $myTotal, $noteAttributes) {
             $currency = $mySession->vendor?->currency ?? 'EUR';
 
@@ -1230,16 +1237,15 @@ class CartController extends Controller
         $tableTotal = 0.0;
         $tableOrderCount = 0;
 
-        $people = $sessions->map(function (TableScanSession $s) use ($mySession, $orders, $allCartItems, $ordersById, $sessionCustomerNames, $vendorCountry, $vendor, $locale, &$tableTotal, &$tableOrderCount) {
+        $people = $sessions->map(function (TableScanSession $s) use ($mySession, $orders, $allCartItems, $ordersById, $sessionCustomerNames, $vendorCountry, $serviceFeeRate, $vendor, $locale, &$tableTotal, &$tableOrderCount) {
             $personOrders = $orders->get($s->id, collect());
-            $personTotal = (float) $personOrders->sum(fn (Order $o) => (float) $o->amount);
 
-            $tableTotal += $personTotal;
             $tableOrderCount += $personOrders->count();
 
             $personCartItems = collect();
+            $liveTotals = [];
 
-            $orderPayloads = $personOrders->map(function (Order $order) use ($s, $allCartItems, $mySession, $ordersById, $sessionCustomerNames, $vendorCountry, $vendor, $locale, &$personCartItems) {
+            $orderPayloads = $personOrders->map(function (Order $order) use ($s, $allCartItems, $mySession, $ordersById, $sessionCustomerNames, $vendorCountry, $serviceFeeRate, $vendor, $locale, &$personCartItems, &$liveTotals) {
                 $ownedCartItems = $allCartItems->filter(function (CartItem $ci) use ($s, $order) {
                     // An open draft implicitly owns its session's unassigned
                     // items. A locked one does not: its items were bound to it
@@ -1270,13 +1276,23 @@ class CartController extends Controller
                     ->values()
                     ->all();
 
-                return $this->orderPayload($order, $itemRows, $vendor);
+                $liveTotals[(int) $order->id] = $this->liveOrderTotals(
+                    $order,
+                    $orderItems,
+                    $vendorCountry,
+                    $serviceFeeRate,
+                );
+
+                return $this->orderPayload($order, $itemRows, $vendor, $liveTotals[(int) $order->id]);
             })->values();
+
+            $personTotal = round(array_sum(array_column($liveTotals, 'amount')), 2);
+            $tableTotal += $personTotal;
 
             $personTaxGroups = TaxCalculationService::computeTaxGroups($personCartItems, $vendorCountry, true);
             $personTotals = TaxCalculationService::computeTotals($personTaxGroups, 0);
 
-            $personServiceFee = round((float) $personOrders->sum(fn (Order $o) => (float) ($o->service_fee ?? 0)), 2);
+            $personServiceFee = round(array_sum(array_column($liveTotals, 'service_fee')), 2);
             $personTotals['service_fee'] = $personServiceFee;
             $personTotals['grand_total'] = round($personTotals['grand_total'] + $personServiceFee, 2);
 
@@ -1401,9 +1417,52 @@ class CartController extends Controller
     }
 
     /**
-     * Build the per-order dict (without its `items` array — that is computed by the caller).
+     * What an order is worth right now, and the service fee inside it.
+     *
+     * A submitted or settled order keeps its stored amount: that is the figure
+     * the customer was quoted and charged. An open draft does not — its items
+     * are still being edited and shared, and its stored amount is only as
+     * fresh as the last write that remembered to re-price it. Pricing it from
+     * the very items this payload resolved for it means the number can never
+     * contradict the list printed beside it.
+     *
+     * @param  Collection<int, CartItem>  $items
+     * @return array{amount: float, service_fee: float}
      */
-    private function orderPayload(Order $o, array $items, ?Vendor $vendor = null): array
+    private function liveOrderTotals(
+        Order $order,
+        Collection $items,
+        string $vendorCountry,
+        float $serviceFeeRate,
+    ): array {
+        if (! PaymentGuardService::orderClaimsUnboundItems($order)) {
+            return [
+                'amount' => round((float) $order->amount, 2),
+                'service_fee' => round((float) ($order->service_fee ?? 0), 2),
+            ];
+        }
+
+        $itemsTotal = round($items->sum(function (CartItem $item) use ($vendorCountry) {
+            $lineTotal = TaxCalculationService::cartItemLineTotalGross($item, $vendorCountry);
+            $shareCount = 1 + count($item->shared_order_ids ?? []);
+
+            return $lineTotal / $shareCount;
+        }), 2);
+
+        $serviceFee = round($itemsTotal * ($serviceFeeRate / 100), 2);
+
+        return [
+            'amount' => round($itemsTotal + $serviceFee, 2),
+            'service_fee' => $serviceFee,
+        ];
+    }
+
+    /**
+     * Build the per-order dict (without its `items` array — that is computed by the caller).
+     *
+     * @param  array{amount: float, service_fee: float}|null  $liveTotals
+     */
+    private function orderPayload(Order $o, array $items, ?Vendor $vendor = null, ?array $liveTotals = null): array
     {
         return [
             'id' => $o->id,
@@ -1417,17 +1476,20 @@ class CartController extends Controller
             'vendor_id' => $o->vendor_id,
             'table_scan_session_id' => $o->table_scan_session_id,
             'status' => $o->status,
-            'amount' => (float) $o->amount,
+            'amount' => (float) ($liveTotals['amount'] ?? $o->amount),
             'tip_amount' => (float) ($o->tip_amount ?? 0),
             'currency' => $o->currency,
             'order_number' => $o->order_number,
             'order_type' => $o->order_type,
             'table_number' => $o->table_number,
-            'service_fee' => (float) ($o->service_fee ?? 0),
+            'service_fee' => (float) ($liveTotals['service_fee'] ?? $o->service_fee ?? 0),
             'vat_amount' => (float) ($o->vat_amount ?? 0),
             'course' => $o->course,
             'payment_method' => $o->payment_method,
             'payment_pending' => (bool) $o->payment_pending,
+            // Who is standing on the payment step with this order in their
+            // total, so the rest of the table can see it is spoken for.
+            'checkout_hold_by' => $o->checkout_hold_by ? (int) $o->checkout_hold_by : null,
             'payment_received' => (bool) $o->payment_received,
             'payment_confirmed_at' => $this->dateTimes->formatDateTime($o->payment_confirmed_at, $vendor),
             'payment_note' => $o->payment_note,
@@ -1723,6 +1785,10 @@ class CartController extends Controller
         $lineTotal = $this->cartItemLineTotal($item, $vendorCountry);
         $vatAmount = TaxCalculationService::vatFromGross($lineTotal, $vatRate);
         $itemTaxCategory = $menuItem?->tax_category ?? 'food';
+        // What this customer actually owes on the line. The cart's `totals`
+        // already divide a split line by its sharers, so the line has to say
+        // the same thing or the rows will not add up to the total shown.
+        $sharedBetween = 1 + count(is_array($item->shared_order_ids) ? $item->shared_order_ids : []);
 
         return [
             'id' => $item->id,
@@ -1737,6 +1803,8 @@ class CartController extends Controller
             'vat_rate' => $vatRate,
             'vat_amount' => $vatAmount,
             'line_total' => $lineTotal,
+            'shared_between' => $sharedBetween,
+            'my_share' => round($lineTotal / $sharedBetween, 2),
             'menu_item' => $menuItem ? [
                 'id' => $menuItem->id,
                 'name' => $vendor

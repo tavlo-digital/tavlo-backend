@@ -42,12 +42,13 @@ class OrderAmountRecalculationService
             ->get();
 
         $this->loadCustomerIdentities($orders);
-        $items = $this->visibleItems($orders->pluck('id'), $vendorCountry);
+        $claimedSessions = $this->unboundItemClaims($orders);
+        $items = $this->visibleItems($orders->pluck('id'), $claimedSessions, $vendorCountry);
         $updates = [];
 
         foreach ($orders as $order) {
-            $itemsTotal = round($items->sum(function (CartItem $item) use ($order, $vendorCountry) {
-                if (! $this->isVisibleOn($item, $order)) {
+            $itemsTotal = round($items->sum(function (CartItem $item) use ($order, $claimedSessions, $vendorCountry) {
+                if (! $this->isVisibleOn($item, $order, $claimedSessions)) {
                     return 0.0;
                 }
 
@@ -69,9 +70,44 @@ class OrderAmountRecalculationService
         return compact('orders', 'items');
     }
 
-    /** @return EloquentCollection<int, CartItem> */
-    private function visibleItems(Collection $orderIds, string $vendorCountry): EloquentCollection
+    /**
+     * Which session's unassigned items each order implicitly owns, as
+     * session id => order id. Only one order per session may claim them —
+     * the newest, matching the draft the cart itself writes into — so a stale
+     * draft alongside a live one cannot count the same items twice.
+     *
+     * @param  EloquentCollection<int, Order>  $orders
+     * @return array<int, int>
+     */
+    private function unboundItemClaims(EloquentCollection $orders): array
     {
+        $claims = [];
+
+        foreach ($orders as $order) {
+            if (! $order->table_scan_session_id || ! PaymentGuardService::orderClaimsUnboundItems($order)) {
+                continue;
+            }
+
+            $sessionId = (int) $order->table_scan_session_id;
+            $orderId = (int) $order->id;
+
+            if (! isset($claims[$sessionId]) || $claims[$sessionId] < $orderId) {
+                $claims[$sessionId] = $orderId;
+            }
+        }
+
+        return $claims;
+    }
+
+    /**
+     * @param  array<int, int>  $claimedSessions
+     * @return EloquentCollection<int, CartItem>
+     */
+    private function visibleItems(
+        Collection $orderIds,
+        array $claimedSessions,
+        string $vendorCountry,
+    ): EloquentCollection {
         if ($orderIds->isEmpty()) {
             return new EloquentCollection;
         }
@@ -96,11 +132,19 @@ class OrderAmountRecalculationService
                         ->where('resolved_tax.country', '=', $countryCode)
                         ->where('resolved_tax.is_active', '=', true);
                 }),
-        ])->where(function ($query) use ($orderIds) {
+        ])->where(function ($query) use ($orderIds, $claimedSessions) {
             $query->whereIn('order_id', $orderIds);
 
             foreach ($orderIds as $orderId) {
                 $query->orWhereJsonContains('shared_order_ids', (int) $orderId);
+            }
+
+            // An open draft is priced from the items its guest has added, which
+            // stay unassigned until the draft locks or is confirmed.
+            if ($claimedSessions !== []) {
+                $query->orWhere(fn ($unbound) => $unbound
+                    ->whereNull('order_id')
+                    ->whereIn('table_scan_session_id', array_keys($claimedSessions)));
             }
         })->get();
     }
@@ -185,9 +229,15 @@ class OrderAmountRecalculationService
         }
     }
 
-    private function isVisibleOn(CartItem $item, Order $order): bool
+    /** @param array<int, int> $claimedSessions */
+    private function isVisibleOn(CartItem $item, Order $order, array $claimedSessions): bool
     {
-        if ((int) $item->order_id === (int) $order->id) {
+        if ($item->order_id !== null && (int) $item->order_id === (int) $order->id) {
+            return true;
+        }
+
+        if ($item->order_id === null
+            && ($claimedSessions[(int) $item->table_scan_session_id] ?? null) === (int) $order->id) {
             return true;
         }
 

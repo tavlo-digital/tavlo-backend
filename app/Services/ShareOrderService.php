@@ -243,7 +243,17 @@ class ShareOrderService
         $serviceFeeRate = (float) ($order->vendor?->vendorSetting?->service_fee_rate ?? 0);
 
         $owned = CartItem::with('menuItem:id,price,has_discount,discounted_price,vat_rate,tax_category,paid_addons,free_addons,removable_items,translations')
-            ->where('order_id', $order->id)
+            ->where(function ($query) use ($order) {
+                $query->where('order_id', $order->id);
+
+                // An open draft is priced from the items its guest has added,
+                // which stay unassigned until the draft locks or is confirmed.
+                if (PaymentGuardService::orderClaimsUnboundItems($order) && $order->table_scan_session_id) {
+                    $query->orWhere(fn ($unbound) => $unbound
+                        ->whereNull('order_id')
+                        ->where('table_scan_session_id', $order->table_scan_session_id));
+                }
+            })
             ->get();
 
         $sharedInto = CartItem::with('menuItem:id,price,has_discount,discounted_price,vat_rate,tax_category,paid_addons,free_addons,removable_items,translations')

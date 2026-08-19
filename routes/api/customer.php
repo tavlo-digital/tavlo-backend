@@ -159,6 +159,8 @@ Route::middleware([
     Route::post('payments/request-cash', [PaymentController::class, 'requestCash'])->name('payments.request-cash');
     Route::post('payments/create-intent', [PaymentController::class, 'createIntent'])->name('payments.create-intent');
     Route::post('payments/update-intent', [PaymentController::class, 'updateIntent'])->name('payments.update-intent');
+    Route::post('payments/checkout-hold', [PaymentController::class, 'holdCheckout'])->name('payments.checkout-hold');
+    Route::delete('payments/checkout-hold', [PaymentController::class, 'releaseCheckoutHold'])->name('payments.checkout-hold.release');
     Route::get('payments/intent', [PaymentController::class, 'activeIntent'])->name('payments.intent.active');
     Route::delete('payments/intent', [PaymentController::class, 'cancelIntent'])->name('payments.intent.cancel');
     Route::get('payments/verify', [PaymentController::class, 'verify'])->name('payments.verify');

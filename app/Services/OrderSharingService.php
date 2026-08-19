@@ -14,6 +14,7 @@ class OrderSharingService
     public function __construct(
         private readonly OrderAmountRecalculationService $amounts,
         private readonly TableStatePatchService $statePatches,
+        private readonly CheckoutHoldService $checkoutHolds,
     ) {}
 
     /**
@@ -158,7 +159,7 @@ class OrderSharingService
 
         $affectedOrderIds
             ->push((int) $target->id)
-            ->push($cartItem->order_id ? (int) $cartItem->order_id : null);
+            ->push(PaymentGuardService::owningOrderIdFor($cartItem));
         foreach ($updated as $id) {
             $affectedOrderIds->push((int) $id);
         }
@@ -184,7 +185,7 @@ class OrderSharingService
         foreach ($existing as $id) {
             $affectedOrderIds->push($id);
         }
-        $affectedOrderIds->push($cartItem->order_id ? (int) $cartItem->order_id : null);
+        $affectedOrderIds->push(PaymentGuardService::owningOrderIdFor($cartItem));
 
         $cartItem->update([
             'shared_order_ids' => $existing
@@ -226,7 +227,7 @@ class OrderSharingService
 
     private function guardPaymentLocks(Order $order, CartItem $cartItem): void
     {
-        $relatedOrderIds = collect([$order->id, $cartItem->order_id])
+        $relatedOrderIds = collect([$order->id, $cartItem->order_id, PaymentGuardService::owningOrderIdFor($cartItem)])
             ->merge($this->sharedOrderIds($cartItem))
             ->filter()
             ->map(fn ($id) => (int) $id)
@@ -234,6 +235,15 @@ class OrderSharingService
 
         if (PaymentGuardService::hasActivePaymentCoveringGraph($relatedOrderIds, [$order->id])) {
             abort(409, 'These items are locked while a payment is in progress.');
+        }
+
+        // A guest standing on the payment step holds these orders before any
+        // payment exists. Splitting one of their items now would move the total
+        // they are about to pay out from under them.
+        $heldByOthers = $this->checkoutHolds->heldByOthers($relatedOrderIds, (int) $order->customer_id);
+
+        if ($heldByOthers->isNotEmpty()) {
+            abort(409, 'These items are locked while another guest is checking out.');
         }
     }
 

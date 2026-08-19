@@ -4,11 +4,13 @@ namespace App\Http\Controllers\Api\Customer;
 
 use App\Http\Controllers\Controller;
 use App\Models\CartItem;
+use App\Models\Customer;
 use App\Models\Order;
 use App\Models\OrderPayment;
 use App\Models\StripeWebhookLog;
 use App\Models\TableScanSession;
 use App\Models\Vendor;
+use App\Services\CheckoutHoldService;
 use App\Services\CustomerCommandBus;
 use App\Services\KitchenOrderReleaseService;
 use App\Services\NotificationService;
@@ -40,6 +42,7 @@ class PaymentController extends Controller
         private readonly CustomerCommandBus $commands,
         private readonly OrderSessionService $orderSessions,
         private readonly KitchenOrderReleaseService $kitchenReleases,
+        private readonly CheckoutHoldService $checkoutHolds,
     ) {}
 
     private function pendingCommandResponse(TableScanSession $session): ?JsonResponse
@@ -189,6 +192,13 @@ class PaymentController extends Controller
                 abort(409, 'This order is locked while a payment is in progress.');
             }
 
+            // Same rule one step earlier: somebody standing on the payment step
+            // holds these orders even before a payment exists, and covering one
+            // would change the total they are looking at.
+            if ($this->checkoutHolds->heldByOthers($orders->pluck('id'), (int) $payer->id)->isNotEmpty()) {
+                abort(409, 'This order is locked while another guest is checking out.');
+            }
+
             $shareChanges = ShareOrderService::removePayerSharesFrom($orders, $payerSession);
 
             Order::whereIn('id', $orders->pluck('id'))
@@ -329,6 +339,18 @@ class PaymentController extends Controller
                 abort(409, 'Orders with an active payment cannot be released.');
             }
 
+            // The owner is on the payment step. Handing their order back now
+            // would put it into the total they are already looking at, so the
+            // coverage stands until they are done.
+            $ownerCheckingOut = $orders->first(
+                fn (Order $order) => (int) $order->customer_id !== (int) $payer->id
+                    && $this->checkoutHolds->customerIsCheckingOut((int) $order->customer_id, $tableSessionIds)
+            );
+
+            if ($ownerCheckingOut) {
+                abort(409, 'This order is locked while its owner is checking out.');
+            }
+
             $pendingResetOrderIds = collect();
 
             foreach ($activePayments as $payment) {
@@ -418,6 +440,181 @@ class PaymentController extends Controller
      * intent at their current table? Used to resume the checkout after a page
      * reload. Never creates or cancels anything.
      */
+    /**
+     * POST /api/customer/payments/checkout-hold
+     *
+     * Claims the orders this customer is about to settle, from the moment they
+     * open the payment step. Until this existed the table stayed editable
+     * behind them: another guest could cover the same order or split one of
+     * its items, and the total on screen quietly stopped matching what they
+     * were about to be charged. A cash checkout had no lock at all, since the
+     * only thing that locked anything was a Stripe intent.
+     *
+     * The hold is released by going back (see releaseCheckoutHold), superseded
+     * when a real payment takes over, and expires on its own if the customer
+     * abandons the checkout.
+     */
+    public function holdCheckout(Request $request): JsonResponse
+    {
+        $customer = $request->user();
+        $payerSession = $this->activeSession((int) $customer->id, $request);
+
+        if (! $payerSession) {
+            return response()->json(['message' => 'No active table session found.'], 422);
+        }
+
+        $result = DB::transaction(function () use ($customer, $payerSession) {
+            $orders = $this->payableSessionOrders($payerSession, (int) $customer->id);
+
+            if ($orders->isEmpty()) {
+                return ['error' => ['message' => 'You have no unpaid orders to pay for.', 'status' => 422]];
+            }
+
+            $lockedOrders = Order::whereIn('id', $orders->pluck('id'))->lockForUpdate()->get();
+
+            $heldElsewhere = $lockedOrders->first(
+                fn (Order $order) => $this->checkoutHolds->isHeldByAnyoneElse($order, (int) $customer->id)
+            );
+
+            if ($heldElsewhere) {
+                $holder = $heldElsewhere->checkout_hold_by
+                    ? Customer::find($heldElsewhere->checkout_hold_by)
+                    : null;
+                $name = $holder
+                    ? (trim(($holder->first_name ?? '').' '.($holder->last_name ?? '')) ?: 'Another guest')
+                    : 'Another guest';
+
+                return ['error' => [
+                    'message' => "{$name} is checking out these items right now. Please try again in a moment.",
+                    'status' => 409,
+                ]];
+            }
+
+            $blocking = PaymentGuardService::activePaymentsCovering($lockedOrders->pluck('id'))
+                ->first(fn (OrderPayment $payment) => (int) $payment->customer_id !== (int) $customer->id);
+
+            if ($blocking) {
+                return ['error' => [
+                    'message' => 'A payment is already in progress for these items.',
+                    'status' => 409,
+                ]];
+            }
+
+            return ['held' => $this->checkoutHolds->hold((int) $customer->id, $lockedOrders)];
+        });
+
+        if (isset($result['error'])) {
+            return response()->json(
+                ['message' => $result['error']['message']],
+                $result['error']['status'],
+            );
+        }
+
+        $this->broadcastHoldChange($payerSession, $customer, $result['held'], true);
+
+        return response()->json([
+            'held' => $result['held'],
+            'expires_in_minutes' => CheckoutHoldService::TTL_MINUTES,
+        ]);
+    }
+
+    /**
+     * DELETE /api/customer/payments/checkout-hold
+     *
+     * The way back out of the payment step: cancels this customer's Stripe
+     * intent if one was created, drops their hold, and tells the table both
+     * are gone so the items become selectable again.
+     */
+    public function releaseCheckoutHold(Request $request): JsonResponse
+    {
+        $customer = $request->user();
+        $payerSession = $this->activeSession((int) $customer->id, $request);
+
+        if (! $payerSession) {
+            return response()->json(['message' => 'No active table session found.'], 422);
+        }
+
+        $tableSessionIds = $this->orderSessions->groupSessionIds($payerSession);
+
+        $released = DB::transaction(function () use ($customer, $tableSessionIds) {
+            $payments = OrderPayment::where('customer_id', $customer->id)
+                ->whereIn('table_scan_session_id', $tableSessionIds)
+                ->whereNotIn('status', self::TERMINAL_PAYMENT_STATUSES)
+                ->whereNotNull('stripe_payment_intent_id')
+                ->lockForUpdate()
+                ->get();
+
+            if ($payments->contains(fn (OrderPayment $payment) => $payment->status === 'processing')) {
+                abort(409, 'A payment is currently processing and cannot be canceled.');
+            }
+
+            $affected = collect();
+            foreach ($payments as $payment) {
+                $affected = $affected->merge($this->cancelAbandonedPayment($payment));
+            }
+
+            $held = Order::whereIn('table_scan_session_id', $tableSessionIds)
+                ->where('checkout_hold_by', $customer->id)
+                ->lockForUpdate()
+                ->get();
+
+            return $affected
+                ->merge($this->checkoutHolds->release((int) $customer->id, $held))
+                ->unique()
+                ->values();
+        });
+
+        $this->broadcastHoldChange($payerSession, $customer, $released->all(), false);
+
+        return response()->json([
+            'released' => $released->all(),
+            'state_patch' => $this->statePatches->build('payment.canceled', $released),
+        ]);
+    }
+
+    /**
+     * Tell the rest of the table that a checkout claim was taken or dropped, so
+     * their screens lock and unlock without waiting for a refresh.
+     *
+     * @param  array<int, int>  $orderIds
+     */
+    private function broadcastHoldChange(
+        TableScanSession $payerSession,
+        $customer,
+        array $orderIds,
+        bool $held,
+    ): void {
+        if ($orderIds === []) {
+            return;
+        }
+
+        $customerName = trim(($customer->first_name ?? '').' '.($customer->last_name ?? '')) ?: 'A guest';
+        $snapshots = Order::with('paidBy:id,first_name,last_name')
+            ->whereIn('id', $orderIds)
+            ->get()
+            ->map(fn (Order $order) => NotificationService::orderSnapshot($order))
+            ->values()
+            ->all();
+
+        $this->orderSessions->notifyCustomers(
+            $payerSession,
+            'payment_updated',
+            $held
+                ? "{$customerName} started checking out."
+                : "{$customerName} left the checkout.",
+            [
+                'template' => $held ? 'payment.checkout_started' : 'payment.canceled',
+                'customer_id' => $customer->id,
+                'customer_name' => $customerName,
+                'order_snapshots' => $snapshots,
+                'state_patch' => $this->statePatches->build(
+                    $held ? 'payment.pending' : 'payment.canceled',
+                    $orderIds,
+                ),
+            ],
+        );
+    }
+
     public function activeIntent(Request $request): JsonResponse
     {
         $customer = $request->user();
@@ -1370,7 +1567,12 @@ class PaymentController extends Controller
         if ($coveredOrderIds->isNotEmpty()) {
             Order::whereIn('id', $coveredOrderIds)
                 ->where('payment_received', false)
-                ->update(['payment_pending' => false]);
+                ->update([
+                    'payment_pending' => false,
+                    // The checkout that took the hold is over either way.
+                    'checkout_hold_by' => null,
+                    'checkout_hold_at' => null,
+                ]);
 
             // The checkout is off, so unlocked drafts go back to behaving like
             // ordinary carts.
@@ -1556,6 +1758,8 @@ class PaymentController extends Controller
                     'payment_method' => 'stripe',
                     'transaction_id' => $payment->stripe_payment_intent_id,
                     'payment_pending' => false,
+                    'checkout_hold_by' => null,
+                    'checkout_hold_at' => null,
                     'payment_received' => true,
                     'payment_confirmed_at' => $order->payment_confirmed_at ?? $now,
                 ];
@@ -1595,6 +1799,8 @@ class PaymentController extends Controller
                     'payment_method' => 'stripe',
                     'transaction_id' => $payment->stripe_payment_intent_id,
                     'payment_pending' => false,
+                    'checkout_hold_by' => null,
+                    'checkout_hold_at' => null,
                     'payment_received' => false,
                     'payment_note' => 'Stripe payment was not completed.',
                 ]);

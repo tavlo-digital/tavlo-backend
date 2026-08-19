@@ -396,6 +396,7 @@ class NotificationService
             'currency' => $order->currency,
             'payment_method' => $order->payment_method,
             'payment_pending' => (bool) $order->payment_pending,
+            'checkout_hold_by' => $order->checkout_hold_by ? (int) $order->checkout_hold_by : null,
             'payment_received' => (bool) $order->payment_received,
             'note' => $order->note,
             'paid_by' => $paidBy ? [

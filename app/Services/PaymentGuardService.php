@@ -92,6 +92,48 @@ class PaymentGuardService
     }
 
     /**
+     * Whether $order implicitly owns its session's unassigned cart items.
+     *
+     * An open draft does: the items a guest has added are not bound to it
+     * until it locks (see freezeDraftItems) or is confirmed, yet they are
+     * still what the draft is for. Anything that prices or lists a draft has
+     * to say so, or the order reports fewer items than the cart shows.
+     */
+    public static function orderClaimsUnboundItems(Order $order): bool
+    {
+        return $order->status === Order::STATUS_DRAFT && ! self::orderIsCartLocked($order);
+    }
+
+    /**
+     * The order a cart item belongs to for pricing.
+     *
+     * Usually its own order_id, but an unassigned item is not orphaned — it
+     * belongs to its session's open draft (see orderClaimsUnboundItems). Read
+     * order_id alone and the owner's order silently drops out of the set of
+     * orders a change has to re-price.
+     */
+    public static function owningOrderIdFor(CartItem $item): ?int
+    {
+        if ($item->order_id) {
+            return (int) $item->order_id;
+        }
+
+        if (! $item->table_scan_session_id) {
+            return null;
+        }
+
+        $orderId = Order::where('table_scan_session_id', $item->table_scan_session_id)
+            ->where('status', Order::STATUS_DRAFT)
+            ->where('payment_received', false)
+            ->where('payment_pending', false)
+            ->whereNull('paid_by')
+            ->latest('id')
+            ->value('id');
+
+        return $orderId ? (int) $orderId : null;
+    }
+
+    /**
      * Freeze a draft order's claim on its session's cart items.
      *
      * A draft owns every unassigned cart item in its session implicitly, so
