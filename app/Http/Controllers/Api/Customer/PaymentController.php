@@ -1575,10 +1575,14 @@ class PaymentController extends Controller
                 ]);
 
             // The checkout is off, so unlocked drafts go back to behaving like
-            // ordinary carts.
+            // ordinary carts. An order somebody still covers is not unlocked:
+            // its items stay bound, because a locked order only recognises
+            // items by order_id and thawing would strand it showing none.
+            // Same rule CheckoutHoldService applies when it releases a hold.
             Order::whereIn('id', $coveredOrderIds)
                 ->where('payment_received', false)
                 ->get()
+                ->reject(fn (Order $order) => PaymentGuardService::orderIsCartLocked($order))
                 ->each(fn (Order $order) => PaymentGuardService::thawDraftItems($order));
         }
 

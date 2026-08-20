@@ -1435,6 +1435,66 @@ class CustomerPaymentsTest extends TestCase
         $this->assertSame($this->customer->id, (int) $covered->fresh()->paid_by);
     }
 
+    public function test_canceling_a_payment_keeps_a_covered_order_items_bound_to_it(): void
+    {
+        [$owner, $ownerSession] = $this->tablemate();
+
+        $this->session->update(['type' => 'pickup', 'pin' => '4242']);
+        $ownerSession->update(['type' => 'pickup', 'pin' => '4242']);
+
+        // I cover the owner's draft, which binds their line to it.
+        $covered = Order::create([
+            'order_public_id' => 'ord-covered-intent-cancel',
+            'customer_id' => $owner->id,
+            'vendor_id' => $this->vendor->id,
+            'table_scan_session_id' => $ownerSession->id,
+            'status' => Order::STATUS_DRAFT,
+            'amount' => 3.85,
+            'currency' => 'EUR',
+            'paid_by' => $this->customer->id,
+        ]);
+
+        $theirItem = CartItem::create([
+            'table_scan_session_id' => $ownerSession->id,
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 1,
+            'order_id' => $covered->id,
+        ]);
+
+        $mine = $this->order([
+            'status' => Order::STATUS_DRAFT,
+            'payment_pending' => false,
+            'order_type' => 'pickup',
+        ]);
+
+        // Reaching the card form creates an intent covering both orders, which
+        // is what routes the step back out through the payment cancelation.
+        $payment = $this->payment($mine, 'pi_fake_1');
+        $payment->update(['status' => 'requires_payment_method']);
+        $payment->orders()->sync([
+            $mine->id => ['amount' => $mine->amount],
+            $covered->id => ['amount' => $covered->amount],
+        ]);
+
+        $this->withHeaders($this->pickupHeaders())
+            ->postJson('/api/customer/payments/checkout-hold')
+            ->assertOk();
+
+        $this->app['auth']->forgetGuards();
+        $this->withHeaders($this->pickupHeaders())
+            ->deleteJson('/api/customer/payments/checkout-hold')
+            ->assertOk();
+
+        $this->assertContains('pi_fake_1', $this->stripe->canceled);
+
+        // Stepping back cancels the payment, but I am still covering their
+        // order. A covered order is still cart-locked, and a locked order only
+        // recognises items bound by order_id — unbinding here would leave it
+        // reporting no items at all.
+        $this->assertSame($this->customer->id, (int) $covered->fresh()->paid_by);
+        $this->assertSame($covered->id, (int) $theirItem->fresh()->order_id);
+    }
+
     public function test_checkout_hold_keeps_the_draft_items_on_the_order(): void
     {
         // Pickup keeps the order a draft right through checkout, which is the
