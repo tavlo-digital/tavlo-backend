@@ -345,6 +345,21 @@ class CartController extends Controller
         $item = DB::transaction(function () use ($mySession, $data, $customizations) {
             TableScanSession::whereKey($mySession->id)->lockForUpdate()->first();
 
+            // The client's id names this exact line, so an add that already
+            // landed returns it untouched instead of merging again. Delivery is
+            // at-least-once — a retried request, a replayed queue job or a
+            // double tap must not quietly buy the guest a second helping.
+            if (! empty($data['client_item_id'])) {
+                $alreadyAdded = CartItem::where('table_scan_session_id', $mySession->id)
+                    ->where('client_item_id', $data['client_item_id'])
+                    ->lockForUpdate()
+                    ->first();
+
+                if ($alreadyAdded) {
+                    return $alreadyAdded;
+                }
+            }
+
             // A locked line never absorbs the add — it opens a new one instead.
             // Somebody else has committed money to the line at exactly the
             // quantity they saw: a guest covering the order (which binds the

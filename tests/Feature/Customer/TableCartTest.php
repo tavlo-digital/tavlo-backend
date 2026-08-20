@@ -5,6 +5,7 @@ namespace Tests\Feature\Customer;
 use App\Http\Controllers\Api\Customer\CartController;
 use App\Jobs\ProcessCustomerCommand;
 use App\Models\CartItem;
+use Illuminate\Support\Str;
 use App\Models\Customer;
 use App\Models\MenuCategory;
 use App\Models\MenuItem;
@@ -621,6 +622,43 @@ class TableCartTest extends TestCase
             ->postJson('/api/customer/cart/items', ['menu_item_id' => 9999])
             ->assertStatus(422)
             ->assertJsonValidationErrors(['menu_item_id']);
+    }
+
+    public function test_replaying_an_add_with_the_same_client_item_id_does_not_stack_quantity(): void
+    {
+        // Assert against the write itself. The queue worker re-invokes this same
+        // action, so the guard is identical either way, but queuing would answer
+        // 202 and move the assertions off the thing under test.
+        config()->set('services.customer_commands.enabled', false);
+
+        $clientItemId = (string) Str::uuid();
+
+        $first = $this->withHeaders($this->headers)
+            ->postJson('/api/customer/cart/items', [
+                'menu_item_id' => $this->menuItem->id,
+                'quantity' => 2,
+                'client_item_id' => $clientItemId,
+            ])->assertCreated();
+
+        // The same write arriving twice — a retry, a replayed queue job, or a
+        // double tap — must land on the line that already exists.
+        $this->withHeaders($this->headers)
+            ->postJson('/api/customer/cart/items', [
+                'menu_item_id' => $this->menuItem->id,
+                'quantity' => 2,
+                'client_item_id' => $clientItemId,
+            ])->assertSuccessful()
+            ->assertJsonPath('id', $first->json('id'))
+            ->assertJsonPath('quantity', 2);
+
+        $this->assertSame(
+            1,
+            CartItem::where('table_scan_session_id', $this->session->id)->count(),
+        );
+        $this->assertSame(
+            2,
+            (int) CartItem::where('client_item_id', $clientItemId)->sole()->quantity,
+        );
     }
 
     public function test_add_item_creates_cart_item(): void
