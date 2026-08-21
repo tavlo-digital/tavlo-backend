@@ -22,7 +22,14 @@ class ProcessCustomerCommand implements ShouldQueue
 {
     use Queueable;
 
-    public int $tries = 5;
+    // WithoutOverlapping and the sequence barrier both release a command while
+    // an earlier command for the same session is still running. Queue releases
+    // count as attempts, so a small tries limit can discard a perfectly valid
+    // command before it ever reaches handle(). Let ordering waits retry without
+    // limit while still capping actual exceptions below.
+    public int $tries = 0;
+
+    public int $maxExceptions = 5;
 
     public int $timeout = 60;
 
@@ -62,6 +69,18 @@ class ProcessCustomerCommand implements ShouldQueue
             return;
         }
         if ($this->sequence < $expected) {
+            // A newer command may have failed and advanced the sequence while
+            // this released job was waiting. It no longer needs executing, but
+            // it must still clear its accepted status and pending counter or
+            // payment barriers will wait forever.
+            $bus->finish(
+                $this->commandId,
+                $this->sessionId,
+                $this->sequence,
+                'superseded',
+                ['message' => 'A newer customer command has already been processed.'],
+            );
+
             return;
         }
 

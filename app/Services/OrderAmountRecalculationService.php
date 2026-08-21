@@ -36,7 +36,17 @@ class OrderAmountRecalculationService
             ];
         }
 
-        $orders = Order::whereIn('id', $ids)
+        $orders = Order::select('orders.*')
+            ->addSelect([
+                'latest_session_draft_id' => Order::query()
+                    ->from('orders as latest_drafts')
+                    ->selectRaw('MAX(latest_drafts.id)')
+                    ->whereColumn('latest_drafts.table_scan_session_id', 'orders.table_scan_session_id')
+                    ->where('latest_drafts.status', Order::STATUS_DRAFT)
+                    ->where('latest_drafts.payment_received', false)
+                    ->whereNull('latest_drafts.parent_order_id'),
+            ])
+            ->whereIn('orders.id', $ids)
             ->where('payment_received', false)
             ->whereNotNull('table_scan_session_id')
             ->get();
@@ -84,7 +94,13 @@ class OrderAmountRecalculationService
         $claims = [];
 
         foreach ($orders as $order) {
-            if (! $order->table_scan_session_id || ! PaymentGuardService::orderClaimsUnboundItems($order)) {
+            $latestDraftId = $order->getAttribute('latest_session_draft_id');
+
+            if (! $order->table_scan_session_id
+                || ! PaymentGuardService::orderClaimsUnboundItems(
+                    $order,
+                    $latestDraftId !== null ? (int) $latestDraftId : null,
+                )) {
                 continue;
             }
 

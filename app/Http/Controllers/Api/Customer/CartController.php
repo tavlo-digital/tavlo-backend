@@ -18,6 +18,7 @@ use App\Services\PaymentGuardService;
 use App\Services\TableStatePatchService;
 use App\Services\TaxCalculationService;
 use App\Services\VendorDateTimeService;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
@@ -1006,6 +1007,25 @@ class CartController extends Controller
             ->get();
 
         if ($openItems->isEmpty()) {
+            // Payment verification confirms off-premise orders and binds their
+            // items atomically. Older clients can still call this endpoint once
+            // more after verification; treat that replay as a successful no-op
+            // instead of reporting a false "cart is empty" failure.
+            $alreadyFinalizedPayment = $this->orderSessions->isOffPremise($mySession)
+                && Order::query()
+                    ->whereIn('table_scan_session_id', $this->tableSessionIds($mySession))
+                    ->where('payment_received', true)
+                    ->where(function (Builder $payer) use ($customerId) {
+                        $payer->where('customer_id', $customerId)
+                            ->orWhere('paid_by', $customerId);
+                    })
+                    ->whereNotIn('status', Order::TERMINAL_STATUSES)
+                    ->exists();
+
+            if ($alreadyFinalizedPayment) {
+                return response()->json($this->buildTableHistoryResponse($mySession, $request));
+            }
+
             return response()->json([
                 'message' => 'Your cart is empty. Add items before confirming your order.',
             ], 422);
@@ -1242,6 +1262,11 @@ class CartController extends Controller
             ->get();
 
         $ordersById = $orders->flatten()->keyBy('id');
+        $latestDraftIds = $orders->map(fn (Collection $sessionOrders) => $sessionOrders
+            ->filter(fn (Order $order) => $order->status === Order::STATUS_DRAFT
+                && ! $order->payment_received
+                && $order->parent_order_id === null)
+            ->max('id'));
 
         $sessionCustomerNames = $sessions->mapWithKeys(fn (TableScanSession $s) => [
             $s->id => $s->customer
@@ -1252,7 +1277,7 @@ class CartController extends Controller
         $tableTotal = 0.0;
         $tableOrderCount = 0;
 
-        $people = $sessions->map(function (TableScanSession $s) use ($mySession, $orders, $allCartItems, $ordersById, $sessionCustomerNames, $vendorCountry, $serviceFeeRate, $vendor, $locale, &$tableTotal, &$tableOrderCount) {
+        $people = $sessions->map(function (TableScanSession $s) use ($mySession, $orders, $allCartItems, $ordersById, $latestDraftIds, $sessionCustomerNames, $vendorCountry, $serviceFeeRate, $vendor, $locale, &$tableTotal, &$tableOrderCount) {
             $personOrders = $orders->get($s->id, collect());
 
             $tableOrderCount += $personOrders->count();
@@ -1260,13 +1285,17 @@ class CartController extends Controller
             $personCartItems = collect();
             $liveTotals = [];
 
-            $orderPayloads = $personOrders->map(function (Order $order) use ($s, $allCartItems, $mySession, $ordersById, $sessionCustomerNames, $vendorCountry, $serviceFeeRate, $vendor, $locale, &$personCartItems, &$liveTotals) {
-                $ownedCartItems = $allCartItems->filter(function (CartItem $ci) use ($s, $order) {
+            $orderPayloads = $personOrders->map(function (Order $order) use ($s, $allCartItems, $mySession, $ordersById, $latestDraftIds, $sessionCustomerNames, $vendorCountry, $serviceFeeRate, $vendor, $locale, &$personCartItems, &$liveTotals) {
+                $claimsUnboundItems = PaymentGuardService::orderClaimsUnboundItems(
+                    $order,
+                    $latestDraftIds->get($s->id),
+                );
+                $ownedCartItems = $allCartItems->filter(function (CartItem $ci) use ($s, $order, $claimsUnboundItems) {
                     // An open draft implicitly owns its session's unassigned
                     // items. A locked one does not: its items were bound to it
                     // when it locked, and anything added since belongs to the
                     // next draft.
-                    if ($order->status === 'draft' && ! PaymentGuardService::orderIsCartLocked($order)) {
+                    if ($claimsUnboundItems) {
                         return (int) $ci->table_scan_session_id === (int) $s->id
                             && ($ci->order_id === null || (int) $ci->order_id === (int) $order->id);
                     }
@@ -1296,6 +1325,7 @@ class CartController extends Controller
                     $orderItems,
                     $vendorCountry,
                     $serviceFeeRate,
+                    $claimsUnboundItems,
                 );
 
                 return $this->orderPayload($order, $itemRows, $vendor, $liveTotals[(int) $order->id]);
@@ -1449,8 +1479,9 @@ class CartController extends Controller
         Collection $items,
         string $vendorCountry,
         float $serviceFeeRate,
+        bool $claimsUnboundItems,
     ): array {
-        if (! PaymentGuardService::orderClaimsUnboundItems($order)) {
+        if (! $claimsUnboundItems) {
             return [
                 'amount' => round((float) $order->amount, 2),
                 'service_fee' => round((float) ($order->service_fee ?? 0), 2),
@@ -1523,17 +1554,19 @@ class CartController extends Controller
 
     private function currentOpenOrder(int $customerId, int $sessionId): ?Order
     {
-        return Order::where('customer_id', $customerId)
+        $latestOrder = Order::where('customer_id', $customerId)
             ->where('table_scan_session_id', $sessionId)
             ->whereIn('status', ['draft', 'confirmed'])
             ->where('payment_received', false)
-            // An order somebody has committed to paying for is closed to new
-            // items: the next add opens a fresh order instead of joining one
-            // that is already being settled.
-            ->where('payment_pending', false)
-            ->whereNull('paid_by')
             ->latest('id')
             ->first();
+
+        // An order somebody has committed to paying for is closed to new
+        // items. Do not fall back to an older unlocked draft: that would move
+        // the newest cart rows backwards across an existing order boundary.
+        return $latestOrder && ! PaymentGuardService::orderIsCartLocked($latestOrder)
+            ? $latestOrder
+            : null;
     }
 
     /**

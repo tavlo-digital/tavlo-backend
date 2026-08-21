@@ -94,14 +94,46 @@ class PaymentGuardService
     /**
      * Whether $order implicitly owns its session's unassigned cart items.
      *
-     * An open draft does: the items a guest has added are not bound to it
-     * until it locks (see freezeDraftItems) or is confirmed, yet they are
-     * still what the draft is for. Anything that prices or lists a draft has
-     * to say so, or the order reports fewer items than the cart shows.
+     * The newest open draft does: the items a guest has added are not bound
+     * to it until it locks (see freezeDraftItems) or is confirmed, yet they
+     * are still what the draft is for. Older drafts in the same session must
+     * not claim those rows too, or two order cards report the same items and
+     * amount after coverage is released.
      */
-    public static function orderClaimsUnboundItems(Order $order): bool
+    public static function orderClaimsUnboundItems(Order $order, ?int $knownLatestDraftId = null): bool
     {
-        return $order->status === Order::STATUS_DRAFT && ! self::orderIsCartLocked($order);
+        if ($order->status !== Order::STATUS_DRAFT
+            || self::orderIsCartLocked($order)
+            || ! $order->table_scan_session_id) {
+            return false;
+        }
+
+        return $knownLatestDraftId !== null
+            ? (int) $order->id === $knownLatestDraftId
+            : self::draftIsLatestForSession($order);
+    }
+
+    /**
+     * Whether this is the newest main draft in its session.
+     *
+     * Locking or unlocking an older draft must never move newer unassigned
+     * cart rows into it. The draft sequence is the durable order boundary;
+     * paid_by and payment_pending are only temporary locks on that boundary.
+     */
+    public static function draftIsLatestForSession(Order $order): bool
+    {
+        if ($order->status !== Order::STATUS_DRAFT
+            || ! $order->table_scan_session_id
+            || $order->parent_order_id !== null) {
+            return false;
+        }
+
+        return ! Order::where('table_scan_session_id', $order->table_scan_session_id)
+            ->where('status', Order::STATUS_DRAFT)
+            ->where('payment_received', false)
+            ->whereNull('parent_order_id')
+            ->where('id', '>', $order->id)
+            ->exists();
     }
 
     /**
@@ -122,21 +154,20 @@ class PaymentGuardService
             return null;
         }
 
-        $orderId = Order::where('table_scan_session_id', $item->table_scan_session_id)
+        $order = Order::where('table_scan_session_id', $item->table_scan_session_id)
             ->where('status', Order::STATUS_DRAFT)
             ->where('payment_received', false)
-            ->where('payment_pending', false)
-            ->whereNull('paid_by')
+            ->whereNull('parent_order_id')
             ->latest('id')
-            ->value('id');
+            ->first();
 
-        return $orderId ? (int) $orderId : null;
+        return $order && ! self::orderIsCartLocked($order) ? (int) $order->id : null;
     }
 
     /**
      * Freeze a draft order's claim on its session's cart items.
      *
-     * A draft owns every unassigned cart item in its session implicitly, so
+     * The newest draft owns the session's unassigned cart items implicitly, so
      * without this a guest's later additions would silently join an order
      * somebody is already paying for — and adding the same menu item again
      * would increment a line that is being paid. Binding the current items to
@@ -147,7 +178,7 @@ class PaymentGuardService
      */
     public static function freezeDraftItems(Order $order): void
     {
-        if ($order->status !== 'draft' || ! $order->table_scan_session_id) {
+        if (! self::draftIsLatestForSession($order)) {
             return;
         }
 
@@ -158,16 +189,27 @@ class PaymentGuardService
 
     /**
      * Release a draft's items back into the open pool when its lock is lifted —
-     * the coverage was released, or the payment was cancelled. Without this the
-     * items stay bound and a repeat of the same menu item would stack as a
-     * second line instead of merging, long after the lock is gone.
+     * the coverage was released, or the payment was cancelled. Once the session
+     * has another draft, however, the binding is the boundary between those two
+     * orders and must remain in place even after either order is unlocked.
      *
      * Items already sent to the kitchen keep their order: they are submitted,
      * not merely locked.
      */
     public static function thawDraftItems(Order $order): void
     {
-        if ($order->status !== 'draft') {
+        if ($order->status !== Order::STATUS_DRAFT || ! $order->table_scan_session_id) {
+            return;
+        }
+
+        $hasSiblingDraft = Order::where('table_scan_session_id', $order->table_scan_session_id)
+            ->where('status', Order::STATUS_DRAFT)
+            ->where('payment_received', false)
+            ->whereNull('parent_order_id')
+            ->whereKeyNot($order->id)
+            ->exists();
+
+        if ($hasSiblingDraft) {
             return;
         }
 

@@ -78,6 +78,7 @@ class CustomerCommandBus
         $status = [
             'command_id' => $commandId,
             'customer_id' => (int) $customer->id,
+            'table_scan_session_id' => (int) $session->id,
             'sequence' => $sequence,
             'operation' => $operation,
             'status' => 'accepted',
@@ -129,15 +130,32 @@ class CustomerCommandBus
     ): void {
         $ttl = (int) config('services.customer_commands.status_ttl', 3600);
         $current = $this->status($commandId);
+        $terminalStatuses = ['completed', 'failed', 'enqueue_failed', 'superseded'];
+
+        // A retried or duplicated delivery must not decrement the session's
+        // pending counter twice or replace the original terminal result.
+        if (in_array($current['status'] ?? null, $terminalStatuses, true)) {
+            $this->advanceCompletedSequence($sessionId, $sequence, $ttl);
+
+            return;
+        }
+
         Redis::setex($this->statusKey($commandId), $ttl, json_encode([
             'command_id' => $commandId,
             'customer_id' => (int) ($current['customer_id'] ?? 0),
+            'table_scan_session_id' => (int) ($current['table_scan_session_id'] ?? $sessionId),
             'sequence' => $sequence,
+            'operation' => $current['operation'] ?? null,
             'status' => $status,
             ...$result,
         ], JSON_THROW_ON_ERROR));
-        Redis::setex($this->completedKey($sessionId), $ttl, (string) $sequence);
-        if ((int) Redis::decr($this->pendingKey($sessionId)) <= 0) {
+
+        // Never move the barrier backwards when an older released command is
+        // finalized after a newer sequence.
+        $this->advanceCompletedSequence($sessionId, $sequence, $ttl);
+
+        if (in_array($current['status'] ?? null, ['accepted', 'processing'], true)
+            && (int) Redis::decr($this->pendingKey($sessionId)) <= 0) {
             Redis::del($this->pendingKey($sessionId));
         }
     }
@@ -199,5 +217,13 @@ class CustomerCommandBus
     private function pendingKey(int $sessionId): string
     {
         return "customer-command:pending:{$sessionId}";
+    }
+
+    private function advanceCompletedSequence(int $sessionId, int $sequence, int $ttl): void
+    {
+        $key = $this->completedKey($sessionId);
+        $completed = (int) (Redis::get($key) ?? 0);
+
+        Redis::setex($key, $ttl, (string) max($completed, $sequence));
     }
 }

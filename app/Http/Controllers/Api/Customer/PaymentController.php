@@ -361,8 +361,9 @@ class PaymentController extends Controller
             Order::whereIn('id', $orders->pluck('id'))
                 ->update(['paid_by' => null]);
 
-            // Coverage is gone, so the owner controls their draft again and its
-            // items return to the open cart.
+            // Coverage is gone, so the owner controls their draft again. Its
+            // items return to the open cart only when it is the session's sole
+            // draft; with multiple drafts the binding keeps them distinct.
             foreach ($orders as $releasedOrder) {
                 PaymentGuardService::thawDraftItems($releasedOrder);
             }
@@ -1527,10 +1528,7 @@ class PaymentController extends Controller
                 continue;
             }
 
-            CartItem::query()
-                ->where('table_scan_session_id', $session->id)
-                ->whereNull('order_id')
-                ->update(['order_id' => $order->id]);
+            PaymentGuardService::freezeDraftItems($order);
         }
     }
 
@@ -1678,7 +1676,7 @@ class PaymentController extends Controller
             ->where(function (Builder $query) use ($order) {
                 $query->where('order_id', $order->id);
 
-                if ($order->status === Order::STATUS_DRAFT
+                if (PaymentGuardService::orderClaimsUnboundItems($order)
                     && $order->tableScanSession
                     && $this->orderSessions->isOffPremise($order->tableScanSession)) {
                     $query->orWhere(function (Builder $open) use ($order) {
