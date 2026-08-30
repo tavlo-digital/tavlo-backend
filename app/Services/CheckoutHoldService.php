@@ -21,6 +21,10 @@ use Illuminate\Database\Eloquent\Collection as EloquentCollection;
  */
 class CheckoutHoldService
 {
+    public function __construct(
+        private readonly EditableOrderMergeService $editableOrderMerges,
+    ) {}
+
     /**
      * How long a hold survives without the payer finishing or releasing it.
      *
@@ -80,13 +84,25 @@ class CheckoutHoldService
                 continue;
             }
 
+            // A payment started while the hold stood owns payment_pending from
+            // here on, and a cash request is exactly that: it carries no Stripe
+            // intent for the checkout "back" path to cancel, so dropping the
+            // flag here would unlock an order the waiter is walking over to
+            // collect on. Give up the hold, leave the lock to the payment.
+            $stillPaying = $order->payments()
+                ->whereNotIn('status', PaymentGuardService::TERMINAL_PAYMENT_STATUSES)
+                ->exists()
+                || PaymentGuardService::activePaymentsCovering([(int) $order->id])->isNotEmpty();
+
             $order->forceFill([
-                'payment_pending' => false,
+                'payment_pending' => $stillPaying,
                 'checkout_hold_by' => null,
                 'checkout_hold_at' => null,
             ])->save();
 
-            $this->thawIfFullyUnlocked($order);
+            if ($stillPaying) {
+                continue;
+            }
 
             $releasedIds[] = (int) $order->id;
         }
@@ -108,24 +124,6 @@ class CheckoutHoldService
             'checkout_hold_by' => null,
             'checkout_hold_at' => null,
         ])->save();
-    }
-
-    /**
-     * Return a draft's items to the open cart — but only if dropping the hold
-     * actually unlocked it.
-     *
-     * An order somebody else is covering stays locked by that coverage, and its
-     * items stay bound to it. Thawing regardless would hand the owner's lines
-     * to whatever draft they open next, quietly moving them off the order the
-     * payer is covering.
-     */
-    private function thawIfFullyUnlocked(Order $order): void
-    {
-        if (PaymentGuardService::orderIsCartLocked($order)) {
-            return;
-        }
-
-        PaymentGuardService::thawDraftItems($order);
     }
 
     /** The customer holding $order right now, or null when free or expired. */
@@ -211,6 +209,8 @@ class CheckoutHoldService
             ->where('checkout_hold_at', '<', $this->staleBefore())
             ->get();
 
+        $sessionIds = collect();
+
         foreach ($expired as $order) {
             $stillPaying = $order->payments()->whereNotIn(
                 'status',
@@ -225,9 +225,13 @@ class CheckoutHoldService
                 'checkout_hold_at' => null,
             ])->save();
 
-            if (! $stillPaying) {
-                $this->thawIfFullyUnlocked($order);
+            if (! $stillPaying && $order->table_scan_session_id) {
+                $sessionIds->push((int) $order->table_scan_session_id);
             }
+        }
+
+        foreach ($sessionIds->unique() as $sessionId) {
+            $this->editableOrderMerges->mergeForSession((int) $sessionId);
         }
 
         return $expired->count();

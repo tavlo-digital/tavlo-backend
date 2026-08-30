@@ -251,7 +251,7 @@ class RestaurantController extends Controller
      */
     public function show(Request $request, string $vendorPublicId): JsonResponse
     {
-        $vendor = Vendor::where('vendor_public_id', $vendorPublicId)
+        $vendor = Vendor::byPublicIdentifier($vendorPublicId)
             ->whereHas('vendorSetting', fn ($q) => $q->where('is_live_and_discoverable', true))
             ->with([
                 'vendorSetting:id,vendor_id,description,logo_url,cover_photo_url,business_hours,accept_on_site,stripe_enabled,stripe_account_id,stripe_onboarding_complete,enable_reservations,loyalty_enabled,points_per_euro,date_format,time_format',
@@ -916,7 +916,7 @@ class RestaurantController extends Controller
      */
     public function languages(string $vendorPublicId): JsonResponse
     {
-        $vendor = Vendor::where('vendor_public_id', $vendorPublicId)
+        $vendor = Vendor::byPublicIdentifier($vendorPublicId)
             ->whereHas('vendorSetting', fn ($q) => $q->where('is_live_and_discoverable', true))
             ->with('vendorSetting:id,vendor_id,supported_languages,date_format,time_format')
             ->firstOrFail();
@@ -1172,7 +1172,7 @@ class RestaurantController extends Controller
      */
     public function about(Request $request, string $vendorPublicId): JsonResponse
     {
-        $vendor = Vendor::where('vendor_public_id', $vendorPublicId)
+        $vendor = Vendor::byPublicIdentifier($vendorPublicId)
             ->whereHas('vendorSetting', fn ($q) => $q->where('is_live_and_discoverable', true))
             ->with([
                 'vendorSetting',
@@ -1297,7 +1297,7 @@ class RestaurantController extends Controller
 
     private function discoverableVendor(string $vendorPublicId): Vendor
     {
-        return Vendor::where('vendor_public_id', $vendorPublicId)
+        return Vendor::byPublicIdentifier($vendorPublicId)
             ->whereHas('vendorSetting', fn ($q) => $q->where('is_live_and_discoverable', true))
             ->firstOrFail();
     }

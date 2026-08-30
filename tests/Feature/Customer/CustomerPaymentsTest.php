@@ -1379,7 +1379,7 @@ class CustomerPaymentsTest extends TestCase
         $this->assertNull($myOrder->fresh()->paid_by);
     }
 
-    public function test_releasing_a_hold_keeps_a_covered_order_items_bound_to_it(): void
+    public function test_releasing_a_hold_returns_a_step_one_covered_draft_to_editable_cart(): void
     {
         [$owner, $ownerSession] = $this->tablemate();
 
@@ -1428,14 +1428,13 @@ class CustomerPaymentsTest extends TestCase
             ->deleteJson('/api/customer/payments/checkout-hold')
             ->assertOk();
 
-        // Stepping back out of the checkout drops my claim, but I am still
-        // covering their order — so their line stays on it. Unbinding it would
-        // hand it to whatever draft they open next.
-        $this->assertSame($covered->id, (int) $theirItem->fresh()->order_id);
+        // Coverage remains selected, but it is not itself a lock. Stepping back
+        // returns the line to the owner's editable draft pool.
+        $this->assertNull($theirItem->fresh()->order_id);
         $this->assertSame($this->customer->id, (int) $covered->fresh()->paid_by);
     }
 
-    public function test_canceling_a_payment_keeps_a_covered_order_items_bound_to_it(): void
+    public function test_canceling_a_payment_returns_a_step_one_covered_draft_to_editable_cart(): void
     {
         [$owner, $ownerSession] = $this->tablemate();
 
@@ -1487,12 +1486,10 @@ class CustomerPaymentsTest extends TestCase
 
         $this->assertContains('pi_fake_1', $this->stripe->canceled);
 
-        // Stepping back cancels the payment, but I am still covering their
-        // order. A covered order is still cart-locked, and a locked order only
-        // recognises items bound by order_id — unbinding here would leave it
-        // reporting no items at all.
+        // Stepping back cancels the payment. The pay-for assignment remains,
+        // while the draft itself becomes editable again.
         $this->assertSame($this->customer->id, (int) $covered->fresh()->paid_by);
-        $this->assertSame($covered->id, (int) $theirItem->fresh()->order_id);
+        $this->assertNull($theirItem->fresh()->order_id);
     }
 
     public function test_checkout_hold_keeps_the_draft_items_on_the_order(): void

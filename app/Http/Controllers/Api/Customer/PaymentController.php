@@ -12,6 +12,7 @@ use App\Models\TableScanSession;
 use App\Models\Vendor;
 use App\Services\CheckoutHoldService;
 use App\Services\CustomerCommandBus;
+use App\Services\EditableOrderMergeService;
 use App\Services\KitchenOrderReleaseService;
 use App\Services\NotificationService;
 use App\Services\OrderSessionService;
@@ -43,6 +44,7 @@ class PaymentController extends Controller
         private readonly OrderSessionService $orderSessions,
         private readonly KitchenOrderReleaseService $kitchenReleases,
         private readonly CheckoutHoldService $checkoutHolds,
+        private readonly EditableOrderMergeService $editableOrderMerges,
     ) {}
 
     private function pendingCommandResponse(TableScanSession $session): ?JsonResponse
@@ -205,12 +207,6 @@ class PaymentController extends Controller
                 ->whereNull('paid_by')
                 ->update(['paid_by' => $payer->id]);
 
-            // Covering an order locks it, so fix its claim on the session's
-            // items before the owner can add anything else to it.
-            foreach ($orders as $coveredDraft) {
-                PaymentGuardService::freezeDraftItems($coveredDraft);
-            }
-
             // The owner's personal opt-in shares move to their side order so
             // the payer covers only the owner's own items.
             $affectedOrderIds = $orders->pluck('id')
@@ -361,13 +357,6 @@ class PaymentController extends Controller
             Order::whereIn('id', $orders->pluck('id'))
                 ->update(['paid_by' => null]);
 
-            // Coverage is gone, so the owner controls their draft again. Its
-            // items return to the open cart only when it is the session's sole
-            // draft; with multiple drafts the binding keeps them distinct.
-            foreach ($orders as $releasedOrder) {
-                PaymentGuardService::thawDraftItems($releasedOrder);
-            }
-
             // Shares the owner opted into while covered live on a side order;
             // with the coverage gone they fold back into the main order.
             $removedOrderIds = collect();
@@ -378,13 +367,21 @@ class PaymentController extends Controller
                 }
             }
 
+            $merged = $this->mergeEditableSessions($orders->pluck('table_scan_session_id'));
+
             return [
                 'released' => $orders,
                 'affected_order_ids' => $orders->pluck('id')
                     ->merge($pendingResetOrderIds)
+                    ->merge($merged['order_ids'])
+                    ->diff($merged['removed_order_ids'])
                     ->unique()
                     ->values(),
-                'removed_order_ids' => $removedOrderIds->values(),
+                'removed_order_ids' => $removedOrderIds
+                    ->merge($merged['removed_order_ids'])
+                    ->unique()
+                    ->values(),
+                'removed_item_ids' => $merged['removed_item_ids'],
             ];
         });
 
@@ -392,6 +389,7 @@ class PaymentController extends Controller
             'payment.assignment_released',
             $result ? $result['affected_order_ids'] : [],
             removedOrderIds: $result ? $result['removed_order_ids'] : [],
+            removedItemIds: $result ? $result['removed_item_ids'] : [],
         );
 
         if ($result && $result['released']->isNotEmpty()) {
@@ -537,11 +535,16 @@ class PaymentController extends Controller
 
         $tableSessionIds = $this->orderSessions->groupSessionIds($payerSession);
 
-        $released = DB::transaction(function () use ($customer, $tableSessionIds) {
+        $result = DB::transaction(function () use ($customer, $tableSessionIds) {
+            // Every payment this customer opened from the checkout, not just the
+            // Stripe ones. A cash request carries no intent id, so filtering on
+            // one left it alive and holding payment_pending after the customer
+            // had walked back out of the step that created it — an order locked
+            // against a collection nobody was coming to make. cancelAbandoned-
+            // Payment already skips the Stripe call when there is no intent.
             $payments = OrderPayment::where('customer_id', $customer->id)
                 ->whereIn('table_scan_session_id', $tableSessionIds)
                 ->whereNotIn('status', self::TERMINAL_PAYMENT_STATUSES)
-                ->whereNotNull('stripe_payment_intent_id')
                 ->lockForUpdate()
                 ->get();
 
@@ -559,17 +562,44 @@ class PaymentController extends Controller
                 ->lockForUpdate()
                 ->get();
 
-            return $affected
+            $releasedOrderIds = $affected
                 ->merge($this->checkoutHolds->release((int) $customer->id, $held))
                 ->unique()
                 ->values();
+
+            $merged = $this->mergeEditableSessions(
+                $held->pluck('table_scan_session_id')
+                    ->merge(Order::whereIn('id', $releasedOrderIds)->pluck('table_scan_session_id')),
+            );
+
+            return [
+                'order_ids' => $releasedOrderIds
+                    ->merge($merged['order_ids'])
+                    ->diff($merged['removed_order_ids'])
+                    ->unique()
+                    ->values(),
+                'removed_order_ids' => $merged['removed_order_ids'],
+                'removed_item_ids' => $merged['removed_item_ids'],
+            ];
         });
 
-        $this->broadcastHoldChange($payerSession, $customer, $released->all(), false);
+        $this->broadcastHoldChange(
+            $payerSession,
+            $customer,
+            $result['order_ids']->all(),
+            false,
+            $result['removed_order_ids'],
+            $result['removed_item_ids'],
+        );
 
         return response()->json([
-            'released' => $released->all(),
-            'state_patch' => $this->statePatches->build('payment.canceled', $released),
+            'released' => $result['order_ids']->all(),
+            'state_patch' => $this->statePatches->build(
+                'payment.canceled',
+                $result['order_ids'],
+                removedOrderIds: $result['removed_order_ids'],
+                removedItemIds: $result['removed_item_ids'],
+            ),
         ]);
     }
 
@@ -584,8 +614,13 @@ class PaymentController extends Controller
         $customer,
         array $orderIds,
         bool $held,
+        iterable $removedOrderIds = [],
+        iterable $removedItemIds = [],
     ): void {
-        if ($orderIds === []) {
+        $removedOrderIds = collect($removedOrderIds);
+        $removedItemIds = collect($removedItemIds);
+
+        if ($orderIds === [] && $removedOrderIds->isEmpty()) {
             return;
         }
 
@@ -611,6 +646,8 @@ class PaymentController extends Controller
                 'state_patch' => $this->statePatches->build(
                     $held ? 'payment.pending' : 'payment.canceled',
                     $orderIds,
+                    removedOrderIds: $removedOrderIds,
+                    removedItemIds: $removedItemIds,
                 ),
             ],
         );
@@ -625,10 +662,7 @@ class PaymentController extends Controller
             return response()->json(['active' => false]);
         }
 
-        $tableSessionIds = TableScanSession::where('vendor_id', $payerSession->vendor_id)
-            ->where('restaurant_table_id', $payerSession->restaurant_table_id)
-            ->where('status', 'active')
-            ->pluck('id');
+        $tableSessionIds = $this->orderSessions->groupSessionIds($payerSession);
 
         $payment = OrderPayment::where('customer_id', $customer->id)
             ->whereIn('table_scan_session_id', $tableSessionIds)
@@ -680,7 +714,7 @@ class PaymentController extends Controller
             ->where('status', 'active')
             ->pluck('id');
 
-        $affectedOrderIds = DB::transaction(function () use ($customer, $tableSessionIds) {
+        $result = DB::transaction(function () use ($customer, $tableSessionIds) {
             $payments = OrderPayment::where('customer_id', $customer->id)
                 ->whereIn('table_scan_session_id', $tableSessionIds)
                 ->whereNotIn('status', self::TERMINAL_PAYMENT_STATUSES)
@@ -701,18 +735,33 @@ class PaymentController extends Controller
                 $affected = $affected->merge($this->cancelAbandonedPayment($payment));
             }
 
-            return $affected->unique()->values();
+            $affected = $affected->unique()->values();
+            $merged = $this->mergeEditableSessions(
+                Order::whereIn('id', $affected)->pluck('table_scan_session_id'),
+            );
+
+            return [
+                'order_ids' => $affected
+                    ->merge($merged['order_ids'])
+                    ->diff($merged['removed_order_ids'])
+                    ->unique()
+                    ->values(),
+                'removed_order_ids' => $merged['removed_order_ids'],
+                'removed_item_ids' => $merged['removed_item_ids'],
+            ];
         });
 
         $statePatch = $this->statePatches->build(
             'payment.canceled',
-            $affectedOrderIds ?? [],
+            $result ? $result['order_ids'] : [],
+            removedOrderIds: $result ? $result['removed_order_ids'] : [],
+            removedItemIds: $result ? $result['removed_item_ids'] : [],
         );
 
-        if ($affectedOrderIds !== null && $affectedOrderIds->isNotEmpty()) {
+        if ($result !== null && ($result['order_ids']->isNotEmpty() || $result['removed_order_ids']->isNotEmpty())) {
             $customerName = trim(($customer->first_name ?? '').' '.($customer->last_name ?? '')) ?: 'A guest';
             $snapshots = Order::with('paidBy:id,first_name,last_name')
-                ->whereIn('id', $affectedOrderIds)
+                ->whereIn('id', $result['order_ids'])
                 ->get()
                 ->map(fn (Order $o) => NotificationService::orderSnapshot($o))
                 ->values()->all();
@@ -731,7 +780,7 @@ class PaymentController extends Controller
         }
 
         return response()->json([
-            'canceled' => $affectedOrderIds !== null,
+            'canceled' => $result !== null,
             'state_patch' => $statePatch,
         ]);
     }
@@ -1465,6 +1514,28 @@ class PaymentController extends Controller
             ->first();
     }
 
+    /**
+     * @param  iterable<int|string|null>  $sessionIds
+     * @return array{order_ids: Collection<int, int>, removed_order_ids: Collection<int, int>, removed_item_ids: Collection<int, int>}
+     */
+    private function mergeEditableSessions(iterable $sessionIds): array
+    {
+        $result = [
+            'order_ids' => collect(),
+            'removed_order_ids' => collect(),
+            'removed_item_ids' => collect(),
+        ];
+
+        foreach (collect($sessionIds)->filter()->map(fn ($id) => (int) $id)->unique() as $sessionId) {
+            $merged = $this->editableOrderMerges->mergeForSession($sessionId);
+            foreach (array_keys($result) as $key) {
+                $result[$key] = $result[$key]->merge($merged[$key])->unique()->values();
+            }
+        }
+
+        return $result;
+    }
+
     private function orderOwnerCustomerId(Order $order): ?int
     {
         if ($order->customer_id) {
@@ -1572,16 +1643,10 @@ class PaymentController extends Controller
                     'checkout_hold_at' => null,
                 ]);
 
-            // The checkout is off, so unlocked drafts go back to behaving like
-            // ordinary carts. An order somebody still covers is not unlocked:
-            // its items stay bound, because a locked order only recognises
-            // items by order_id and thawing would strand it showing none.
-            // Same rule CheckoutHoldService applies when it releases a hold.
-            Order::whereIn('id', $coveredOrderIds)
-                ->where('payment_received', false)
-                ->get()
-                ->reject(fn (Order $order) => PaymentGuardService::orderIsCartLocked($order))
-                ->each(fn (Order $order) => PaymentGuardService::thawDraftItems($order));
+            // The caller releases every order in the checkout first, then
+            // consolidates all editable siblings atomically. Thawing one order
+            // here would race that merge and could hand its rows to the wrong
+            // draft while another order in the same checkout is still locked.
         }
 
         return $coveredOrderIds;
@@ -1807,6 +1872,12 @@ class PaymentController extends Controller
                     'payment_note' => 'Stripe payment was not completed.',
                 ]);
             }
+
+            // A decline unlocks the order exactly as pressing Back does, so it
+            // has to fold the temporary order back too. Only the explicit exits
+            // used to merge, which left a card failure — the one exit the
+            // customer never chose — showing the table two order cards forever.
+            $this->mergeEditableSessions($orders->pluck('table_scan_session_id'));
 
             return;
         }

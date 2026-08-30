@@ -240,7 +240,7 @@ class OffPremiseOrderFlowTest extends TestCase
         $this->assertSame([$leftOrder->id], array_map('intval', $rightPayment->order_ids));
     }
 
-    public function test_covered_pickup_order_stays_separate_from_a_new_draft_after_release_and_reselection(): void
+    public function test_step_one_coverage_stays_editable_and_checkout_back_merges_a_temporary_draft(): void
     {
         [$owner, $ownerHeaders, $pin] = $this->startPickup();
         $stripe = new OffPremiseFakeStripePaymentService;
@@ -253,8 +253,8 @@ class OffPremiseOrderFlowTest extends TestCase
             'pin' => $pin,
         ])->assertSuccessful();
 
-        // The owner creates the first draft, then another guest selects it in
-        // "pay for". That freezes the exact cart row the payer selected.
+        // Selecting "pay for" on step 1 is only an assignment. The original
+        // row stays editable and the same item increments its quantity.
         $this->asCustomer($ownerHeaders)->postJson('/api/customer/cart/items', [
             'menu_item_id' => $this->menuItem->id,
             'quantity' => 1,
@@ -265,16 +265,25 @@ class OffPremiseOrderFlowTest extends TestCase
 
         $firstOrder = Order::where('customer_id', $owner->id)->sole();
         $firstItem = CartItem::where('table_scan_session_id', $firstOrder->table_scan_session_id)->sole();
-        $singleItemOrderAmount = (float) $firstOrder->amount;
-
         $this->asCustomer($payerHeaders)
             ->postJson('/api/customer/payments/pay-for', ['order_id' => $firstOrder->order_public_id])
             ->assertOk();
 
+        $this->assertNull($firstItem->fresh()->order_id);
+        $this->asCustomer($ownerHeaders)->postJson('/api/customer/cart/items', [
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 1,
+        ])->assertCreated();
+        $this->assertSame(2, $firstItem->fresh()->quantity);
+        $this->assertSame(1, Order::where('customer_id', $owner->id)->count());
+
+        // Entering step 2 freezes the first order. A later add therefore opens
+        // a new row and draft instead of changing the payer's frozen amount.
+        $this->asCustomer($payerHeaders)
+            ->postJson('/api/customer/payments/checkout-hold')
+            ->assertOk();
         $this->assertSame($firstOrder->id, (int) $firstItem->fresh()->order_id);
 
-        // Adding the same menu item now must create a separate line and a
-        // separate draft, not change the quantity the payer already selected.
         $this->asCustomer($ownerHeaders)->postJson('/api/customer/cart/items', [
             'menu_item_id' => $this->menuItem->id,
             'quantity' => 1,
@@ -283,92 +292,127 @@ class OffPremiseOrderFlowTest extends TestCase
             ->postJson('/api/customer/table/order/draft')
             ->assertCreated();
 
-        $ownerOrders = Order::where('customer_id', $owner->id)->orderBy('id')->get();
-        $this->assertCount(2, $ownerOrders);
-        $secondOrder = $ownerOrders->last();
-        $secondItem = CartItem::where('table_scan_session_id', $firstOrder->table_scan_session_id)
-            ->whereNull('order_id')
-            ->sole();
+        $this->assertSame(2, Order::where('customer_id', $owner->id)->count());
+        $this->assertCount(2, CartItem::where('table_scan_session_id', $firstOrder->table_scan_session_id)->get());
 
-        $assertSeparateOrders = function () use ($payerHeaders, $owner, $firstOrder, $secondOrder, $firstItem, $secondItem, $singleItemOrderAmount): void {
-            $history = $this->asCustomer($payerHeaders)
-                ->getJson('/api/customer/table/history')
-                ->assertOk();
-
-            $person = collect($history->json('people'))->firstWhere('customer_id', $owner->id);
-            $orders = collect($person['orders'])->keyBy('id');
-
-            $this->assertCount(2, $orders);
-            $this->assertSame([$firstItem->id], collect($orders[$firstOrder->id]['items'])->pluck('cart_item_id')->all());
-            $this->assertSame([$secondItem->id], collect($orders[$secondOrder->id]['items'])->pluck('cart_item_id')->all());
-            $this->assertSame($singleItemOrderAmount, (float) $orders[$firstOrder->id]['amount']);
-            $this->assertSame($singleItemOrderAmount, (float) $orders[$secondOrder->id]['amount']);
-        };
-
-        $assertSeparateOrders();
-
-        // Going back (release), then selecting either or both cards again,
-        // must preserve the two order identities and their individual totals.
+        // Back releases the hold. Both drafts are now editable, so the newer
+        // one folds backward into the first and equal rows combine.
         $this->asCustomer($payerHeaders)
-            ->deleteJson("/api/customer/payments/pay-for/{$firstOrder->order_public_id}")
+            ->deleteJson('/api/customer/payments/checkout-hold')
             ->assertOk();
 
-        $this->assertSame($firstOrder->id, (int) $firstItem->fresh()->order_id);
-        $assertSeparateOrders();
+        $this->assertSame(1, Order::where('customer_id', $owner->id)->count());
+        $mergedItem = CartItem::where('table_scan_session_id', $firstOrder->table_scan_session_id)->sole();
+        $this->assertSame(3, $mergedItem->quantity);
+        $this->assertNull($mergedItem->order_id);
+        $this->assertSame($payer->id, (int) $firstOrder->fresh()->paid_by);
+    }
 
-        // The payer can select only the newer card. This is the exact
-        // multi-window case where the owner has two same-item drafts and the
-        // other guest chooses the second order rather than the first.
+    public function test_an_unlocked_order_waits_for_its_locked_sibling_before_merging(): void
+    {
+        [$owner, $ownerHeaders, $pin] = $this->startPickup();
+        $payer = Customer::factory()->create();
+        $payerHeaders = $this->headers($payer, 'pickup');
+
+        $this->asCustomer($payerHeaders)->postJson('/api/customer/table/pin', [
+            'vendor_public_id' => $this->vendor->vendor_public_id,
+            'pin' => $pin,
+        ])->assertSuccessful();
+
+        $this->asCustomer($ownerHeaders)->postJson('/api/customer/cart/items', [
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 1,
+        ])->assertCreated();
+        $this->asCustomer($ownerHeaders)->postJson('/api/customer/table/order/draft')->assertCreated();
+        $firstOrder = Order::where('customer_id', $owner->id)->sole();
+
         $this->asCustomer($payerHeaders)
-            ->postJson('/api/customer/payments/pay-for', ['order_id' => $secondOrder->order_public_id])
+            ->postJson('/api/customer/payments/pay-for', ['order_id' => $firstOrder->order_public_id])
+            ->assertOk();
+        $this->asCustomer($payerHeaders)
+            ->postJson('/api/customer/payments/checkout-hold')
             ->assertOk();
 
-        $this->assertNull($firstOrder->fresh()->paid_by);
-        $this->assertSame($payer->id, (int) $secondOrder->fresh()->paid_by);
-        $this->assertSame($secondOrder->id, (int) $secondItem->fresh()->order_id);
-        $assertSeparateOrders();
+        $this->asCustomer($ownerHeaders)->postJson('/api/customer/cart/items', [
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 1,
+        ])->assertCreated();
+        $this->asCustomer($ownerHeaders)->postJson('/api/customer/table/order/draft')->assertCreated();
+        $secondOrder = Order::where('customer_id', $owner->id)->latest('id')->firstOrFail();
 
-        $this->asCustomer($payerHeaders)
-            ->deleteJson("/api/customer/payments/pay-for/{$secondOrder->order_public_id}")
-            ->assertOk();
-
-        foreach ([$firstOrder, $secondOrder] as $order) {
-            $this->asCustomer($payerHeaders)
-                ->postJson('/api/customer/payments/pay-for', ['order_id' => $order->order_public_id])
-                ->assertOk();
-        }
-
-        $this->assertSame($firstOrder->id, (int) $firstItem->fresh()->order_id);
-        $this->assertSame($secondOrder->id, (int) $secondItem->fresh()->order_id);
-        $assertSeparateOrders();
-
-        foreach ([$firstOrder, $secondOrder] as $order) {
-            $this->asCustomer($payerHeaders)
-                ->deleteJson("/api/customer/payments/pay-for/{$order->order_public_id}")
-                ->assertOk();
-        }
-
-        $this->assertSame($firstOrder->id, (int) $firstItem->fresh()->order_id);
-        $this->assertSame($secondOrder->id, (int) $secondItem->fresh()->order_id);
-        $assertSeparateOrders();
-
-        // The owner's checkout is session-wide even though the payment URL
-        // carries one representative order id. Both own drafts must be part of
-        // the same intent and the charge must be their summed amount.
+        // The owner freezes O2 while the mate still holds O1.
         $this->asCustomer($ownerHeaders)
-            ->postJson('/api/customer/payments/create-intent')
+            ->postJson('/api/customer/payments/checkout-hold')
+            ->assertOk()
+            ->assertJsonPath('held.0', $secondOrder->id);
+
+        // Releasing O1 cannot absorb the still-frozen O2.
+        $this->asCustomer($payerHeaders)
+            ->deleteJson('/api/customer/payments/checkout-hold')
+            ->assertOk();
+        $this->assertSame(2, Order::where('customer_id', $owner->id)->count());
+        $this->assertFalse($firstOrder->fresh()->payment_pending);
+        $this->assertTrue($secondOrder->fresh()->payment_pending);
+
+        // Once O2 also unlocks, both are editable and merge backward into O1.
+        $this->asCustomer($ownerHeaders)
+            ->deleteJson('/api/customer/payments/checkout-hold')
             ->assertOk();
 
-        $payment = OrderPayment::where('customer_id', $owner->id)->sole();
-        $this->assertEqualsCanonicalizing(
-            [$firstOrder->id, $secondOrder->id],
-            array_map('intval', $payment->order_ids),
+        $this->assertSame(1, Order::where('customer_id', $owner->id)->count());
+        $this->assertDatabaseHas('orders', ['id' => $firstOrder->id]);
+        $this->assertDatabaseMissing('orders', ['id' => $secondOrder->id]);
+        $this->assertSame(
+            2,
+            CartItem::where('table_scan_session_id', $firstOrder->table_scan_session_id)->sole()->quantity,
         );
-        $this->assertEqualsCanonicalizing(
-            [$firstOrder->id, $secondOrder->id],
-            $payment->orders()->pluck('orders.id')->map(fn ($id) => (int) $id)->all(),
+    }
+
+    public function test_a_step_one_shared_item_can_still_increment_until_checkout(): void
+    {
+        [$owner, $ownerHeaders, $pin] = $this->startPickup();
+        $mate = Customer::factory()->create();
+        $mateHeaders = $this->headers($mate, 'pickup');
+
+        $this->asCustomer($mateHeaders)->postJson('/api/customer/table/pin', [
+            'vendor_public_id' => $this->vendor->vendor_public_id,
+            'pin' => $pin,
+        ])->assertSuccessful();
+
+        $this->asCustomer($ownerHeaders)->postJson('/api/customer/cart/items', [
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 1,
+        ])->assertCreated();
+        $this->asCustomer($ownerHeaders)->postJson('/api/customer/table/order/draft')->assertCreated();
+
+        $this->asCustomer($mateHeaders)->postJson('/api/customer/cart/items', [
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 1,
+            'notes' => 'mate line',
+        ])->assertCreated();
+        $this->asCustomer($mateHeaders)->postJson('/api/customer/table/order/draft')->assertCreated();
+
+        $ownerItem = CartItem::whereHas('session', fn ($query) => $query->where('customer_id', $owner->id))->sole();
+        $mateOrder = Order::where('customer_id', $mate->id)->sole();
+
+        $this->asCustomer($mateHeaders)
+            ->putJson("/api/customer/table/order/update/{$mateOrder->id}", [
+                'shared_item' => $ownerItem->id,
+            ])
+            ->assertOk();
+
+        $this->assertContains($mateOrder->id, array_map('intval', $ownerItem->fresh()->shared_order_ids));
+
+        $this->asCustomer($ownerHeaders)->postJson('/api/customer/cart/items', [
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 1,
+        ])->assertCreated();
+
+        $this->assertSame(2, $ownerItem->fresh()->quantity);
+        $this->assertSame(
+            1,
+            CartItem::where('table_scan_session_id', $ownerItem->table_scan_session_id)->count(),
         );
-        $this->assertSame(round($singleItemOrderAmount * 2, 2), (float) $payment->amount);
     }
 
     public function test_successful_card_payment_confirms_pickup_draft_in_the_same_lifecycle(): void
@@ -533,6 +577,90 @@ class OffPremiseOrderFlowTest extends TestCase
     }
 
     /** @return array{Customer, array<string, string>, string} */
+    public function test_a_declined_payment_unlocks_and_merges_the_temporary_order_back(): void
+    {
+        [$owner, $ownerHeaders, $pin] = $this->startPickup();
+        $stripe = new OffPremiseFakeStripePaymentService;
+        $this->app->instance(StripePaymentService::class, $stripe);
+        $payer = Customer::factory()->create();
+        $payerHeaders = $this->headers($payer, 'pickup');
+
+        $this->asCustomer($payerHeaders)->postJson('/api/customer/table/pin', [
+            'vendor_public_id' => $this->vendor->vendor_public_id,
+            'pin' => $pin,
+        ])->assertSuccessful();
+
+        $this->asCustomer($ownerHeaders)->postJson('/api/customer/cart/items', [
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 1,
+        ])->assertCreated();
+        $this->asCustomer($ownerHeaders)->postJson('/api/customer/table/order/draft')->assertCreated();
+
+        $firstOrder = Order::where('customer_id', $owner->id)->sole();
+        $this->asCustomer($payerHeaders)
+            ->postJson('/api/customer/payments/pay-for', ['order_id' => $firstOrder->order_public_id])
+            ->assertOk();
+
+        // Creating the intent freezes the first order, so the owner's next add
+        // has to open a second one.
+        $intentId = $this->asCustomer($payerHeaders)
+            ->postJson('/api/customer/payments/create-intent')
+            ->assertOk()
+            ->json('paymentIntentId');
+
+        $this->asCustomer($ownerHeaders)->postJson('/api/customer/cart/items', [
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 1,
+        ])->assertCreated();
+        $this->asCustomer($ownerHeaders)->postJson('/api/customer/table/order/draft')->assertCreated();
+        $this->assertSame(2, Order::where('customer_id', $owner->id)->count());
+
+        // The card is declined. Nobody pressed Back, but the boundary the lock
+        // created is just as gone, so the two orders have to fold together.
+        $stripe->intents[$intentId]['status'] = 'canceled';
+        $this->asCustomer($payerHeaders)
+            ->getJson("/api/customer/payments/verify?payment_intent={$intentId}")
+            ->assertOk();
+
+        $this->assertSame(1, Order::where('customer_id', $owner->id)->count());
+        $this->assertFalse($firstOrder->fresh()->payment_pending);
+        $this->assertSame(
+            2,
+            CartItem::where('table_scan_session_id', $firstOrder->table_scan_session_id)->sole()->quantity,
+        );
+    }
+
+    public function test_leaving_the_payment_step_cancels_a_cash_request_instead_of_stranding_it(): void
+    {
+        [, $headers] = $this->startPickup();
+
+        $this->asCustomer($headers)->postJson('/api/customer/cart/items', [
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 1,
+        ])->assertCreated();
+        $this->asCustomer($headers)->postJson('/api/customer/table/order/draft')->assertCreated();
+
+        $this->asCustomer($headers)->postJson('/api/customer/payments/checkout-hold')->assertOk();
+        $this->asCustomer($headers)
+            ->postJson('/api/customer/payments/request-cash', ['notes' => 'Pay at pickup'])
+            ->assertOk();
+
+        $order = Order::query()->sole();
+        $this->assertTrue($order->fresh()->payment_pending);
+        $this->assertSame('cash_requested', OrderPayment::query()->sole()->status);
+
+        // Back. A cash request carries no Stripe intent, so it used to survive
+        // this while the hold release cleared payment_pending anyway — leaving a
+        // live collection against an order the guest could edit again.
+        $this->asCustomer($headers)->deleteJson('/api/customer/payments/checkout-hold')->assertOk();
+
+        $this->assertSame('canceled', OrderPayment::query()->sole()->status);
+
+        $order = $order->fresh();
+        $this->assertFalse($order->payment_pending);
+        $this->assertNull($order->checkout_hold_by);
+    }
+
     private function startPickup(?\DateTimeInterface $scheduledFor = null): array
     {
         $customer = Customer::factory()->create();

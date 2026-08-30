@@ -12,9 +12,11 @@ use App\Services\CustomerCommandBus;
 use App\Services\LocaleService;
 use App\Services\MenuCustomizationService;
 use App\Services\NotificationService;
+use App\Services\OrderAmountRecalculationService;
 use App\Services\OrderSessionService;
 use App\Services\OrderSharingService;
 use App\Services\PaymentGuardService;
+use App\Services\ShareOrderService;
 use App\Services\TableStatePatchService;
 use App\Services\TaxCalculationService;
 use App\Services\VendorDateTimeService;
@@ -37,6 +39,7 @@ class CartController extends Controller
         private readonly OrderSharingService $orderSharing,
         private readonly CustomerCommandBus $commands,
         private readonly OrderSessionService $orderSessions,
+        private readonly OrderAmountRecalculationService $orderAmounts,
     ) {}
 
     private function queuedCommandResponse(
@@ -361,20 +364,22 @@ class CartController extends Controller
                 }
             }
 
-            // A locked line never absorbs the add — it opens a new one instead.
-            // Somebody else has committed money to the line at exactly the
-            // quantity they saw: a guest covering the order (which binds the
-            // line to it, so order_id is set) or splitting this single item
-            // (which only fills shared_order_ids, leaving order_id null). Both
-            // agreed to a number, and growing the line behind their back would
-            // charge them for something they never saw.
+            // Step-1 coverage and item sharing stay live and editable. Only an
+            // order frozen at checkout is excluded, so adding the same product
+            // increments the existing row (and updates every participant's
+            // live share) until somebody reaches payment step 2.
+            $editableOrder = $this->currentOpenOrder(
+                (int) $mySession->customer_id,
+                (int) $mySession->id,
+            );
             $existing = CartItem::where('table_scan_session_id', $mySession->id)
                 ->where('menu_item_id', $data['menu_item_id'])
-                ->whereNull('order_id')
                 ->whereNull('received_at')
                 ->lockForUpdate()
                 ->get()
-                ->first(fn (CartItem $cartItem) => empty($cartItem->shared_order_ids)
+                ->first(fn (CartItem $cartItem) => ($cartItem->order_id === null
+                        || ($editableOrder && (int) $cartItem->order_id === (int) $editableOrder->id))
+                    && $this->lockedOrderForCartItem($cartItem) === null
                     && $this->cartCustomizationsMatch($cartItem, $customizations));
 
             if ($existing) {
@@ -403,6 +408,7 @@ class CartController extends Controller
             'menuItem:id,vendor_id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category,paid_addons,free_addons,removable_items,translations',
             'menuItem.itemTranslations:id,menu_item_id,language,name',
         ]);
+        $repriced = $this->recalculateCartItemOrders($item, $mySession);
 
         $customerName = $this->customerName($request->user());
         $vendor = $mySession->vendor;
@@ -423,6 +429,15 @@ class CartController extends Controller
                 'item_name' => $itemName,
                 'command_id' => $request->attributes->get('customer_command_id'),
                 'command_status' => $request->attributes->get('customer_command_id') ? 'completed' : null,
+                // A mate covering or sharing this cart is looking at a total the
+                // add just moved. The cart payload carries no order amounts, so
+                // without this patch their number only refreshes on a refetch.
+                'state_patch' => $this->statePatches->build(
+                    'cart.item_added',
+                    $repriced['order_ids'],
+                    [(int) $item->id],
+                    $repriced['removed_order_ids'],
+                ),
                 ...$realtimeCart,
             ],
         );
@@ -524,6 +539,7 @@ class CartController extends Controller
         }
 
         $item->update($updates);
+        $repriced = $this->recalculateCartItemOrders($item, $mySession);
         $item->load([
             'menuItem:id,vendor_id,name,price,has_discount,discounted_price,image_url,vat_rate,tax_category,paid_addons,free_addons,removable_items,translations',
             'menuItem.itemTranslations:id,menu_item_id,language,name',
@@ -548,6 +564,12 @@ class CartController extends Controller
                 'item_name' => $itemName,
                 'command_id' => $request->attributes->get('customer_command_id'),
                 'command_status' => $request->attributes->get('customer_command_id') ? 'completed' : null,
+                'state_patch' => $this->statePatches->build(
+                    'cart.item_updated',
+                    $repriced['order_ids'],
+                    [(int) $item->id],
+                    $repriced['removed_order_ids'],
+                ),
                 ...$realtimeCart,
             ],
         );
@@ -606,9 +628,12 @@ class CartController extends Controller
             ], 409);
         }
 
+        $affectedOrderIds = $this->cartItemOrderIds($item);
         $itemName = $item->menuItem?->name ?? 'an item';
         $menuItemId = $item->menu_item_id;
+        $removedItemId = (int) $item->id;
         $item->delete();
+        $repriced = $this->recalculateOrderIds($affectedOrderIds, $mySession, true);
 
         $customerName = $this->customerName($request->user());
         $realtimeCart = $this->realtimeCartMetadata($mySession, $request);
@@ -624,6 +649,15 @@ class CartController extends Controller
                 'item_name' => $itemName,
                 'command_id' => $request->attributes->get('customer_command_id'),
                 'command_status' => $request->attributes->get('customer_command_id') ? 'completed' : null,
+                // Deleting a shared line drops it from every sharer's total, so
+                // the patch has to carry the removal as well as the new amounts.
+                'state_patch' => $this->statePatches->build(
+                    'cart.item_removed',
+                    $repriced['order_ids'],
+                    [],
+                    $repriced['removed_order_ids'],
+                    [$removedItemId],
+                ),
                 ...$realtimeCart,
             ],
         );
@@ -1265,6 +1299,7 @@ class CartController extends Controller
         $latestDraftIds = $orders->map(fn (Collection $sessionOrders) => $sessionOrders
             ->filter(fn (Order $order) => $order->status === Order::STATUS_DRAFT
                 && ! $order->payment_received
+                && ! PaymentGuardService::orderIsCartLocked($order)
                 && $order->parent_order_id === null)
             ->max('id'));
 
@@ -1552,21 +1587,26 @@ class CartController extends Controller
         ];
     }
 
+    /**
+     * The order a guest's next cart change belongs to.
+     *
+     * Side orders are excluded. One is created as `confirmed` under the same
+     * customer and session to hold the personal shares of a guest somebody else
+     * is covering, and it always outranks the main order on `latest('id')` — so
+     * without this filter a covered guest's new items would be priced into, and
+     * their draft amount written over, the order holding their share of a
+     * mate's item. Every equivalent lookup in PaymentGuardService excludes them.
+     */
     private function currentOpenOrder(int $customerId, int $sessionId): ?Order
     {
-        $latestOrder = Order::where('customer_id', $customerId)
+        return Order::where('customer_id', $customerId)
             ->where('table_scan_session_id', $sessionId)
             ->whereIn('status', ['draft', 'confirmed'])
             ->where('payment_received', false)
+            ->where('payment_pending', false)
+            ->whereNull('parent_order_id')
             ->latest('id')
             ->first();
-
-        // An order somebody has committed to paying for is closed to new
-        // items. Do not fall back to an older unlocked draft: that would move
-        // the newest cart rows backwards across an existing order boundary.
-        return $latestOrder && ! PaymentGuardService::orderIsCartLocked($latestOrder)
-            ? $latestOrder
-            : null;
     }
 
     /**
@@ -1589,8 +1629,7 @@ class CartController extends Controller
         return Order::whereIn('id', $orderIds)
             ->where(fn ($query) => $query
                 ->where('payment_received', true)
-                ->orWhere('payment_pending', true)
-                ->orWhereNotNull('paid_by'))
+                ->orWhere('payment_pending', true))
             ->first();
     }
 
@@ -1600,6 +1639,8 @@ class CartController extends Controller
             ->where('table_scan_session_id', $sessionId)
             ->where('status', Order::STATUS_DRAFT)
             ->where('payment_received', false)
+            ->where('payment_pending', false)
+            ->whereNull('parent_order_id')
             ->latest('id')
             ->first();
     }
@@ -1609,7 +1650,9 @@ class CartController extends Controller
         return Order::where('customer_id', $customerId)
             ->where('table_scan_session_id', $sessionId)
             ->where('payment_received', false)
+            ->where('payment_pending', false)
             ->whereNotIn('status', [Order::STATUS_DRAFT, Order::STATUS_CANCELLED])
+            ->whereNull('parent_order_id')
             ->latest('id')
             ->first();
     }
@@ -1627,6 +1670,102 @@ class CartController extends Controller
 
                 $item->update(['shared_order_ids' => $ids]);
             });
+    }
+
+    /**
+     * Every order whose amount depends on $item: the one that owns it, plus
+     * every order it has been shared into.
+     *
+     * A freshly added row is not bound to an order yet — it belongs to whichever
+     * draft is open for its session — so the owning order is resolved through
+     * PaymentGuardService rather than read off order_id, which would silently
+     * drop the owner's own order out of the set that has to be re-priced.
+     *
+     * @return Collection<int, int>
+     */
+    private function cartItemOrderIds(CartItem $item): Collection
+    {
+        return collect([PaymentGuardService::owningOrderIdFor($item)])
+            ->merge(is_array($item->shared_order_ids) ? $item->shared_order_ids : [])
+            ->filter()
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values();
+    }
+
+    /**
+     * Re-price every order $item takes part in.
+     *
+     * Step-1 coverage and item sharing stay editable, so the guest who offered
+     * to pay is watching a total that has to follow the owner's cart. Without
+     * this their amount only caught up when the owner re-submitted the order.
+     *
+     * @return array{order_ids: Collection<int, int>, removed_order_ids: Collection<int, int>}
+     */
+    private function recalculateCartItemOrders(CartItem $item, TableScanSession $session): array
+    {
+        return $this->recalculateOrderIds($this->cartItemOrderIds($item), $session);
+    }
+
+    /**
+     * Re-price $orderIds and report what changed, so the caller can broadcast it.
+     *
+     * Locked orders never reach here: a paid one is skipped by the recalculation
+     * service, and a frozen one is unreachable because the cart guards reject
+     * every edit to its items before this runs.
+     *
+     * $pruneEmptySideOrders drops a personal side order whose last shared item
+     * has just been deleted, mirroring the unshare path in OrderSharingService —
+     * without it an empty order card lingers on the payment step.
+     *
+     * @return array{order_ids: Collection<int, int>, removed_order_ids: Collection<int, int>}
+     */
+    private function recalculateOrderIds(
+        iterable $orderIds,
+        TableScanSession $session,
+        bool $pruneEmptySideOrders = false,
+    ): array {
+        $ids = collect($orderIds)
+            ->filter()
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values();
+
+        if ($ids->isEmpty()) {
+            return ['order_ids' => collect(), 'removed_order_ids' => collect()];
+        }
+
+        // Pricing needs the vendor's country and service fee. The cart routes
+        // reach here before they touch $session->vendor, and an unloaded
+        // relation would silently price the whole table as Austrian.
+        if (! $session->relationLoaded('vendor')) {
+            $session->load('vendor.vendorSetting');
+        }
+
+        $state = $this->orderAmounts->recalculate(
+            $ids,
+            $this->vendorCountry($session),
+            $this->serviceFeeRate($session),
+        );
+
+        $removedOrderIds = collect();
+
+        if ($pruneEmptySideOrders) {
+            foreach ($state['orders'] as $order) {
+                if ($order->parent_order_id && ShareOrderService::deleteIfEmpty($order)) {
+                    $removedOrderIds->push((int) $order->id);
+                }
+            }
+        }
+
+        return [
+            'order_ids' => $state['orders']
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->diff($removedOrderIds)
+                ->values(),
+            'removed_order_ids' => $removedOrderIds->unique()->values(),
+        ];
     }
 
     private function normalizeCustomizations(MenuItem $menuItem, array $data, ?CartItem $existing = null): array

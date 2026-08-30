@@ -120,6 +120,24 @@ class NotificationTemplateService
             'default' => '{customer_name} initiated a payment.',
             'placeholders' => ['customer_name'],
         ],
+        'payment.checkout_started' => [
+            'event' => 'payment_updated',
+            'label' => 'Checkout started',
+            'default' => '{customer_name} started checking out. Their selected orders are now locked.',
+            'placeholders' => ['customer_name'],
+        ],
+        'payment.canceled' => [
+            'event' => 'payment_updated',
+            'label' => 'Checkout canceled',
+            'default' => '{customer_name} left checkout. Editable orders were merged.',
+            'placeholders' => ['customer_name'],
+        ],
+        'payment.cash_requested' => [
+            'event' => 'payment_updated',
+            'label' => 'Cash payment requested',
+            'default' => '{customer_name} requested a cash payment.',
+            'placeholders' => ['customer_name'],
+        ],
         'payment.updated' => [
             'event' => 'payment_updated',
             'label' => 'Payment updated',

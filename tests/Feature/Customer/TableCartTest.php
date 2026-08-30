@@ -5,7 +5,6 @@ namespace Tests\Feature\Customer;
 use App\Http\Controllers\Api\Customer\CartController;
 use App\Jobs\ProcessCustomerCommand;
 use App\Models\CartItem;
-use Illuminate\Support\Str;
 use App\Models\Customer;
 use App\Models\MenuCategory;
 use App\Models\MenuItem;
@@ -23,6 +22,7 @@ use App\Services\CustomerCommandBus;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Mockery;
 use Tests\TestCase;
 
@@ -705,7 +705,7 @@ class TableCartTest extends TestCase
 
         $this->assertSame(
             1,
-            \App\Models\CartItem::where('table_scan_session_id', $this->session->id)
+            CartItem::where('table_scan_session_id', $this->session->id)
                 ->where('menu_item_id', $this->menuItem->id)
                 ->whereNull('order_id')
                 ->count(),
@@ -718,7 +718,7 @@ class TableCartTest extends TestCase
         ]);
     }
 
-    public function test_add_item_opens_a_new_line_when_the_existing_one_is_shared(): void
+    public function test_add_item_increments_the_existing_line_when_it_is_shared_but_not_in_checkout(): void
     {
         $other = Customer::factory()->create(['first_name' => 'Bob', 'last_name' => 'Jones']);
         $otherSession = TableScanSession::create([
@@ -740,7 +740,8 @@ class TableCartTest extends TestCase
             'currency' => 'EUR',
         ]);
 
-        // My line, split with Bob: he agreed to half of exactly this quantity.
+        // Step-1 sharing is live: both participants see their share change as
+        // the owner edits the row, until either related order reaches checkout.
         $shared = CartItem::create([
             'table_scan_session_id' => $this->session->id,
             'menu_item_id' => $this->menuItem->id,
@@ -758,12 +759,9 @@ class TableCartTest extends TestCase
             ->where('menu_item_id', $this->menuItem->id)
             ->get();
 
-        $this->assertCount(2, $lines);
-        $this->assertSame(1, (int) $shared->fresh()->quantity);
-        $this->assertSame(
-            [],
-            $lines->firstWhere('id', '!=', $shared->id)->shared_order_ids ?? []
-        );
+        $this->assertCount(1, $lines);
+        $this->assertSame(2, (int) $shared->fresh()->quantity);
+        $this->assertSame([$theirOrder->id], array_map('intval', $shared->fresh()->shared_order_ids));
     }
 
     public function test_add_item_opens_a_new_line_when_the_existing_one_is_bound_to_a_locked_order(): void
@@ -777,6 +775,7 @@ class TableCartTest extends TestCase
             'amount' => 3.85,
             'currency' => 'EUR',
             'paid_by' => Customer::factory()->create()->id,
+            'payment_pending' => true,
         ]);
 
         $bound = CartItem::create([
@@ -1410,7 +1409,7 @@ class TableCartTest extends TestCase
             ->assertJsonValidationErrors('note');
     }
 
-    public function test_confirm_order_merges_open_items_into_existing_unpaid_submitted_order(): void
+    public function test_confirm_order_keeps_open_items_separate_from_existing_checkout_locked_orders(): void
     {
         $existingOrder = Order::create([
             'order_public_id' => 'ord-existing-unpaid',
@@ -1473,16 +1472,16 @@ class TableCartTest extends TestCase
             ->postJson('/api/customer/table/order/confirmed');
 
         $response->assertOk()
-            ->assertJsonPath('people.0.orders_count', 1)
+            ->assertJsonPath('people.0.orders_count', 3)
             ->assertJsonPath('people.0.orders.0.id', $existingOrder->id)
-            ->assertJsonPath('people.0.orders.0.status', Order::STATUS_IN_PROGRESS)
-            ->assertJsonPath('people.0.orders.0.note', 'Keep this draft note.');
+            ->assertJsonPath('people.0.orders.0.status', Order::STATUS_IN_PROGRESS);
 
-        $this->assertDatabaseMissing('orders', ['id' => $draftOrder->id]);
-        $this->assertSame($existingOrder->id, $newItem->fresh()->order_id);
-        $this->assertSame([$existingOrder->id], $sharedItem->fresh()->shared_order_ids);
-        $this->assertSame(11.55, (float) $existingOrder->fresh()->amount);
-        $this->assertSame('Keep this draft note.', $existingOrder->fresh()->note);
+        $newOrder = Order::where('customer_id', $this->customer->id)->latest('id')->firstOrFail();
+        $this->assertDatabaseHas('orders', ['id' => $draftOrder->id]);
+        $this->assertSame($newOrder->id, $newItem->fresh()->order_id);
+        $this->assertSame([$draftOrder->id], array_map('intval', $sharedItem->fresh()->shared_order_ids));
+        $this->assertSame(3.50, (float) $existingOrder->fresh()->amount);
+        $this->assertNull($existingOrder->fresh()->note);
     }
 
     public function test_confirm_order_does_not_confirm_draft_from_a_different_active_session(): void
@@ -1893,7 +1892,7 @@ class TableCartTest extends TestCase
         $this->assertNotNull($notification);
         $this->assertSame($statePatch, $notification->metadata['state_patch']);
         $this->assertArrayNotHasKey('person_snapshots', $notification->metadata);
-        $this->assertLessThanOrEqual(22, $queryCount, "Sharing update executed {$queryCount} database queries.");
+        $this->assertLessThanOrEqual(23, $queryCount, "Sharing update executed {$queryCount} database queries.");
     }
 
     public function test_unshare_compact_patch_reports_deleted_empty_side_order(): void

@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -160,6 +161,26 @@ class Vendor extends Authenticatable
     public function reservations(): HasMany
     {
         return $this->hasMany(Reservation::class);
+    }
+
+    /**
+     * Match a vendor by either of its public identifiers.
+     *
+     * `vendor_public_id` and `slug` are both NOT NULL, both unique, both
+     * indexed, and both handed out in public payloads — so both end up in
+     * links people keep and QR codes vendors print. Resolving only one of them
+     * turns a valid link into a 404, which the customer app can only render as
+     * "restaurant not found": a guest standing outside the place is told it
+     * does not exist. Accepting either costs one indexed lookup.
+     *
+     * Callers should still emit `vendor_public_id` as the canonical form; this
+     * is what the API tolerates, not what the app should produce.
+     */
+    public function scopeByPublicIdentifier(Builder $query, string $identifier): Builder
+    {
+        return $query->where(fn (Builder $match) => $match
+            ->where('vendor_public_id', $identifier)
+            ->orWhere('slug', $identifier));
     }
 
     public function vendorSetting(): HasOne

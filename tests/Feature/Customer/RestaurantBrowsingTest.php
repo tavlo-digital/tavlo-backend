@@ -53,6 +53,45 @@ class RestaurantBrowsingTest extends TestCase
     // GET /api/customer/restaurants
     // ----------------------------------------------------------------
 
+    public function test_public_endpoints_resolve_a_vendor_by_slug_as_well_as_public_id(): void
+    {
+        $category = MenuCategory::create([
+            'vendor_id' => $this->vendor->id,
+            'name' => 'Mains',
+            'slug' => 'mains-'.$this->vendor->id,
+            'is_active' => true,
+        ]);
+        MenuItem::create([
+            'vendor_id' => $this->vendor->id,
+            'menu_category_id' => $category->id,
+            'name' => 'Pizza',
+            'price' => 12,
+        ]);
+
+        $this->assertNotSame($this->vendor->slug, $this->vendor->vendor_public_id);
+
+        // The whole path, not just the detail call: a link that resolves on the
+        // welcome screen and then 404s one tap later on the menu is no fix.
+        $paths = ['', '/categories', '/menu', '/about', '/languages'];
+
+        foreach ($paths as $path) {
+            foreach ([$this->vendor->vendor_public_id, $this->vendor->slug] as $identifier) {
+                $this->getJson("/api/customer/restaurants/{$identifier}{$path}")
+                    ->assertOk();
+            }
+        }
+
+        $this->getJson("/api/customer/restaurants/{$this->vendor->slug}")
+            ->assertOk()
+            ->assertJsonPath('vendor_public_id', $this->vendor->vendor_public_id);
+    }
+
+    public function test_an_unknown_identifier_is_still_a_404(): void
+    {
+        $this->getJson('/api/customer/restaurants/not-a-real-restaurant')
+            ->assertNotFound();
+    }
+
     public function test_can_list_restaurants(): void
     {
         $response = $this->getJson('/api/customer/restaurants');

@@ -44,6 +44,7 @@ class OrderAmountRecalculationService
                     ->whereColumn('latest_drafts.table_scan_session_id', 'orders.table_scan_session_id')
                     ->where('latest_drafts.status', Order::STATUS_DRAFT)
                     ->where('latest_drafts.payment_received', false)
+                    ->where('latest_drafts.payment_pending', false)
                     ->whereNull('latest_drafts.parent_order_id'),
             ])
             ->whereIn('orders.id', $ids)

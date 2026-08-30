@@ -80,21 +80,20 @@ class PaymentGuardService
     }
 
     /**
-     * True once somebody has committed to paying for an order, so its cart
-     * items may no longer be added to, edited or removed: another guest covers
-     * it, a payment is in progress, or it is already settled.
+     * True only once checkout has frozen the amount, or payment has completed.
+     * Selecting an order on step 1 (`paid_by`) is an editable assignment: the
+     * owner may still change the cart and the payer sees the live total.
      */
     public static function orderIsCartLocked(Order $order): bool
     {
         return (bool) $order->payment_received
-            || (bool) $order->payment_pending
-            || $order->paid_by !== null;
+            || (bool) $order->payment_pending;
     }
 
     /**
      * Whether $order implicitly owns its session's unassigned cart items.
      *
-     * The newest open draft does: the items a guest has added are not bound
+     * The newest editable draft does: the items a guest has added are not bound
      * to it until it locks (see freezeDraftItems) or is confirmed, yet they
      * are still what the draft is for. Older drafts in the same session must
      * not claim those rows too, or two order cards report the same items and
@@ -114,11 +113,11 @@ class PaymentGuardService
     }
 
     /**
-     * Whether this is the newest main draft in its session.
+     * Whether this is the newest editable main draft in its session.
      *
-     * Locking or unlocking an older draft must never move newer unassigned
-     * cart rows into it. The draft sequence is the durable order boundary;
-     * paid_by and payment_pending are only temporary locks on that boundary.
+     * Locked drafts are deliberately ignored. If the newest draft is frozen,
+     * additions belong to the newest remaining editable draft (or to a new one
+     * when none exists), exactly matching currentOpenOrder().
      */
     public static function draftIsLatestForSession(Order $order): bool
     {
@@ -131,6 +130,7 @@ class PaymentGuardService
         return ! Order::where('table_scan_session_id', $order->table_scan_session_id)
             ->where('status', Order::STATUS_DRAFT)
             ->where('payment_received', false)
+            ->where('payment_pending', false)
             ->whereNull('parent_order_id')
             ->where('id', '>', $order->id)
             ->exists();
@@ -157,6 +157,7 @@ class PaymentGuardService
         $order = Order::where('table_scan_session_id', $item->table_scan_session_id)
             ->where('status', Order::STATUS_DRAFT)
             ->where('payment_received', false)
+            ->where('payment_pending', false)
             ->whereNull('parent_order_id')
             ->latest('id')
             ->first();
@@ -188,10 +189,10 @@ class PaymentGuardService
     }
 
     /**
-     * Release a draft's items back into the open pool when its lock is lifted —
-     * the coverage was released, or the payment was cancelled. Once the session
-     * has another draft, however, the binding is the boundary between those two
-     * orders and must remain in place even after either order is unlocked.
+     * Release a draft's items back into the open pool when its checkout lock is
+     * lifted. Another editable draft must be consolidated first; a still-locked
+     * sibling is a separate frozen boundary and does not stop this draft from
+     * owning open rows.
      *
      * Items already sent to the kitchen keep their order: they are submitted,
      * not merely locked.
@@ -205,6 +206,7 @@ class PaymentGuardService
         $hasSiblingDraft = Order::where('table_scan_session_id', $order->table_scan_session_id)
             ->where('status', Order::STATUS_DRAFT)
             ->where('payment_received', false)
+            ->where('payment_pending', false)
             ->whereNull('parent_order_id')
             ->whereKeyNot($order->id)
             ->exists();
