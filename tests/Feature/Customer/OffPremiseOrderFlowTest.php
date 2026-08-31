@@ -661,6 +661,123 @@ class OffPremiseOrderFlowTest extends TestCase
         $this->assertNull($order->checkout_hold_by);
     }
 
+    public function test_a_payer_can_tip_when_every_order_they_settle_belongs_to_someone_else(): void
+    {
+        [$owner, $ownerHeaders, $pin] = $this->startPickup();
+        $stripe = new OffPremiseFakeStripePaymentService;
+        $this->app->instance(StripePaymentService::class, $stripe);
+
+        $payer = Customer::factory()->create();
+        $payerHeaders = $this->headers($payer, 'pickup');
+        $this->asCustomer($payerHeaders)->postJson('/api/customer/table/pin', [
+            'vendor_public_id' => $this->vendor->vendor_public_id,
+            'pin' => $pin,
+        ])->assertSuccessful();
+
+        foreach ([$ownerHeaders, $payerHeaders] as $headers) {
+            $this->asCustomer($headers)->postJson('/api/customer/cart/items', [
+                'menu_item_id' => $this->menuItem->id,
+                'quantity' => 1,
+            ])->assertCreated();
+            $this->asCustomer($headers)->postJson('/api/customer/table/order/draft')->assertCreated();
+        }
+
+        $ownerOrder = Order::where('customer_id', $owner->id)->sole();
+        $payerOrder = Order::where('customer_id', $payer->id)->sole();
+
+        // Mutual coverage. Each guest's own order is now claimed by the other,
+        // so it leaves their payable set and every order they settle belongs to
+        // somebody else — which used to make a tip impossible for both of them.
+        $this->asCustomer($payerHeaders)
+            ->postJson('/api/customer/payments/pay-for', ['order_id' => $ownerOrder->order_public_id])
+            ->assertOk();
+        $this->asCustomer($ownerHeaders)
+            ->postJson('/api/customer/payments/pay-for', ['order_id' => $payerOrder->order_public_id])
+            ->assertOk();
+
+        $intentId = $this->asCustomer($payerHeaders)
+            ->postJson('/api/customer/payments/create-intent')
+            ->assertOk()
+            ->json('paymentIntentId');
+
+        $this->asCustomer($payerHeaders)
+            ->postJson('/api/customer/payments/update-intent', [
+                'payment_intent_id' => $intentId,
+                'tip_amount' => 5,
+            ])
+            ->assertOk();
+
+        // The tip lands on the order being settled, exactly once.
+        $this->assertSame(5.0, (float) $ownerOrder->fresh()->tip_amount);
+        $this->assertSame(0.0, (float) $payerOrder->fresh()->tip_amount);
+    }
+
+    public function test_a_cash_payer_can_tip_for_an_order_they_do_not_own(): void
+    {
+        [$owner, $ownerHeaders, $pin] = $this->startPickup();
+
+        $payer = Customer::factory()->create();
+        $payerHeaders = $this->headers($payer, 'pickup');
+        $this->asCustomer($payerHeaders)->postJson('/api/customer/table/pin', [
+            'vendor_public_id' => $this->vendor->vendor_public_id,
+            'pin' => $pin,
+        ])->assertSuccessful();
+
+        $this->asCustomer($ownerHeaders)->postJson('/api/customer/cart/items', [
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 1,
+        ])->assertCreated();
+        $this->asCustomer($ownerHeaders)->postJson('/api/customer/table/order/draft')->assertCreated();
+
+        $ownerOrder = Order::where('customer_id', $owner->id)->sole();
+        $this->asCustomer($payerHeaders)
+            ->postJson('/api/customer/payments/pay-for', ['order_id' => $ownerOrder->order_public_id])
+            ->assertOk();
+
+        $this->asCustomer($payerHeaders)
+            ->postJson('/api/customer/payments/request-cash', ['tip_amount' => 3.5])
+            ->assertOk();
+
+        $this->assertSame(3.5, (float) $ownerOrder->fresh()->tip_amount);
+    }
+
+    public function test_session_status_names_the_other_off_premise_mode_instead_of_looking_expired(): void
+    {
+        $customer = Customer::factory()->create();
+        $qr = VendorTakeawayQr::create(['vendor_id' => $this->vendor->id, 'qr_token' => 'tk-mode']);
+
+        $this->asCustomer($this->headers($customer, 'takeaway'))
+            ->postJson('/api/customer/table/scan', ['token' => $qr->qr_token])
+            ->assertCreated();
+
+        // Asking as pickup still reports no pickup session — the two modes stay
+        // isolated — but it now names the mode that does hold one, so the client
+        // can correct its stored mode instead of discarding a live session.
+        $this->asCustomer($this->headers($customer, 'pickup'))
+            ->getJson('/api/customer/table/session/status')
+            ->assertOk()
+            ->assertJsonPath('active', false)
+            ->assertJsonPath('active_order_mode', 'takeaway');
+
+        // And asking in the right mode is unchanged.
+        $this->asCustomer($this->headers($customer, 'takeaway'))
+            ->getJson('/api/customer/table/session/status')
+            ->assertOk()
+            ->assertJsonPath('active', true)
+            ->assertJsonPath('session.type', 'takeaway');
+    }
+
+    public function test_session_status_reports_no_other_mode_when_there_is_none(): void
+    {
+        $customer = Customer::factory()->create();
+
+        $this->asCustomer($this->headers($customer, 'pickup'))
+            ->getJson('/api/customer/table/session/status')
+            ->assertOk()
+            ->assertJsonPath('active', false)
+            ->assertJsonPath('active_order_mode', null);
+    }
+
     private function startPickup(?\DateTimeInterface $scheduledFor = null): array
     {
         $customer = Customer::factory()->create();
@@ -716,5 +833,21 @@ class OffPremiseFakeStripePaymentService extends StripePaymentService
     public function retrievePaymentIntent(string $paymentIntentId): array
     {
         return $this->intents[$paymentIntentId];
+    }
+
+    public function updatePaymentIntent(string $paymentIntentId, int $amountMinor, string $currency, array $metadata = []): array
+    {
+        $payload = $this->intents[$paymentIntentId] ?? [
+            'id' => $paymentIntentId,
+            'client_secret' => $paymentIntentId.'_secret_test',
+            'status' => 'requires_payment_method',
+            'payment_method' => null,
+        ];
+
+        $payload['amount'] = $amountMinor;
+        $payload['currency'] = $currency;
+        $payload['metadata'] = $metadata;
+
+        return $this->intents[$paymentIntentId] = $payload;
     }
 }

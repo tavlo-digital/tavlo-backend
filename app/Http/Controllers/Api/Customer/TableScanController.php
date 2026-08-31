@@ -12,6 +12,7 @@ use App\Models\Vendor;
 use App\Models\VendorTakeawayQr;
 use App\Services\NotificationService;
 use App\Services\OrderSessionService;
+use App\Services\SessionClosureService;
 use App\Services\VendorDateTimeService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -23,6 +24,7 @@ class TableScanController extends Controller
     public function __construct(
         private readonly VendorDateTimeService $dateTimes,
         private readonly OrderSessionService $sessions,
+        private readonly SessionClosureService $closures,
     ) {}
 
     /**
@@ -298,7 +300,8 @@ class TableScanController extends Controller
      */
     public function sessionStatus(Request $request): JsonResponse
     {
-        $session = $this->sessions->activeForCustomer((int) $request->user()->id, $request);
+        $customerId = (int) $request->user()->id;
+        $session = $this->sessions->activeForCustomer($customerId, $request);
         $session?->load(['restaurantTable', 'vendor.vendorSetting']);
 
         if (! $session) {
@@ -307,6 +310,13 @@ class TableScanController extends Controller
                 'session' => null,
                 'table' => null,
                 'vendor' => null,
+                // Pickup and takeaway stay isolated: this still answers only for
+                // the mode that was asked for. But the client's mode lives in
+                // its own storage and drifts — a guest on a shared link defaults
+                // to pickup even when their session is takeaway — and a bare
+                // "no session" made them conclude it had expired and discard it.
+                // Naming the mode that does hold one lets them correct instead.
+                'active_order_mode' => $this->otherOffPremiseModeFor($customerId, $request),
             ]);
         }
 
@@ -368,26 +378,8 @@ class TableScanController extends Controller
 
         $sessionIds = $allSessions->pluck('id');
 
-        $orders = Order::query()
-            ->whereIn('table_scan_session_id', $sessionIds)
-            ->whereNotIn('status', ['cancelled', 'draft'])
-            ->get();
-
-        if ($orders->contains(fn (Order $order) => ! $order->payment_received)) {
-            return response()->json([
-                'message' => 'There is an active order on this table.',
-            ], 422);
-        }
-
-        $paidOrderIds = $orders
-            ->where('payment_received', true)
-            ->pluck('id')
-            ->values();
-
-        if ($paidOrderIds->isNotEmpty() && $this->hasUnservedCartItemsForOrders($paidOrderIds->all())) {
-            return response()->json([
-                'message' => 'All the items on table are not served.',
-            ], 422);
+        if ($reason = $this->closures->blockingReason($sessionIds, false)) {
+            return response()->json(['message' => $reason], 422);
         }
 
         $customerIds = $allSessions->pluck('customer_id')->filter()->unique();
@@ -633,16 +625,9 @@ class TableScanController extends Controller
         }
 
         $groupSessionIds = $this->sessions->groupSessionIds($session);
-        $hasUnpaidOrders = Order::query()
-            ->whereIn('table_scan_session_id', $groupSessionIds)
-            ->where('status', '!=', Order::STATUS_CANCELLED)
-            ->where('payment_received', false)
-            ->exists();
 
-        if ($hasUnpaidOrders) {
-            return response()->json([
-                'message' => 'This order group still has unpaid orders.',
-            ], 422);
+        if ($reason = $this->closures->blockingReason($groupSessionIds, true)) {
+            return response()->json(['message' => $reason], 422);
         }
 
         $customerIds = $this->sessions->groupCustomerIds($session);
@@ -664,6 +649,32 @@ class TableScanController extends Controller
             'message' => 'Order session closed.',
             'status' => 'closed',
         ]);
+    }
+
+    /**
+     * The off-premise mode this customer actually has an active session in,
+     * when it is not the one they asked about — otherwise null.
+     *
+     * Only ever answers for the two off-premise modes: a dine-in customer has a
+     * table, and nothing about their session is discoverable from a mode guess.
+     */
+    private function otherOffPremiseModeFor(int $customerId, Request $request): ?string
+    {
+        $requested = $this->sessions->mode($request);
+
+        if (! $this->sessions->isOffPremise($requested)) {
+            return null;
+        }
+
+        $other = $requested === OrderSessionService::PICKUP
+            ? OrderSessionService::TAKEAWAY
+            : OrderSessionService::PICKUP;
+
+        return TableScanSession::query()
+            ->where('customer_id', $customerId)
+            ->where('status', 'active')
+            ->where('type', $other)
+            ->exists() ? $other : null;
     }
 
     private function resolveOffPremiseVendor(Request $request, array $data): ?Vendor
@@ -776,20 +787,6 @@ class TableScanController extends Controller
         return response()->json([
             'message' => 'Waiters have been notified.',
         ]);
-    }
-
-    private function hasUnservedCartItemsForOrders(array $orderIds): bool
-    {
-        return CartItem::query()
-            ->where(function ($query) use ($orderIds) {
-                $query->whereIn('order_id', $orderIds);
-
-                foreach ($orderIds as $orderId) {
-                    $query->orWhereJsonContains('shared_order_ids', $orderId);
-                }
-            })
-            ->whereNull('served_at')
-            ->exists();
     }
 
     private function extractToken(Request $request): string

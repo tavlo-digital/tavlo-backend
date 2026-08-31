@@ -460,7 +460,10 @@ class StaffCommandTest extends TestCase
         $items->each(fn (CartItem $item) => $this->assertNotNull($item->fresh()->served_at));
         $this->assertSame('served', $this->order->fresh()->status);
         Queue::assertPushed(DeliverCustomerRealtime::class, 1);
-        Queue::assertPushed(DeliverCustomerRealtime::class, fn (DeliverCustomerRealtime $queued): bool => $queued->payload['event'] === 'cart_items_updated'
+        // Singular on purpose: this is the event name the customer app
+        // subscribes to. A plural spelling here reached no client, so serving a
+        // whole table changed nothing on any customer's screen.
+        Queue::assertPushed(DeliverCustomerRealtime::class, fn (DeliverCustomerRealtime $queued): bool => $queued->payload['event'] === 'cart_item_updated'
             && ($queued->payload['metadata']['template'] ?? null) === 'cart.items_served'
             && ($queued->payload['metadata']['cart_item_ids'] ?? []) === $itemIds
             && ($queued->payload['metadata']['served_count'] ?? null) === 3

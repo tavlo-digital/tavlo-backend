@@ -15,6 +15,7 @@ use App\Http\Controllers\Api\Customer\RealtimeTokenController;
 use App\Http\Controllers\Api\Customer\ReservationController;
 use App\Http\Controllers\Api\Customer\RestaurantController;
 use App\Http\Controllers\Api\Customer\ReviewController;
+use App\Http\Controllers\Api\Customer\SessionHistoryController;
 use App\Http\Controllers\Api\Customer\TableScanController;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
@@ -127,6 +128,12 @@ Route::middleware([
     Route::post('table/scan', [TableScanController::class, 'scan'])->name('table.scan');
     Route::post('table/pin', [TableScanController::class, 'pin'])->middleware('throttle:table-pin')->name('table.pin');
     Route::get('table/session/status', [TableScanController::class, 'sessionStatus'])->name('table.session.status');
+
+    // The customer's own scan-session history, for the account settings list.
+    Route::get('sessions', [SessionHistoryController::class, 'index'])->name('sessions.index');
+    Route::post('sessions/{session}/close', [SessionHistoryController::class, 'close'])
+        ->whereNumber('session')
+        ->name('sessions.close');
     Route::post('table/close', [TableScanController::class, 'close'])->name('table.close');
     Route::get('table/order/start', [CartController::class, 'orderStart'])->name('table.order.start');
     Route::post('table/order/draft', [CartController::class, 'createOrderDraft'])->name('table.order.draft');

@@ -852,7 +852,11 @@ class OrderController extends Controller
 
             $this->notifySessionCustomers(
                 $order,
-                'cart_items_updated',
+                // Singular: this is the event name every client listens for.
+                // Serving items in bulk emitted a plural spelling nothing was
+                // subscribed to, so "serve all" updated no customer's screen
+                // while serving one item did.
+                'cart_item_updated',
                 "{$servedCount} ready item".($servedCount === 1 ? ' was' : 's were').' served.',
                 [
                     'template' => 'cart.items_served',

@@ -2135,7 +2135,7 @@ class CustomerPaymentsTest extends TestCase
             ->assertNotFound();
     }
 
-    public function test_assigned_only_payment_allows_intent_but_rejects_positive_tip(): void
+    public function test_assigned_only_payment_allows_a_tip_on_the_covered_order(): void
     {
         [$tablemate, $tablemateSession] = $this->tablemate();
         $coveredOrder = $this->order([
@@ -2169,13 +2169,17 @@ class CustomerPaymentsTest extends TestCase
             ->postJson('/api/customer/payments/create-intent')
             ->assertOk();
 
+        // A payer settling nothing but a tablemate's order can still tip. The
+        // tip has nowhere of their own to sit, so it rides on the order being
+        // paid; order_payments is what records who actually paid it.
         $this->withHeaders($this->headers)
             ->postJson('/api/customer/payments/update-intent', [
                 'payment_intent_id' => 'pi_fake_1',
                 'tip_amount' => 2,
             ])
-            ->assertStatus(422)
-            ->assertJsonPath('message', 'A tip cannot be added when paying only for another customer’s orders.');
+            ->assertOk();
+
+        $this->assertSame(2.0, (float) $coveredOrder->fresh()->tip_amount);
     }
 
     public function test_payer_can_release_assignment_before_payment(): void

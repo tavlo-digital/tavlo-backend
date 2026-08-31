@@ -1097,15 +1097,16 @@ class PaymentController extends Controller
         $baseAmount = round((float) $amounts->sum(), 2);
         $tipAmount = round((float) ($data['tip_amount'] ?? 0), 2);
 
+        // The tip rides on one order so it is counted once across a multi-order
+        // payment. Prefer the payer's own, but a payer covering somebody else
+        // may own none of the orders they are settling — the moment a mate
+        // covers your order it leaves your payable set, so mutual coverage left
+        // both guests unable to tip at all. The tip is money from the payer to
+        // the restaurant; which order carries it is bookkeeping, and
+        // order_payments already records who paid.
         $tipOrder = $orders->first(
             fn (Order $coveredOrder) => $this->orderOwnerCustomerId($coveredOrder) === (int) $customer->id
-        );
-
-        if ($tipAmount > 0 && ! $tipOrder) {
-            return response()->json([
-                'message' => 'A tip cannot be added when paying only for another customer\'s orders.',
-            ], 422);
-        }
+        ) ?? $orders->first();
 
         $amount = round($baseAmount + $tipAmount, 2);
 
@@ -1257,15 +1258,12 @@ class PaymentController extends Controller
         ]);
         $baseAmount = round((float) $baseAmounts->sum(), 2);
         $tipAmount = round((float) $data['tip_amount'], 2);
+        // Same rule as requestCash: prefer the payer's own order, but never
+        // refuse the tip just because every order in this payment belongs to
+        // somebody else.
         $tipOrder = $coveredOrders->first(
             fn (Order $coveredOrder) => $this->orderOwnerCustomerId($coveredOrder) === (int) $customer->id
-        );
-
-        if ($tipAmount > 0 && ! $tipOrder) {
-            return response()->json([
-                'message' => 'A tip cannot be added when paying only for another customer’s orders.',
-            ], 422);
-        }
+        ) ?? $coveredOrders->first() ?? $order;
 
         $payableAmount = round($baseAmount + $tipAmount, 2);
 
@@ -1309,8 +1307,13 @@ class PaymentController extends Controller
                     'payment_received' => false,
                 ]);
 
-                PaymentGuardService::freezeDraftItems($coveredOrder);
-
+                // No freeze here. A tip only changes what is owed, never what
+                // was ordered — and this order was already frozen when its
+                // intent was created. Re-running it re-bound the session's
+                // loose cart rows on every tip tap, and because the amounts
+                // above are computed before this transaction, an item added
+                // since the lock would have joined the order without ever being
+                // priced into it.
                 if ($payment->orders->contains('id', $coveredOrder->id)) {
                     $payment->orders()->updateExistingPivot($coveredOrder->id, [
                         'amount' => $baseAmounts[$coveredOrder->id],

@@ -645,6 +645,8 @@ class TableScanTest extends TestCase
                 'session' => null,
                 'table' => null,
                 'vendor' => null,
+                // Null here: a dine-in request never reports an off-premise mode.
+                'active_order_mode' => null,
             ]);
     }
 

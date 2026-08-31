@@ -48,6 +48,12 @@ class NotificationTemplateService
             'default' => '{item_name} has been served.',
             'placeholders' => ['item_name'],
         ],
+        'cart.items_served' => [
+            'event' => 'cart_item_updated',
+            'label' => 'Cart items served',
+            'default' => '{served_count} items have been served.',
+            'placeholders' => ['served_count'],
+        ],
         'cart.item_status_updated' => [
             'event' => 'cart_item_updated',
             'label' => 'Cart item status updated',
