@@ -42,8 +42,16 @@ class CloseStaleTableScanSessions extends Command
             $completedOffPremise = $tableId === null
                 && $groupOrders->where('status', '!=', Order::STATUS_DRAFT)->isNotEmpty()
                 && $groupOrders->where('status', '!=', Order::STATUS_DRAFT)->every(
+                    // SERVED counts here too: a handed-over pickup order now
+                    // completes as served like a dine-in one. Without it a
+                    // finished pickup group would never satisfy this and its
+                    // session would sit open forever.
                     fn (Order $order) => $order->payment_received
-                        && in_array($order->status, [Order::STATUS_PICKED_UP, Order::STATUS_CANCELLED], true)
+                        && in_array(
+                            $order->status,
+                            [...Order::COMPLETED_STATUSES, Order::STATUS_CANCELLED],
+                            true,
+                        )
                 );
 
             Order::whereIn('table_scan_session_id', $sessionIds)
@@ -125,7 +133,8 @@ class CloseStaleTableScanSessions extends Command
 
             if ($realOrders->contains(fn (Order $order) => ! in_array(
                 $order->status,
-                [Order::STATUS_PICKED_UP, Order::STATUS_CANCELLED],
+                // Same reason as above: served is a finished pickup order.
+                [...Order::COMPLETED_STATUSES, Order::STATUS_CANCELLED],
                 true,
             ))) {
                 return false;

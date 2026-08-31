@@ -172,6 +172,10 @@ Route::middleware(['auth:vendor,team_member', 'vendor.staff.access'])->group(fun
     Route::post('{vendorId}/tables/takeaway-qr/refresh', [TableController::class, 'refreshTakeawayQR'])->name('tables.refreshTakeawayQR');
     Route::post('{vendorId}/tables/sync', [TableController::class, 'sync'])->name('tables.sync');
     Route::post('{vendorId}/tables/{tableId}/close-session', [TableController::class, 'closeSession'])->name('tables.closeSession');
+    // Off-premise groups have no table, so their close is addressed by session.
+    Route::post('{vendorId}/scan-sessions/{sessionId}/close', [TableController::class, 'closeScanSession'])
+        ->whereNumber('sessionId')
+        ->name('scanSessions.close');
     Route::post('{vendorId}/tables/{tableId}/dismiss-call', [TableController::class, 'dismissCall'])->name('tables.dismissCall');
     Route::post('{vendorId}/tables/{tableId}/transfer', [TableController::class, 'transfer'])->name('tables.transfer');
     Route::post('{vendorId}/tables/{tableId}/staff-order', [StaffOrderController::class, 'store'])->name('tables.staffOrder');

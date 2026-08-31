@@ -55,6 +55,8 @@ class EnsureStaffCanAccessVendorRoute
                 'vendor.orders.itemStatusBatch',
                 'vendor.tables.index',
                 'vendor.tables.closeSession',
+                // The same capability for a group with no table to close from.
+                'vendor.scanSessions.close',
                 'vendor.tables.dismissCall',
                 'vendor.tables.transfer',
                 'vendor.tables.staffOrder',

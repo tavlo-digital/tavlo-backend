@@ -12,6 +12,7 @@ use App\Models\TableScanSession;
 use App\Models\TableSession;
 use App\Models\TeamMember;
 use App\Models\Vendor;
+use App\Services\CustomerApiCache;
 use App\Services\InventoryConsumptionService;
 use App\Services\KitchenOrderReleaseService;
 use App\Services\LocaleService;
@@ -48,6 +49,7 @@ class OrderController extends Controller
         private readonly OrderSessionService $orderSessions,
         private readonly KitchenOrderReleaseService $kitchenReleases,
         private readonly InventoryConsumptionService $inventoryConsumption,
+        private readonly CustomerApiCache $customerApiCache,
     ) {}
 
     /**
@@ -1041,6 +1043,17 @@ class OrderController extends Controller
 
         $order = $this->resolveOrder($orderId, $request);
 
+        // A pickup order is handed over, not brought to a table: it is paid for
+        // before the customer ever gets it. Dine-in is served first and settled
+        // after, so the guard is off-premise only. It used to live on the
+        // picked-up endpoint; serving pickup orders through here instead must
+        // not quietly drop it.
+        if ($order->tableScanSession
+            && $this->orderSessions->isOffPremise($order->tableScanSession)
+            && (! $order->payment_received || $order->status === Order::STATUS_DRAFT)) {
+            return response()->json(['message' => 'Payment must be confirmed before handing this order over.'], 409);
+        }
+
         $now = now();
 
         $this->loadLinkedCartItems($order)->each(function (CartItem $item) use ($now) {
@@ -1420,6 +1433,28 @@ class OrderController extends Controller
         ];
     }
 
+    /**
+     * The identity staff group an order under: the PIN party for off-premise,
+     * the table for dine-in. Null when neither applies, so clients fall back to
+     * the order itself rather than lumping unrelated orders together.
+     */
+    private function sessionGroupKeyFor(Order $order): ?string
+    {
+        $session = $order->tableScanSession;
+
+        if (! $session) {
+            return null;
+        }
+
+        if ($this->orderSessions->isOffPremise($session)) {
+            return $session->pin
+                ? "offpremise:{$session->vendor_id}:{$session->type}:{$session->pin}"
+                : "session:{$session->id}";
+        }
+
+        return $session->restaurant_table_id ? "table:{$session->restaurant_table_id}" : null;
+    }
+
     private function formatOrder(Order $order, ?Collection $cartItemCache = null): array
     {
         $vendor = $order->relationLoaded('vendor') ? $order->vendor : ($order->vendor ?? null);
@@ -1565,6 +1600,11 @@ class OrderController extends Controller
             'tableNumber' => $order->table_number ?? $table?->number,
             'tableId' => $table ? (string) $table->id : null,
             'tableScanSessionId' => $order->table_scan_session_id ? (string) $order->table_scan_session_id : null,
+            // What staff should see as ONE card. Dine-in groups by table, and
+            // several guests at that table each have their own scan session —
+            // an off-premise group is the same thing keyed by PIN, so grouping
+            // by session split one pickup party across two cards.
+            'sessionGroupKey' => $this->sessionGroupKeyFor($order),
             'course' => $order->course,
             'placedBy' => $order->placed_by ?? ($order->customer_id ? 'customer' : 'waiter'),
             'waiterConfirmed' => (bool) $order->waiter_confirmed,
@@ -1821,6 +1861,15 @@ class OrderController extends Controller
         if (! $order->table_scan_session_id) {
             return;
         }
+
+        // Staff writes land on vendor routes, which sit outside the customer
+        // response cache and so never bump its version — leaving guests reading
+        // a cached table/history for the TTL after their order was served or
+        // their cash was confirmed. If we are telling customers something
+        // changed, their cached view is stale by definition. Scoped to this
+        // helper rather than every notification: staff writes are rare next to
+        // cart edits, which invalidate through their own non-GET routes.
+        $this->customerApiCache->invalidate();
 
         $session = $order->relationLoaded('tableScanSession')
             ? $order->tableScanSession

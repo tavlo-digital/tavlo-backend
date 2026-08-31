@@ -11,6 +11,7 @@ use App\Models\StripeWebhookLog;
 use App\Models\TableScanSession;
 use App\Models\Vendor;
 use App\Services\CheckoutHoldService;
+use App\Services\CustomerApiCache;
 use App\Services\CustomerCommandBus;
 use App\Services\EditableOrderMergeService;
 use App\Services\KitchenOrderReleaseService;
@@ -45,6 +46,7 @@ class PaymentController extends Controller
         private readonly KitchenOrderReleaseService $kitchenReleases,
         private readonly CheckoutHoldService $checkoutHolds,
         private readonly EditableOrderMergeService $editableOrderMerges,
+        private readonly CustomerApiCache $customerApiCache,
     ) {}
 
     private function pendingCommandResponse(TableScanSession $session): ?JsonResponse
@@ -1806,6 +1808,15 @@ class PaymentController extends Controller
     {
         $status = $this->statusFromStripe($intent['status'] ?? $payment->status, $eventType);
         $now = now();
+
+        // Reaching payment state through a GET is why this is here rather than
+        // in middleware: /payments/verify is a GET that settles an order, and
+        // InvalidateCustomerApiCache only fires on non-GET requests. Without
+        // this the customer's own table/history stayed cached for the TTL and
+        // told a guest who had just paid that their order was unpaid. This is
+        // the one place every payment transition passes through — verify and
+        // the Stripe webhook alike.
+        $this->customerApiCache->invalidate();
 
         $payment->update([
             'status' => $status,

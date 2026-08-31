@@ -12,6 +12,7 @@ use App\Models\TeamMember;
 use App\Models\Vendor;
 use App\Models\VendorTakeawayQr;
 use App\Services\NotificationService;
+use App\Services\OrderSessionService;
 use App\Services\StaffCommandBus;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -23,7 +24,10 @@ class TableController extends Controller
 {
     use QueuesStaffCommands;
 
-    public function __construct(private readonly StaffCommandBus $staffCommands) {}
+    public function __construct(
+        private readonly StaffCommandBus $staffCommands,
+        private readonly OrderSessionService $orderSessions,
+    ) {}
 
     /**
      * GET /api/vendor/{vendorId}/tables
@@ -343,82 +347,9 @@ class TableController extends Controller
                 ->lockForUpdate()
                 ->get();
 
-            if ($sessions->isEmpty()) {
-                return ['outcome' => 'not_found'];
-            }
-
-            $orders = Order::whereIn('table_scan_session_id', $sessions->pluck('id'))
-                ->whereNotIn('status', ['cancelled', 'draft'])
-                ->lockForUpdate()
-                ->get();
-
-            $paymentSummary = $this->paymentSummary($orders);
-            $fulfillmentOrderIds = $orders->pluck('id')->values();
-
-            $unfinishedItems = collect();
-
-            if ($fulfillmentOrderIds->isNotEmpty()) {
-                $unfinishedItems = CartItem::query()
-                    ->where(function ($query) use ($fulfillmentOrderIds) {
-                        $query->whereIn('order_id', $fulfillmentOrderIds);
-
-                        foreach ($fulfillmentOrderIds as $orderId) {
-                            $query->orWhereJsonContains('shared_order_ids', $orderId);
-                        }
-                    })
-                    ->whereNull('served_at')
-                    ->lockForUpdate()
-                    ->get(['id', 'order_id', 'shared_order_ids']);
-            }
-
-            if ($unfinishedItems->isNotEmpty()) {
-                $unfinishedOrderCount = $fulfillmentOrderIds
-                    ->filter(function ($orderId) use ($unfinishedItems) {
-                        return $unfinishedItems->contains(function (CartItem $item) use ($orderId) {
-                            $sharedOrderIds = is_array($item->shared_order_ids) ? $item->shared_order_ids : [];
-
-                            return (string) $item->order_id === (string) $orderId
-                                || in_array((int) $orderId, array_map('intval', $sharedOrderIds), true);
-                        });
-                    })
-                    ->count();
-
-                return [
-                    'outcome' => 'unfinished_items',
-                    'paymentSummary' => $paymentSummary,
-                    'fulfillmentSummary' => [
-                        'unfinishedOrdersCount' => $unfinishedOrderCount,
-                        'unservedItemsCount' => $unfinishedItems->count(),
-                    ],
-                ];
-            }
-
-            if ($paymentSummary['remainingAmount'] > 0 && ! ($data['force'] ?? false)) {
-                return [
-                    'outcome' => 'unpaid_balance',
-                    'paymentSummary' => $paymentSummary,
-                ];
-            }
-
-            Order::whereIn('table_scan_session_id', $sessions->pluck('id'))
-                ->whereNotIn('status', Order::TERMINAL_STATUSES)
-                ->update([
-                    'status' => 'cancelled',
-                    'cancelled_at' => now(),
-                    'cancelled_reason' => 'Table session closed by staff.',
-                ]);
-
-            TableScanSession::whereIn('id', $sessions->pluck('id'))->update([
-                'status' => 'closed',
-                'closed_at' => now(),
-            ]);
-
-            return [
-                'outcome' => 'closed',
-                'sessions' => $sessions,
-                'paymentSummary' => $paymentSummary,
-            ];
+            return $this->closeScanSessionGroup($sessions, $data['force'] ?? false, 'Table session closed by staff.');
         });
+
 
         if ($result['outcome'] === 'not_found') {
             return response()->json(['message' => 'No active table session found.'], 404);
@@ -753,6 +684,173 @@ class TableController extends Controller
         $vendorId = $actor instanceof TeamMember ? $actor->vendor_id : $actor->id;
 
         return "vendor:{$vendorId}:table:{$tableId}";
+    }
+
+
+    /**
+     * POST /api/vendor/{vendorId}/scan-sessions/{sessionId}/close
+     *
+     * Closes a pickup or takeaway session. A table's Close button resolves its
+     * sessions from the table; an off-premise group has no table, so it is
+     * addressed by session id instead — the waiter's Close used to reject it
+     * outright with "No active table session found".
+     */
+    public function closeScanSession(Request $request, string $vendorId, string $sessionId): JsonResponse
+    {
+        $data = $request->validate([
+            'force' => ['sometimes', 'boolean'],
+        ]);
+
+        $vendor = $this->resolveVendor($vendorId);
+        $this->authorizeVendor($request, $vendor);
+
+        $session = TableScanSession::where('vendor_id', $vendor->id)
+            ->where('status', 'active')
+            ->whereKey($sessionId)
+            ->first();
+
+        if (! $session || ! $this->orderSessions->isOffPremise($session)) {
+            return response()->json(['message' => 'No active order session found.'], 404);
+        }
+
+        $result = DB::transaction(function () use ($session, $data) {
+            // The whole PIN group goes, exactly as a table closes every session
+            // sitting at it — one guest closing leaves their mates stranded.
+            $sessions = TableScanSession::whereIn('id', $this->orderSessions->groupSessionIds($session))
+                ->where('status', 'active')
+                ->lockForUpdate()
+                ->get();
+
+            return $this->closeScanSessionGroup($sessions, $data['force'] ?? false, 'Order session closed by staff.');
+        });
+
+        if ($result['outcome'] === 'not_found') {
+            return response()->json(['message' => 'No active order session found.'], 404);
+        }
+
+        if ($result['outcome'] === 'unfinished_items') {
+            return response()->json([
+                'message' => 'This order still has unfinished items.',
+                'code' => 'unfinished_items',
+                'fulfillmentSummary' => $result['fulfillmentSummary'],
+                'paymentSummary' => $result['paymentSummary'],
+            ], 409);
+        }
+
+        if ($result['outcome'] === 'unpaid_balance') {
+            return response()->json([
+                'message' => 'This order still has an unpaid balance.',
+                'code' => 'unpaid_balance',
+                'paymentSummary' => $result['paymentSummary'],
+            ], 409);
+        }
+
+        NotificationService::notifyCustomers(
+            $result['sessions']->pluck('customer_id')->filter()->unique()->values(),
+            'session_expire',
+            'Your order session has been closed.',
+            $vendor->id,
+            ['template' => 'session.closed'],
+        );
+
+        return response()->json([
+            'message' => 'Order session closed',
+            'closedSessionIds' => $result['sessions']->pluck('id')->map(fn ($id) => (string) $id)->values(),
+            'paymentSummary' => $result['paymentSummary'],
+        ]);
+    }
+
+    /**
+     * The close rules, shared by the table and off-premise entry points.
+     *
+     * Only session resolution differs between them: a table closes every
+     * active session at that table, a pickup group closes the session and its
+     * PIN-mates. The rules — nothing unserved, nothing unpaid unless forced —
+     * must not fork, or staff get two different answers for the same table.
+     *
+     * @param  \Illuminate\Support\Collection<int, TableScanSession>  $sessions
+     * @return array<string, mixed>
+     */
+    private function closeScanSessionGroup(
+        \Illuminate\Support\Collection $sessions,
+        bool $force,
+        string $cancelReason,
+    ): array {
+        if ($sessions->isEmpty()) {
+            return ['outcome' => 'not_found'];
+        }
+
+        $orders = Order::whereIn('table_scan_session_id', $sessions->pluck('id'))
+            ->whereNotIn('status', ['cancelled', 'draft'])
+            ->lockForUpdate()
+            ->get();
+
+        $paymentSummary = $this->paymentSummary($orders);
+        $fulfillmentOrderIds = $orders->pluck('id')->values();
+
+        $unfinishedItems = collect();
+
+        if ($fulfillmentOrderIds->isNotEmpty()) {
+            $unfinishedItems = CartItem::query()
+                ->where(function ($query) use ($fulfillmentOrderIds) {
+                    $query->whereIn('order_id', $fulfillmentOrderIds);
+
+                    foreach ($fulfillmentOrderIds as $orderId) {
+                        $query->orWhereJsonContains('shared_order_ids', $orderId);
+                    }
+                })
+                ->whereNull('served_at')
+                ->lockForUpdate()
+                ->get(['id', 'order_id', 'shared_order_ids']);
+        }
+
+        if ($unfinishedItems->isNotEmpty()) {
+            $unfinishedOrderCount = $fulfillmentOrderIds
+                ->filter(function ($orderId) use ($unfinishedItems) {
+                    return $unfinishedItems->contains(function (CartItem $item) use ($orderId) {
+                        $sharedOrderIds = is_array($item->shared_order_ids) ? $item->shared_order_ids : [];
+
+                        return (string) $item->order_id === (string) $orderId
+                            || in_array((int) $orderId, array_map('intval', $sharedOrderIds), true);
+                    });
+                })
+                ->count();
+
+            return [
+                'outcome' => 'unfinished_items',
+                'paymentSummary' => $paymentSummary,
+                'fulfillmentSummary' => [
+                    'unfinishedOrdersCount' => $unfinishedOrderCount,
+                    'unservedItemsCount' => $unfinishedItems->count(),
+                ],
+            ];
+        }
+
+        if ($paymentSummary['remainingAmount'] > 0 && ! $force) {
+            return [
+                'outcome' => 'unpaid_balance',
+                'paymentSummary' => $paymentSummary,
+            ];
+        }
+
+        Order::whereIn('table_scan_session_id', $sessions->pluck('id'))
+            ->whereNotIn('status', Order::TERMINAL_STATUSES)
+            ->update([
+                'status' => 'cancelled',
+                'cancelled_at' => now(),
+                'cancelled_reason' => $cancelReason,
+            ]);
+
+        TableScanSession::whereIn('id', $sessions->pluck('id'))->update([
+            'status' => 'closed',
+            'closed_at' => now(),
+        ]);
+
+        return [
+            'outcome' => 'closed',
+            'sessions' => $sessions,
+            'paymentSummary' => $paymentSummary,
+        ];
     }
 
     private function paymentSummary(Collection $orders): array
