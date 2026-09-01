@@ -2167,7 +2167,7 @@ class TableCartTest extends TestCase
             'time_format' => '12h',
         ]);
 
-        CartItem::create([
+        $cartItem = CartItem::create([
             'table_scan_session_id' => $this->session->id,
             'menu_item_id' => $this->menuItem->id,
             'quantity' => 2,
@@ -2187,6 +2187,10 @@ class TableCartTest extends TestCase
             'payment_pending' => true,
             'payment_received' => false,
         ]);
+
+        // A pending draft has always had its rows bound, the way every caller
+        // that sets payment_pending does through freezeDraftItems.
+        $cartItem->update(['order_id' => $order->id]);
 
         $response = $this->withHeaders($this->headers)
             ->getJson("/api/customer/orders/{$order->order_public_id}/tracking");
@@ -2285,10 +2289,14 @@ class TableCartTest extends TestCase
         $this->assertSame($otherOrder->id, $sharedItems[$ownedShared->id]['shared_with'][0]['order_id']);
         $this->assertSame($other->id, $sharedItems[$ownedShared->id]['shared_with'][0]['customer_id']);
         $this->assertSame('Bob Jones', $sharedItems[$ownedShared->id]['shared_with'][0]['customer_name']);
+        $this->assertTrue($sharedItems[$ownedShared->id]['owned_by_me']);
         $this->assertSame(10.45, $sharedItems[$sharedInto->id]['my_share']);
-        $this->assertSame($order->id, $sharedItems[$sharedInto->id]['shared_with'][0]['order_id']);
-        $this->assertSame($this->customer->id, $sharedItems[$sharedInto->id]['shared_with'][0]['customer_id']);
-        $this->assertSame('Alice Smith', $sharedItems[$sharedInto->id]['shared_with'][0]['customer_name']);
+        // A line Alice only bought into names Bob, who ordered it. Naming Alice
+        // back to herself read as "shared with me".
+        $this->assertFalse($sharedItems[$sharedInto->id]['owned_by_me']);
+        $this->assertSame($other->id, $sharedItems[$sharedInto->id]['shared_with'][0]['customer_id']);
+        $this->assertSame('Bob Jones', $sharedItems[$sharedInto->id]['shared_with'][0]['customer_name']);
+        $this->assertCount(1, $sharedItems[$sharedInto->id]['shared_with']);
     }
 
     // ----------------------------------------------------------------

@@ -20,6 +20,7 @@ use App\Services\MediaService;
 use App\Services\MenuCustomizationService;
 use App\Services\NotificationService;
 use App\Services\OrderSessionService;
+use App\Services\PaymentGuardService;
 use App\Services\PaymentMethodDetailsService;
 use App\Services\StaffCommandBus;
 use App\Services\TableStatePatchService;
@@ -1433,28 +1434,6 @@ class OrderController extends Controller
         ];
     }
 
-    /**
-     * The identity staff group an order under: the PIN party for off-premise,
-     * the table for dine-in. Null when neither applies, so clients fall back to
-     * the order itself rather than lumping unrelated orders together.
-     */
-    private function sessionGroupKeyFor(Order $order): ?string
-    {
-        $session = $order->tableScanSession;
-
-        if (! $session) {
-            return null;
-        }
-
-        if ($this->orderSessions->isOffPremise($session)) {
-            return $session->pin
-                ? "offpremise:{$session->vendor_id}:{$session->type}:{$session->pin}"
-                : "session:{$session->id}";
-        }
-
-        return $session->restaurant_table_id ? "table:{$session->restaurant_table_id}" : null;
-    }
-
     private function formatOrder(Order $order, ?Collection $cartItemCache = null): array
     {
         $vendor = $order->relationLoaded('vendor') ? $order->vendor : ($order->vendor ?? null);
@@ -1604,7 +1583,11 @@ class OrderController extends Controller
             // several guests at that table each have their own scan session —
             // an off-premise group is the same thing keyed by PIN, so grouping
             // by session split one pickup party across two cards.
-            'sessionGroupKey' => $this->sessionGroupKeyFor($order),
+            'sessionGroupKey' => $this->orderSessions->sessionGroupKeyFor($order),
+            // The party's PIN. Dine-in carries it on the session group object;
+            // off-premise orders had nowhere to read it from, so the waiter's
+            // PIN cell rendered a dash on every pickup.
+            'pin' => $order->tableScanSession?->pin,
             'course' => $order->course,
             'placedBy' => $order->placed_by ?? ($order->customer_id ? 'customer' : 'waiter'),
             'waiterConfirmed' => (bool) $order->waiter_confirmed,
@@ -1637,6 +1620,11 @@ class OrderController extends Controller
             'total' => $total,
             'tip' => (float) ($order->tip_amount ?? 0),
             'tipAmount' => (float) ($order->tip_amount ?? 0),
+            // The fee already folded into `total`. `totals.service_fee` is
+            // recomputed from the linked lines, so it bills a shared plate at
+            // full price to everyone splitting it; this is the order's own.
+            'serviceFee' => round((float) ($order->service_fee ?? 0), 2),
+            'service_fee' => round((float) ($order->service_fee ?? 0), 2),
             'taxGroups' => $taxGroups,
             'tax_groups' => $taxGroups,
             'totals' => $totals,
@@ -1677,25 +1665,28 @@ class OrderController extends Controller
 
         $orderIds = $orders->pluck('id')->all();
 
-        $draftSessionIds = $orders
-            ->filter(fn (Order $o) => $o->status === 'draft' && $o->table_scan_session_id)
-            ->pluck('table_scan_session_id')
-            ->unique()
-            ->all();
-
-        $nonDraftOrderIds = $orders
-            ->reject(fn (Order $o) => $o->status === 'draft' && $o->table_scan_session_id)
-            ->pluck('id')
-            ->all();
+        // Only the newest editable draft claims loose session rows. A locked
+        // draft (including one waiting for cash) owns rows frozen to its own
+        // order_id instead; treating every draft as the loose-row owner both
+        // hid its frozen items and let later cart additions leak into it.
+        $latestEditableDraftIds = $orders
+            ->filter(fn (Order $order) => $order->status === Order::STATUS_DRAFT
+                && ! PaymentGuardService::orderIsCartLocked($order)
+                && $order->parent_order_id === null
+                && $order->table_scan_session_id)
+            ->groupBy('table_scan_session_id')
+            ->map(fn (Collection $drafts) => (int) $drafts->max('id'));
+        $unboundDraftOrderIds = $latestEditableDraftIds->values()->flip();
+        $unboundDraftSessionIds = $latestEditableDraftIds->keys()->all();
 
         $allItems = CartItem::with('menuItem:id,name,price,has_discount,discounted_price,image_url,menu_category_id,vat_rate,tax_category,paid_addons,free_addons,removable_items', 'menuItem.category.masterCategory')
-            ->where(function ($q) use ($nonDraftOrderIds, $draftSessionIds, $orderIds) {
-                if (! empty($nonDraftOrderIds)) {
-                    $q->orWhereIn('order_id', $nonDraftOrderIds);
+            ->where(function ($q) use ($unboundDraftSessionIds, $orderIds) {
+                if (! empty($orderIds)) {
+                    $q->whereIn('order_id', $orderIds);
                 }
-                if (! empty($draftSessionIds)) {
-                    $q->orWhere(function ($sub) use ($draftSessionIds) {
-                        $sub->whereIn('table_scan_session_id', $draftSessionIds)
+                if (! empty($unboundDraftSessionIds)) {
+                    $q->orWhere(function ($sub) use ($unboundDraftSessionIds) {
+                        $sub->whereIn('table_scan_session_id', $unboundDraftSessionIds)
                             ->whereNull('order_id');
                     });
                 }
@@ -1707,15 +1698,15 @@ class OrderController extends Controller
 
         $cache = collect();
         foreach ($orders as $order) {
-            $items = $allItems->filter(function (CartItem $ci) use ($order) {
-                if ($order->status === 'draft' && $order->table_scan_session_id) {
-                    if ($ci->table_scan_session_id == $order->table_scan_session_id && $ci->order_id === null) {
-                        return true;
-                    }
-                } else {
-                    if ($ci->order_id == $order->id) {
-                        return true;
-                    }
+            $items = $allItems->filter(function (CartItem $ci) use ($order, $unboundDraftOrderIds) {
+                if ($ci->order_id == $order->id) {
+                    return true;
+                }
+
+                if ($unboundDraftOrderIds->has((int) $order->id)
+                    && $ci->table_scan_session_id == $order->table_scan_session_id
+                    && $ci->order_id === null) {
+                    return true;
                 }
 
                 $shared = is_array($ci->shared_order_ids) ? $ci->shared_order_ids : [];
@@ -1733,13 +1724,13 @@ class OrderController extends Controller
     {
         return CartItem::with('menuItem:id,name,price,has_discount,discounted_price,image_url,menu_category_id,vat_rate,tax_category,paid_addons,free_addons,removable_items', 'menuItem.category.masterCategory')
             ->where(function ($q) use ($order) {
-                if ($order->status === 'draft' && $order->table_scan_session_id) {
-                    $q->where(function ($owned) use ($order) {
+                $q->where('order_id', $order->id);
+
+                if (PaymentGuardService::orderClaimsUnboundItems($order)) {
+                    $q->orWhere(function ($owned) use ($order) {
                         $owned->where('table_scan_session_id', $order->table_scan_session_id)
                             ->whereNull('order_id');
                     });
-                } else {
-                    $q->where('order_id', $order->id);
                 }
 
                 $q->orWhereJsonContains('shared_order_ids', $order->id);

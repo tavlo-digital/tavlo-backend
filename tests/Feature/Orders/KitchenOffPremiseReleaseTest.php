@@ -15,6 +15,7 @@ use App\Models\TableScanSession;
 use App\Models\TeamMember;
 use App\Models\Vendor;
 use App\Services\KitchenOrderReleaseService;
+use App\Services\NotificationService;
 use Carbon\Carbon;
 use Carbon\CarbonInterface;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -277,6 +278,98 @@ class KitchenOffPremiseReleaseTest extends TestCase
             [(string) $stale->id, (string) $scheduled->id],
             $returnedIds,
         );
+    }
+
+    public function test_the_realtime_push_carries_the_same_party_key_as_the_orders_list(): void
+    {
+        // Two guests on one pickup PIN. Staff see one card per party, so both
+        // the list and the live push have to name that party the same way.
+        $pin = '7086';
+        $mate = Customer::factory()->create();
+        $orders = [];
+
+        foreach ([$this->customer, $mate] as $customer) {
+            $session = TableScanSession::create([
+                'vendor_id' => $this->vendor->id,
+                'restaurant_table_id' => null,
+                'customer_id' => $customer->id,
+                'type' => 'pickup',
+                'pin' => $pin,
+                'status' => 'active',
+                'scanned_at' => now(),
+            ]);
+            $order = Order::create([
+                'order_public_id' => 'ord-'.uniqid(),
+                'customer_id' => $customer->id,
+                'vendor_id' => $this->vendor->id,
+                'table_scan_session_id' => $session->id,
+                'status' => Order::STATUS_CONFIRMED,
+                'confirmed_at' => now(),
+                'kitchen_released_at' => now(),
+                'amount' => 12.50,
+                'currency' => 'EUR',
+                'payment_method' => 'stripe',
+                'payment_received' => true,
+                'payment_confirmed_at' => now(),
+                'order_type' => 'pickup',
+            ]);
+            CartItem::create([
+                'table_scan_session_id' => $session->id,
+                'order_id' => $order->id,
+                'menu_item_id' => $this->menuItem->id,
+                'quantity' => 1,
+                'received_at' => now(),
+            ]);
+            $orders[] = $order;
+        }
+
+        $listed = collect(
+            $this->getJson($this->ordersUrl(), $this->headers($this->member('waiter')))
+                ->assertOk()
+                ->json('takeaway')
+        )->keyBy('id');
+
+        $expected = "offpremise:{$this->vendor->id}:pickup:{$pin}";
+
+        foreach ($orders as $order) {
+            $this->assertSame($expected, $listed[(string) $order->id]['sessionGroupKey']);
+
+            // Without this the order arrived live with no party, and the
+            // dashboard opened a second card beside the one already on screen.
+            $this->assertSame(
+                $expected,
+                NotificationService::operationalOrderSnapshot($order->fresh())['sessionGroupKey'],
+            );
+        }
+    }
+
+    public function test_only_a_draft_with_a_cash_request_reaches_the_waiter(): void
+    {
+        [$quiet] = $this->offPremiseOrder(null);
+        $quiet->update(['status' => Order::STATUS_DRAFT, 'confirmed_at' => null]);
+
+        [$collecting] = $this->offPremiseOrder(null);
+        $collecting->update([
+            'status' => Order::STATUS_DRAFT,
+            'confirmed_at' => null,
+            'payment_method' => 'cash',
+            'payment_pending' => true,
+            'payment_received' => false,
+        ]);
+
+        $listed = collect(
+            $this->getJson($this->ordersUrl(), $this->headers($this->member('waiter')))
+                ->assertOk()
+                ->json('takeaway')
+        )->keyBy('id');
+
+        // A cart still being filled is not the waiter's business; one waiting
+        // on cash is the only thing they can act on.
+        $this->assertTrue($listed->has((string) $collecting->id));
+        $this->assertFalse($listed->has((string) $quiet->id));
+        // Checkout freezes the cart row onto the draft. The waiter still needs
+        // that bound line to know what they are collecting for.
+        $this->assertCount(1, $listed[(string) $collecting->id]['items']);
     }
 
     /** @return array{Order, CartItem} */

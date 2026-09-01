@@ -11,6 +11,7 @@ use App\Models\Vendor;
 use App\Services\LocaleService;
 use App\Services\MediaService;
 use App\Services\MenuCustomizationService;
+use App\Services\PaymentGuardService;
 use App\Services\PaymentMethodDetailsService;
 use App\Services\TaxCalculationService;
 use App\Services\VendorDateTimeService;
@@ -941,11 +942,18 @@ class OrderHistoryController extends Controller
         $sharedItems = $ownedSharedItems->merge($sharedIntoItems)->values();
         $ordersById = $this->sharingOrdersById($sharedItems);
         $sessionCustomerNames = $this->sessionCustomerNames($ordersById);
+        $sessionParticipants = $this->cartItemSessionParticipants($sharedItems);
 
         $allItems = $ownedItems->merge($sharedIntoItems);
         $taxGroups = TaxCalculationService::computeTaxGroups($allItems, $vendorCountry, true);
         $totals = TaxCalculationService::computeTotals($taxGroups, 0);
         $totals = $this->applyStoredServiceFee($totals, $taxGroups, $order);
+
+        // The tip sits outside the order amount, so a page that stops at
+        // `total_amount` shows less than the guest was charged.
+        $tipAmount = round((float) ($order->tip_amount ?? 0), 2);
+        $totals['total_tips'] = $tipAmount;
+        $totals['grand_total'] = round(((float) ($totals['grand_total'] ?? 0)) + $tipAmount, 2);
 
         return [
             'id' => $order->id,
@@ -954,6 +962,8 @@ class OrderHistoryController extends Controller
             'status' => $order->status,
             'estimated_delivery_time' => $this->estimatedDeliveryTime($order),
             'total_amount' => round((float) $order->amount, 2),
+            'tip_amount' => $tipAmount,
+            'amount_charged' => round((float) $order->amount + $tipAmount, 2),
             'currency' => $order->currency ?? $order->vendor?->currency,
             'order_type' => $order->order_type,
             'payment_method' => $order->payment_method,
@@ -966,7 +976,7 @@ class OrderHistoryController extends Controller
                 ->values()
                 ->all(),
             'shared_items' => $sharedItems
-                ->map(fn (CartItem $item) => $this->formatTrackingSharedItem($item, $ordersById, $sessionCustomerNames, $vendorCountry, $vendor, $locale))
+                ->map(fn (CartItem $item) => $this->formatTrackingSharedItem($item, $ordersById, $sessionCustomerNames, $vendorCountry, $vendor, $locale, $order, $sessionParticipants))
                 ->values()
                 ->all(),
             'tax_groups' => $this->translateTaxGroups($taxGroups, $vendorCountry, $locale),
@@ -1015,29 +1025,66 @@ class OrderHistoryController extends Controller
         return TaxCalculationService::cartItemUnitPriceGross($item, $vendorCountry);
     }
 
-    private function formatTrackingSharedItem(CartItem $item, Collection $ordersById, Collection $sessionCustomerNames, string $vendorCountry = 'AT', ?Vendor $vendor = null, string $locale = 'en'): array
-    {
+    private function formatTrackingSharedItem(
+        CartItem $item,
+        Collection $ordersById,
+        Collection $sessionCustomerNames,
+        string $vendorCountry = 'AT',
+        ?Vendor $vendor = null,
+        string $locale = 'en',
+        ?Order $viewingOrder = null,
+        ?Collection $sessionParticipants = null,
+    ): array {
         $payload = $this->formatTrackingItem($item, $vendorCountry, $vendor, $locale);
         $orderIds = array_values(array_map('intval', is_array($item->shared_order_ids) ? $item->shared_order_ids : []));
         $sharedBetween = 1 + count($orderIds);
+        $viewingSessionId = $viewingOrder ? (int) $viewingOrder->table_scan_session_id : null;
+        $ownedByMe = $viewingSessionId !== null
+            && (int) $item->table_scan_session_id === $viewingSessionId;
 
         $payload['shared_between'] = $sharedBetween;
-        $payload['shared_with'] = array_values(array_filter(array_map(function (int $orderId) use ($ordersById, $sessionCustomerNames) {
+        $payload['owned_by_me'] = $ownedByMe;
+
+        // Everyone splitting the plate except the viewer. A borrowed line has to
+        // name whoever ordered it; listing the viewer back to themselves made it
+        // read "shared with <me>".
+        $sharedWith = collect();
+
+        if (! $ownedByMe) {
+            $owner = $sessionParticipants?->get((int) $item->table_scan_session_id);
+
+            if ($owner) {
+                $sharedWith->push([
+                    'order_id' => $item->order_id ? (int) $item->order_id : null,
+                    'customer_id' => $owner['customer_id'],
+                    'customer_name' => $owner['customer_name'],
+                ]);
+            }
+        }
+
+        $viewingOrderId = $viewingOrder ? (int) $viewingOrder->id : null;
+
+        foreach ($orderIds as $orderId) {
+            if ($orderId === $viewingOrderId) {
+                continue;
+            }
+
             $order = $ordersById->get($orderId);
 
             if (! $order) {
-                return null;
+                continue;
             }
 
             $customer = $order->tableScanSession?->customer ?? $order->customer;
-            $customerName = $sessionCustomerNames->get($order->table_scan_session_id);
 
-            return [
+            $sharedWith->push([
                 'order_id' => $order->id,
                 'customer_id' => $customer?->id,
-                'customer_name' => $customerName,
-            ];
-        }, $orderIds)));
+                'customer_name' => $sessionCustomerNames->get($order->table_scan_session_id),
+            ]);
+        }
+
+        $payload['shared_with'] = $sharedWith->values()->all();
         $payload['my_share'] = round($payload['line_total'] / $sharedBetween, 2);
 
         return $payload;
@@ -1051,14 +1098,21 @@ class OrderHistoryController extends Controller
 
         return CartItem::with(['menuItem' => fn ($query) => $query->withTrashed()->select('id', 'name', 'price', 'has_discount', 'discounted_price', 'image_url', 'vat_rate', 'tax_category', 'paid_addons', 'free_addons', 'removable_items', 'translations')])
             ->where(function (Builder $query) use ($order) {
-                if ($order->status === 'draft') {
-                    $query->where('table_scan_session_id', $order->table_scan_session_id)
-                        ->whereNull('order_id');
-
-                    return;
-                }
-
+                // Items bound to the order. A draft binds them the moment it
+                // locks — requesting cash does exactly that — so looking only
+                // for unbound rows emptied the order the instant a guest asked
+                // to pay for it.
                 $query->where('order_id', $order->id);
+
+                // An open draft also owns its session's still-unbound rows. A
+                // locked one must not: those belong to whatever draft comes
+                // next.
+                if ($order->status === Order::STATUS_DRAFT && ! PaymentGuardService::orderIsCartLocked($order)) {
+                    $query->orWhere(function (Builder $unbound) use ($order) {
+                        $unbound->where('table_scan_session_id', $order->table_scan_session_id)
+                            ->whereNull('order_id');
+                    });
+                }
             })
             ->orderBy('id')
             ->get();
@@ -1097,6 +1151,40 @@ class OrderHistoryController extends Controller
             ->whereIn('id', $orderIds->all())
             ->get()
             ->keyBy('id');
+    }
+
+    /**
+     * Who each shared line belongs to, keyed by the session holding it.
+     *
+     * Resolved from the session rather than the order because a line that has
+     * not been drafted yet carries no `order_id`, and the guest sharing it
+     * still needs a name to see.
+     *
+     * @return Collection<int, array{customer_id: int|null, customer_name: string}>
+     */
+    private function cartItemSessionParticipants(Collection $items): Collection
+    {
+        $sessionIds = $items
+            ->map(fn (CartItem $item) => (int) $item->table_scan_session_id)
+            ->filter()
+            ->unique()
+            ->values();
+
+        if ($sessionIds->isEmpty()) {
+            return collect();
+        }
+
+        return TableScanSession::with('customer:id,first_name,last_name')
+            ->whereIn('id', $sessionIds->all())
+            ->get()
+            ->mapWithKeys(fn (TableScanSession $session) => [
+                (int) $session->id => [
+                    'customer_id' => $session->customer?->id,
+                    'customer_name' => $session->customer
+                        ? (trim($session->customer->first_name.' '.$session->customer->last_name) ?: 'Guest')
+                        : 'Guest',
+                ],
+            ]);
     }
 
     private function sessionCustomerNames(Collection $ordersById): Collection

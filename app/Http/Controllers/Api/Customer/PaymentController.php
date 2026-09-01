@@ -1639,11 +1639,33 @@ class PaymentController extends Controller
         $coveredOrderIds = $this->paymentOrders($payment)->pluck('id');
 
         if ($coveredOrderIds->isNotEmpty()) {
+            // An order can be under more than one payment — a card attempt on
+            // top of a standing cash request, say. Clearing the flag for all of
+            // them unlocked orders another live payment still holds, and the
+            // cash request vanished from the waiter's screen while the guest
+            // was still told one was open.
+            $stillHeldIds = PaymentGuardService::activePaymentsCovering($coveredOrderIds)
+                ->reject(fn (OrderPayment $other) => (int) $other->id === (int) $payment->id)
+                ->flatMap(fn (OrderPayment $other) => $this->paymentOrders($other)->pluck('id'))
+                ->map(fn ($id) => (int) $id)
+                ->unique();
+
             Order::whereIn('id', $coveredOrderIds)
                 ->where('payment_received', false)
+                ->whereNotIn('id', $stillHeldIds->all())
                 ->update([
                     'payment_pending' => false,
                     // The checkout that took the hold is over either way.
+                    'checkout_hold_by' => null,
+                    'checkout_hold_at' => null,
+                ]);
+
+            // The hold belongs to the checkout that is ending, so it goes even
+            // where the lock stays.
+            Order::whereIn('id', $coveredOrderIds)
+                ->where('payment_received', false)
+                ->whereIn('id', $stillHeldIds->all())
+                ->update([
                     'checkout_hold_by' => null,
                     'checkout_hold_at' => null,
                 ]);
@@ -1875,23 +1897,48 @@ class PaymentController extends Controller
         }
 
         if (in_array($status, ['failed', 'canceled'], true)) {
+            // A Stripe attempt and a cash request can cover the same order.
+            // This payment has already been moved to a terminal status above,
+            // so anything still returned here is another live lock that must
+            // survive this failure.
+            $stillHeldIds = PaymentGuardService::activePaymentsCovering($orders->pluck('id'))
+                ->flatMap(fn (OrderPayment $activePayment) => $this->paymentOrders($activePayment)->pluck('id'))
+                ->map(fn ($id) => (int) $id)
+                ->unique();
+
             foreach ($orders as $order) {
-                $order->update([
-                    'payment_method' => 'stripe',
-                    'transaction_id' => $payment->stripe_payment_intent_id,
-                    'payment_pending' => false,
+                $stillHeld = $stillHeldIds->contains((int) $order->id);
+                $updates = [
+                    'payment_pending' => $stillHeld,
                     'checkout_hold_by' => null,
                     'checkout_hold_at' => null,
                     'payment_received' => false,
-                    'payment_note' => 'Stripe payment was not completed.',
-                ]);
+                ];
+
+                // Do not overwrite the method or note belonging to the live
+                // payment. In particular, a late failure for an older card
+                // attempt must leave a standing cash request as cash.
+                if (! $stillHeld) {
+                    $updates = [
+                        ...$updates,
+                        'payment_method' => 'stripe',
+                        'transaction_id' => $payment->stripe_payment_intent_id,
+                        'payment_note' => 'Stripe payment was not completed.',
+                    ];
+                }
+
+                $order->update($updates);
             }
 
             // A decline unlocks the order exactly as pressing Back does, so it
             // has to fold the temporary order back too. Only the explicit exits
             // used to merge, which left a card failure — the one exit the
             // customer never chose — showing the table two order cards forever.
-            $this->mergeEditableSessions($orders->pluck('table_scan_session_id'));
+            $this->mergeEditableSessions(
+                $orders
+                    ->reject(fn (Order $order) => $stillHeldIds->contains((int) $order->id))
+                    ->pluck('table_scan_session_id'),
+            );
 
             return;
         }

@@ -480,6 +480,10 @@ class NotificationService
                 default => null,
             },
             'tableScanSessionId' => $order->table_scan_session_id ? (string) $order->table_scan_session_id : null,
+            // Staff group cards by the party, not the order. Leaving it out
+            // meant an order that arrived live opened a second card beside the
+            // one its party already had, until the dashboard was reloaded.
+            'sessionGroupKey' => app(OrderSessionService::class)->sessionGroupKeyFor($order),
             'placedBy' => $order->placed_by ?? ($order->customer_id ? 'customer' : 'waiter'),
             'customer' => $order->customer ? [
                 'id' => (string) $order->customer->id,

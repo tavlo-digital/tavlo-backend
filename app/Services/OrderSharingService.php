@@ -7,6 +7,7 @@ use App\Models\Order;
 use App\Models\TableScanSession;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class OrderSharingService
@@ -41,10 +42,20 @@ class OrderSharingService
             $vendorCountry,
             $serviceFeeRate,
         ) {
-            $order = Order::whereKey($orderId)
-                ->where('customer_id', $customerId)
-                ->lockForUpdate()
-                ->first();
+            $order = $orderId > 0
+                ? Order::whereKey($orderId)
+                    ->where('customer_id', $customerId)
+                    ->lockForUpdate()
+                    ->first()
+                : null;
+
+            // A guest who has ordered nothing themselves still has a bill to
+            // put a share on — they simply have no order yet. The client sends
+            // 0 to say so, and refusing it made "tap an item to share its cost"
+            // silently do nothing for exactly the person most likely to use it.
+            if (! $order && $orderId === 0 && $sharedItemId) {
+                $order = $this->resolveOrCreateShareOrder($customerId, $session);
+            }
 
             abort_unless($order, 404, 'Order not found.');
 
@@ -80,6 +91,16 @@ class OrderSharingService
             foreach ($state['orders'] as $affectedOrder) {
                 if ($affectedOrder->parent_order_id && ShareOrderService::deleteIfEmpty($affectedOrder)) {
                     $removedOrderIds->push((int) $affectedOrder->id);
+
+                    continue;
+                }
+
+                // An order minted purely to hold a share has nothing left once
+                // that share is dropped. Leaving it behind puts an empty €0.00
+                // card under the guest's name, which reads as a duplicate order
+                // they never placed.
+                if ($this->deleteIfShareOnlyAndEmpty($affectedOrder)) {
+                    $removedOrderIds->push((int) $affectedOrder->id);
                 }
             }
             $removedOrderIds = $removedOrderIds->unique()->values();
@@ -104,6 +125,81 @@ class OrderSharingService
                 'removed_order_ids' => $removedOrderIds->all(),
             ];
         });
+    }
+
+    /**
+     * Remove a main draft that exists only because a share was put on it, and
+     * no longer holds anything at all.
+     *
+     * Deliberately narrow: it must be an unpaid draft with no items of its own,
+     * no items shared into it, and no loose cart rows in the session that it
+     * would otherwise claim. Anything else is a real order.
+     */
+    private function deleteIfShareOnlyAndEmpty(Order $order): bool
+    {
+        if ($order->parent_order_id
+            || $order->status !== Order::STATUS_DRAFT
+            || $order->payment_received
+            || $order->payment_pending) {
+            return false;
+        }
+
+        $hasOwnItems = CartItem::where('order_id', $order->id)->exists();
+        $hasShares = CartItem::whereJsonContains('shared_order_ids', $order->id)->exists();
+        $hasLooseSessionItems = $order->table_scan_session_id
+            && CartItem::where('table_scan_session_id', $order->table_scan_session_id)
+                ->whereNull('order_id')
+                ->exists();
+
+        if ($hasOwnItems || $hasShares || $hasLooseSessionItems) {
+            return false;
+        }
+
+        $order->delete();
+
+        return true;
+    }
+
+    /**
+     * The order a guest shares into, created empty when they have none.
+     *
+     * Prefers an existing open order so a guest who already has one never ends
+     * up with two. A locked order is skipped: its amount is frozen and a new
+     * share must not move it.
+     */
+    private function resolveOrCreateShareOrder(int $customerId, TableScanSession $session): Order
+    {
+        $existing = Order::where('customer_id', $customerId)
+            ->where('table_scan_session_id', $session->id)
+            ->whereIn('status', [Order::STATUS_DRAFT, Order::STATUS_CONFIRMED])
+            ->where('payment_received', false)
+            ->where('payment_pending', false)
+            ->whereNull('parent_order_id')
+            ->lockForUpdate()
+            ->latest('id')
+            ->first();
+
+        if ($existing) {
+            return $existing;
+        }
+
+        $session->loadMissing('vendor');
+
+        return Order::create([
+            'order_public_id' => 'ord-'.Str::random(12),
+            'customer_id' => $customerId,
+            'vendor_id' => $session->vendor_id,
+            'table_scan_session_id' => $session->id,
+            'status' => Order::STATUS_DRAFT,
+            'draft_at' => now(),
+            'amount' => 0,
+            'currency' => $session->vendor?->currency ?? 'EUR',
+            'payment_pending' => false,
+            'payment_received' => false,
+            'order_type' => in_array($session->type, ['pickup', 'takeaway'], true)
+                ? $session->type
+                : 'dine-in',
+        ]);
     }
 
     private function share(

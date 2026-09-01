@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Models\OrderPayment;
+use App\Services\PaymentGuardService;
 use App\Services\StripePaymentService;
 use Illuminate\Console\Command;
 
@@ -27,6 +28,12 @@ class ReconcileStalePayments extends Command
         $reconciled = 0;
 
         foreach ($stalePayments as $payment) {
+            // A cash request carries no intent. It is not Stripe's to reconcile,
+            // and asking Stripe about a null id only threw once a minute.
+            if (! $payment->stripe_payment_intent_id) {
+                continue;
+            }
+
             try {
                 $intent = $stripe->retrievePaymentIntent($payment->stripe_payment_intent_id);
             } catch (\Throwable $e) {
@@ -68,7 +75,24 @@ class ReconcileStalePayments extends Command
                     'failed_at' => $payment->failed_at ?? now(),
                 ]);
 
+                // The same order can be under a card attempt and a standing cash
+                // request. This payment is terminal now, so whatever is still
+                // returned here is another live lock that has to survive it —
+                // otherwise this command quietly unlocked a cash request every
+                // minute and took the order off the waiter's screen.
+                $stillHeldIds = PaymentGuardService::activePaymentsCovering($orders->pluck('id'))
+                    ->flatMap(fn (OrderPayment $live) => $live->orders->isNotEmpty()
+                        ? $live->orders->pluck('id')
+                        : collect([$live->order_id]))
+                    ->filter()
+                    ->map(fn ($id) => (int) $id)
+                    ->unique();
+
                 foreach ($orders as $order) {
+                    if ($stillHeldIds->contains((int) $order->id)) {
+                        continue;
+                    }
+
                     $order->update([
                         'payment_pending' => false,
                         'payment_received' => false,

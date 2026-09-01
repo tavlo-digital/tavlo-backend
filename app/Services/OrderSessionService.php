@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\Order;
 use App\Models\TableScanSession;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
@@ -32,6 +33,32 @@ class OrderSessionService
             : $sessionOrMode;
 
         return in_array($mode, [self::PICKUP, self::TAKEAWAY], true);
+    }
+
+    /**
+     * The identity staff group an order under: the PIN party for off-premise,
+     * the table for dine-in. Null when neither applies, so clients fall back to
+     * the order itself rather than lumping unrelated orders together.
+     *
+     * Lives here because both the orders list and the realtime push have to
+     * produce the same key. When only one of them did, an order that arrived
+     * live opened a second card for a party already on screen.
+     */
+    public function sessionGroupKeyFor(Order $order): ?string
+    {
+        $session = $order->tableScanSession;
+
+        if (! $session) {
+            return null;
+        }
+
+        if ($this->isOffPremise($session)) {
+            return $session->pin
+                ? "offpremise:{$session->vendor_id}:{$session->type}:{$session->pin}"
+                : "session:{$session->id}";
+        }
+
+        return $session->restaurant_table_id ? "table:{$session->restaurant_table_id}" : null;
     }
 
     public function applyMode(Builder $query, Request $request): Builder
@@ -115,6 +142,37 @@ class OrderSessionService
                 'order_mode' => $session->type,
                 'session_pin' => $session->pin,
             ],
+        );
+
+        if (! $notifyOperations) {
+            return;
+        }
+
+        // Unlike a dine-in event, an off-premise event has no restaurant table
+        // through which NotificationService can fan out to operations. Without
+        // this explicit leg, a cash request reached the other guests but never
+        // invalidated the waiter's open pickup card, leaving its prior paid
+        // orders on screen until a manual reload.
+        $template = (string) ($metadata['template'] ?? '');
+        $isPaymentUpdate = str_starts_with($template, 'payment.');
+
+        NotificationService::notifyOperations(
+            (int) $session->vendor_id,
+            $event,
+            $message,
+            [NotificationService::VENDOR, NotificationService::WAITER],
+            [
+                ...$metadata,
+                'resources' => ['orders', 'tables', 'dashboard', 'notifications'],
+                'template' => $isPaymentUpdate ? 'staff.payment_updated' : null,
+                'order_mode' => $session->type,
+                'session_pin' => $session->pin,
+                'severity' => 'info',
+                'sound' => $isPaymentUpdate ? 'payment' : null,
+                'source_actor_type' => 'customer',
+                'source_actor_id' => $metadata['customer_id'] ?? null,
+            ],
+            ! $isPaymentUpdate,
         );
     }
 }

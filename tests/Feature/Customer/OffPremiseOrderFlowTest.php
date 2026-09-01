@@ -2,18 +2,25 @@
 
 namespace Tests\Feature\Customer;
 
+use App\Http\Controllers\Api\Customer\PaymentController;
+use App\Jobs\DeliverOperationalNotification;
 use App\Models\CartItem;
 use App\Models\Customer;
 use App\Models\MenuCategory;
 use App\Models\MenuItem;
+use App\Models\Notification;
 use App\Models\Order;
 use App\Models\OrderPayment;
 use App\Models\TableScanSession;
+use App\Models\TeamMember;
 use App\Models\Vendor;
 use App\Models\VendorSetting;
 use App\Models\VendorTakeawayQr;
 use App\Services\StripePaymentService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Defer\DeferredCallbackCollection;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Queue;
 use Tests\TestCase;
 
 class OffPremiseOrderFlowTest extends TestCase
@@ -776,6 +783,372 @@ class OffPremiseOrderFlowTest extends TestCase
             ->assertOk()
             ->assertJsonPath('active', false)
             ->assertJsonPath('active_order_mode', null);
+    }
+
+    public function test_a_guest_with_no_items_can_still_share_a_mates_item(): void
+    {
+        [$owner, $ownerHeaders, $pin] = $this->startPickup();
+        $mate = Customer::factory()->create();
+        $mateHeaders = $this->headers($mate, 'pickup');
+
+        $this->asCustomer($mateHeaders)->postJson('/api/customer/table/pin', [
+            'vendor_public_id' => $this->vendor->vendor_public_id,
+            'pin' => $pin,
+        ])->assertSuccessful();
+
+        $this->asCustomer($ownerHeaders)->postJson('/api/customer/cart/items', [
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 1,
+        ])->assertCreated();
+        $this->asCustomer($ownerHeaders)->postJson('/api/customer/table/order/draft')->assertCreated();
+
+        $ownerItem = CartItem::whereHas('session', fn ($q) => $q->where('customer_id', $owner->id))->sole();
+        $ownerOrder = Order::where('customer_id', $owner->id)->whereNull('parent_order_id')->sole();
+        $wholeLine = $this->historyLineTotal($ownerHeaders, $ownerItem->id);
+        $this->assertSame(0, Order::where('customer_id', $mate->id)->count());
+
+        // The mate has ordered nothing, so has no order to share into. 0 asks
+        // for one rather than the tap doing nothing.
+        $this->asCustomer($mateHeaders)
+            ->putJson('/api/customer/table/order/update/0', ['shared_item' => $ownerItem->id])
+            ->assertOk();
+
+        $mateOrder = Order::where('customer_id', $mate->id)->sole();
+        $this->assertContains(
+            (int) $mateOrder->id,
+            array_map('intval', $ownerItem->fresh()->shared_order_ids ?? []),
+        );
+        // Half of the line, since the two of them now split it.
+        $this->assertGreaterThan(0, (float) $mateOrder->amount);
+        $this->assertLessThan((float) $ownerOrder->amount, (float) $mateOrder->fresh()->amount + 0.01);
+
+        // The order minted for the share has to reach the mate's own screen,
+        // or "Select an order to pay" lists everyone's order but theirs.
+        $this->assertContains(
+            (int) $mateOrder->id,
+            $this->historyOrderIds($mateHeaders),
+            'The share order is missing from the sharer own history.',
+        );
+
+        // And the owner has to see the line drop to their half, not the
+        // untouched full price.
+        $this->assertLessThan(
+            $wholeLine,
+            $this->historyLineTotal($ownerHeaders, $ownerItem->id),
+            'The owner line total was not split after the share.',
+        );
+    }
+
+    public function test_tracking_shows_a_bought_share_and_the_tip_that_was_charged(): void
+    {
+        [$owner, $ownerHeaders, $pin] = $this->startPickup();
+        $mate = Customer::factory()->create();
+        $mateHeaders = $this->headers($mate, 'pickup');
+
+        $this->asCustomer($mateHeaders)->postJson('/api/customer/table/pin', [
+            'vendor_public_id' => $this->vendor->vendor_public_id,
+            'pin' => $pin,
+        ])->assertSuccessful();
+
+        $this->asCustomer($ownerHeaders)->postJson('/api/customer/cart/items', [
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 1,
+        ])->assertCreated();
+        $this->asCustomer($ownerHeaders)->postJson('/api/customer/table/order/draft')->assertCreated();
+
+        $ownerItem = CartItem::whereHas('session', fn ($q) => $q->where('customer_id', $owner->id))->sole();
+        $this->asCustomer($mateHeaders)
+            ->putJson('/api/customer/table/order/update/0', ['shared_item' => $ownerItem->id])
+            ->assertOk();
+
+        $mateOrder = Order::where('customer_id', $mate->id)->sole();
+        $mateOrder->update(['tip_amount' => 1.08]);
+
+        $tracking = $this->asCustomer($mateHeaders)
+            ->getJson("/api/customer/orders/{$mateOrder->order_public_id}/tracking")
+            ->assertOk();
+
+        // The mate ordered nothing of their own, so the plate they bought into
+        // is the only thing on the page. Dropping it left an empty order.
+        $this->assertSame([], $tracking->json('items'));
+        $shared = $tracking->json('shared_items');
+        $this->assertCount(1, $shared);
+        $this->assertSame((int) $ownerItem->id, $shared[0]['cart_item_id']);
+        $this->assertFalse($shared[0]['owned_by_me']);
+        $this->assertSame($owner->id, $shared[0]['shared_with'][0]['customer_id']);
+
+        // What they were charged, not just the order amount.
+        $orderAmount = round((float) $mateOrder->fresh()->amount, 2);
+        $tracking
+            ->assertJsonPath('total_amount', $orderAmount)
+            ->assertJsonPath('tip_amount', 1.08)
+            ->assertJsonPath('amount_charged', round($orderAmount + 1.08, 2))
+            ->assertJsonPath('totals.total_tips', 1.08)
+            ->assertJsonPath('totals.grand_total', round($orderAmount + 1.08, 2));
+
+        // And the fee stays broken out, so the page can say what the food cost
+        // and what the fee added. This vendor charges none.
+        $this->assertSame(0.0, (float) $tracking->json('totals.service_fee'));
+        $this->assertSame(
+            round($orderAmount - (float) $tracking->json('totals.service_fee'), 2),
+            round((float) $tracking->json('totals.grand_total') - 1.08 - (float) $tracking->json('totals.service_fee'), 2),
+        );
+    }
+
+    public function test_tracking_keeps_the_items_of_a_draft_that_requested_cash(): void
+    {
+        [, $headers] = $this->startPickup();
+
+        $this->asCustomer($headers)->postJson('/api/customer/cart/items', [
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 2,
+        ])->assertCreated();
+        $this->asCustomer($headers)->postJson('/api/customer/table/order/draft')->assertCreated();
+
+        $order = Order::whereNull('parent_order_id')->sole();
+        $this->asCustomer($headers)
+            ->postJson('/api/customer/payments/request-cash', [])
+            ->assertSuccessful();
+
+        $order->refresh();
+        $this->assertTrue((bool) $order->payment_pending);
+        $this->assertSame(Order::STATUS_DRAFT, $order->status);
+
+        $tracking = $this->asCustomer($headers)
+            ->getJson("/api/customer/orders/{$order->order_public_id}/tracking")
+            ->assertOk();
+
+        // Requesting cash binds the rows to the order. Looking only for unbound
+        // rows emptied the tracking page the moment a guest asked to pay.
+        $this->assertCount(1, $tracking->json('items'));
+        $tracking
+            ->assertJsonPath('items.0.quantity', 2)
+            ->assertJsonPath('payment_method', 'cash')
+            ->assertJsonPath('payment_pending', true)
+            ->assertJsonPath('payment_received', false);
+    }
+
+    public function test_a_cash_request_survives_another_payment_being_released(): void
+    {
+        [, $headers] = $this->startPickup();
+
+        $this->asCustomer($headers)->postJson('/api/customer/cart/items', [
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 1,
+        ])->assertCreated();
+        $this->asCustomer($headers)->postJson('/api/customer/table/order/draft')->assertCreated();
+
+        $order = Order::whereNull('parent_order_id')->sole();
+        $this->asCustomer($headers)
+            ->postJson('/api/customer/payments/request-cash', [])
+            ->assertSuccessful();
+
+        $this->assertTrue((bool) $order->fresh()->payment_pending);
+
+        // A card attempt on the same order that never completes. Releasing it
+        // must not take the standing cash request down with it, or the waiter
+        // loses the order they were asked to collect on.
+        $stale = OrderPayment::create([
+            'order_id' => $order->id,
+            'customer_id' => $order->customer_id,
+            'vendor_id' => $order->vendor_id,
+            'amount' => $order->amount,
+            'currency' => $order->currency ?? 'EUR',
+            'status' => 'requires_payment_method',
+        ]);
+
+        $controller = app(PaymentController::class);
+        $cancel = new \ReflectionMethod($controller, 'cancelAbandonedPayment');
+        $cancel->invoke($controller, $stale);
+
+        $order->refresh();
+        $this->assertTrue(
+            (bool) $order->payment_pending,
+            'The standing cash request was cleared by an unrelated release.',
+        );
+        $this->assertSame('cash', $order->payment_method);
+    }
+
+    public function test_a_pickup_cash_request_reaches_the_waiter_with_its_frozen_draft_items(): void
+    {
+        Queue::fake([DeliverOperationalNotification::class]);
+        $waiter = TeamMember::create([
+            'vendor_id' => $this->vendor->id,
+            'name' => 'Cash Waiter',
+            'email' => 'cash-waiter-'.uniqid().'@example.com',
+            'password' => Hash::make('password'),
+            'role' => 'waiter',
+            'permissions' => TeamMember::defaultPermissions('waiter'),
+            'status' => 'active',
+            'joined_at' => now(),
+        ]);
+        [, $headers] = $this->startPickup();
+
+        $this->asCustomer($headers)->postJson('/api/customer/cart/items', [
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 2,
+        ])->assertCreated();
+        $this->asCustomer($headers)->postJson('/api/customer/table/order/draft')->assertCreated();
+
+        $order = Order::whereNull('parent_order_id')->sole();
+        $item = CartItem::where('table_scan_session_id', $order->table_scan_session_id)->sole();
+
+        $this->asCustomer($headers)
+            ->postJson('/api/customer/payments/request-cash')
+            ->assertSuccessful();
+
+        // Operational notifications are deferred until the response has been
+        // sent. The pickup path used to stop at customer notifications, so the
+        // waiter's useOperationalRefresh hook never knew to reload this draft.
+        app(DeferredCallbackCollection::class)->invoke();
+        $delivery = Queue::pushed(DeliverOperationalNotification::class)
+            ->first(fn (DeliverOperationalNotification $job): bool => ($job->payload['metadata']['template'] ?? null) === 'staff.payment_updated'
+                && (int) ($job->payload['metadata']['order_id'] ?? 0) === (int) $order->id
+            );
+
+        $this->assertNotNull($delivery);
+        $this->assertContains('orders', $delivery->payload['metadata']['resources']);
+        $delivery->handle();
+
+        $staffNotification = Notification::where('waiter_id', $waiter->id)
+            ->where('event', 'payment_updated')
+            ->get()
+            ->first(fn (Notification $notification): bool => (int) ($notification->metadata['order_id'] ?? 0) === (int) $order->id
+            );
+        $this->assertNotNull($staffNotification);
+
+        $waiterToken = $waiter->createToken('test', ['role:team_member', 'role:waiter'])->plainTextToken;
+        $this->app['auth']->forgetGuards();
+        $response = $this->getJson("/api/vendor/{$this->vendor->id}/orders", [
+            'Authorization' => "Bearer {$waiterToken}",
+            'Accept' => 'application/json',
+        ])->assertOk();
+
+        $listedOrder = collect($response->json('takeaway'))->firstWhere('id', (string) $order->id);
+        $this->assertNotNull($listedOrder);
+        $this->assertSame(Order::STATUS_DRAFT, $listedOrder['status']);
+        $this->assertTrue($listedOrder['paymentPending']);
+        $this->assertSame('cash', $listedOrder['paymentMethod']);
+        $this->assertSame((int) $item->id, (int) $listedOrder['items'][0]['cartItemId']);
+        $this->assertSame(2, $listedOrder['items'][0]['quantity']);
+    }
+
+    public function test_the_stale_payment_reconciler_leaves_a_standing_cash_request_alone(): void
+    {
+        [, $headers] = $this->startPickup();
+
+        $this->asCustomer($headers)->postJson('/api/customer/cart/items', [
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 1,
+        ])->assertCreated();
+        $this->asCustomer($headers)->postJson('/api/customer/table/order/draft')->assertCreated();
+
+        $order = Order::whereNull('parent_order_id')->sole();
+        $this->asCustomer($headers)
+            ->postJson('/api/customer/payments/request-cash', [])
+            ->assertSuccessful();
+        $this->assertTrue((bool) $order->fresh()->payment_pending);
+
+        // An older card attempt on the same order that Stripe never completed.
+        $stale = OrderPayment::create([
+            'order_id' => $order->id,
+            'customer_id' => $order->customer_id,
+            'vendor_id' => $order->vendor_id,
+            'amount' => $order->amount,
+            'currency' => $order->currency ?? 'EUR',
+            'status' => 'requires_payment_method',
+            'stripe_payment_intent_id' => 'pi_never_finished',
+        ]);
+        // created_at is not fillable, and the command only looks at attempts
+        // older than ten minutes.
+        OrderPayment::whereKey($stale->id)->update(['created_at' => now()->subHour()]);
+
+        $this->app->instance(StripePaymentService::class, new class extends StripePaymentService
+        {
+            public function __construct() {}
+
+            public function retrievePaymentIntent(string $paymentIntentId): array
+            {
+                return ['id' => $paymentIntentId, 'status' => 'requires_payment_method'];
+            }
+        });
+
+        $this->artisan('payments:reconcile-stale')->assertSuccessful();
+
+        $order->refresh();
+        $this->assertSame('failed', $stale->fresh()->status);
+        // The command ran every minute, so it took the order off the waiter's
+        // screen again within a minute of any repair.
+        $this->assertTrue(
+            (bool) $order->payment_pending,
+            'Reconciling a dead card attempt unlocked a standing cash request.',
+        );
+        $this->assertSame('cash', $order->payment_method);
+        $this->assertNotSame('Stripe payment was not completed.', $order->payment_note);
+    }
+
+    /** @return array<int, int> */
+    private function historyOrderIds(array $headers): array
+    {
+        $people = $this->asCustomer($headers)
+            ->getJson('/api/customer/table/history')
+            ->assertOk()
+            ->json('people');
+
+        return collect($people)
+            ->flatMap(fn (array $person) => array_column($person['orders'] ?? [], 'id'))
+            ->map(fn ($id) => (int) $id)
+            ->all();
+    }
+
+    private function historyLineTotal(array $headers, int $cartItemId): float
+    {
+        $people = $this->asCustomer($headers)
+            ->getJson('/api/customer/table/history')
+            ->assertOk()
+            ->json('people');
+
+        $row = collect($people)
+            ->flatMap(fn (array $person) => collect($person['orders'] ?? [])
+                ->flatMap(fn (array $order) => $order['items'] ?? []))
+            ->first(fn (array $item) => (int) ($item['cart_item_id'] ?? 0) === $cartItemId);
+
+        $this->assertNotNull($row, "Cart item {$cartItemId} is missing from the history.");
+
+        return (float) ($row['my_share'] ?? $row['line_total'] ?? 0);
+    }
+
+    public function test_unsharing_removes_the_order_that_existed_only_for_the_share(): void
+    {
+        [$owner, $ownerHeaders, $pin] = $this->startPickup();
+        $mate = Customer::factory()->create();
+        $mateHeaders = $this->headers($mate, 'pickup');
+
+        $this->asCustomer($mateHeaders)->postJson('/api/customer/table/pin', [
+            'vendor_public_id' => $this->vendor->vendor_public_id,
+            'pin' => $pin,
+        ])->assertSuccessful();
+
+        $this->asCustomer($ownerHeaders)->postJson('/api/customer/cart/items', [
+            'menu_item_id' => $this->menuItem->id,
+            'quantity' => 1,
+        ])->assertCreated();
+        $this->asCustomer($ownerHeaders)->postJson('/api/customer/table/order/draft')->assertCreated();
+
+        $ownerItem = CartItem::whereHas('session', fn ($q) => $q->where('customer_id', $owner->id))->sole();
+
+        $this->asCustomer($mateHeaders)
+            ->putJson('/api/customer/table/order/update/0', ['shared_item' => $ownerItem->id])
+            ->assertOk();
+        $mateOrder = Order::where('customer_id', $mate->id)->sole();
+
+        $this->asCustomer($mateHeaders)
+            ->putJson("/api/customer/table/order/update/{$mateOrder->id}", ['unshared_item' => $ownerItem->id])
+            ->assertOk();
+
+        // Otherwise the guest is left with an empty order card they never placed.
+        $this->assertDatabaseMissing('orders', ['id' => $mateOrder->id]);
+        $this->assertSame(0, Order::where('customer_id', $mate->id)->count());
     }
 
     private function startPickup(?\DateTimeInterface $scheduledFor = null): array
