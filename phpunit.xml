@@ -27,6 +27,10 @@
         <env name="DB_DATABASE" value=":memory:"/>
         <env name="MAIL_MAILER" value="array"/>
         <env name="QUEUE_CONNECTION" value="sync"/>
+        <env name="FISKALY_QUEUE_CONNECTION" value="sync"/>
+        <!-- Off unless a test opts in with config(), so enabling it in
+             .env cannot change the behaviour of unrelated tests. -->
+        <env name="FISKALY_ENABLED" value="false"/>
         <env name="SESSION_DRIVER" value="array"/>
         <env name="PULSE_ENABLED" value="false"/>
         <env name="TELESCOPE_ENABLED" value="false"/>

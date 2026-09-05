@@ -1,5 +1,5 @@
-import axios from 'axios';
 import { randomUUID } from 'crypto';
+import axios from 'axios';
 import config from './config.mjs';
 
 // ─── HTTP Client with metrics ─────────────────────────────────────────────

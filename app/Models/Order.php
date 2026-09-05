@@ -2,6 +2,8 @@
 
 namespace App\Models;
 
+use App\Services\Fiscal\FiscalizationService;
+use App\Services\InvoiceNumberService;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -24,6 +26,59 @@ class Order extends Model
     public const COMPLETED_STATUSES = [self::STATUS_SERVED, self::STATUS_PICKED_UP];
     public const TERMINAL_STATUSES  = [self::STATUS_SERVED, self::STATUS_PICKED_UP, self::STATUS_CANCELLED];
     public const ACTIVE_STATUSES    = [self::STATUS_CONFIRMED, self::STATUS_WAITER_CONFIRMED, self::STATUS_IN_PROGRESS];
+
+    /**
+     * An invoice number belongs to the moment the order was paid, not to the
+     * moment somebody happened to open the receipt. Hooking the model rather
+     * than each controller covers every path that confirms a payment — the
+     * Stripe webhook and verify, the vendor mark-paid update, cash confirmation
+     * and the stale-payment reconciler — and any added later.
+     */
+    protected static function booted(): void
+    {
+        static::creating(fn (self $order) => self::assignInvoiceNumberOnPayment($order));
+
+        static::updating(function (self $order) {
+            if ($order->isDirty('payment_confirmed_at')) {
+                self::assignInvoiceNumberOnPayment($order);
+            }
+        });
+
+        // Fiscalization runs off the same signal, but after the write: the
+        // receipt snapshot needs the persisted row, and the invoice number it
+        // carries has to be the one that was just stored.
+        static::saved(function (self $order) {
+            if ($order->payment_confirmed_at
+                && ($order->wasRecentlyCreated || $order->wasChanged('payment_confirmed_at'))) {
+                app(FiscalizationService::class)->onPaymentConfirmed($order);
+            }
+        });
+    }
+
+    private static function assignInvoiceNumberOnPayment(self $order): void
+    {
+        if (! $order->payment_confirmed_at) {
+            return;
+        }
+
+        $attributes = $order->getAttributes();
+
+        if (array_key_exists('invoice_number', $attributes)) {
+            if ($attributes['invoice_number'] !== null) {
+                return;
+            }
+        } elseif ($order->exists && static::whereKey($order->getKey())
+            ->whereNotNull('invoice_number')
+            ->exists()) {
+            // A partial select did not load the column, so the model looks
+            // unnumbered whether or not it is. Ask the row before writing, or a
+            // re-confirmed payment would overwrite a number already issued.
+            return;
+        }
+
+        $order->invoice_number = app(InvoiceNumberService::class)
+            ->allocate((int) $order->vendor_id);
+    }
 
     protected $fillable = [
         'order_public_id',

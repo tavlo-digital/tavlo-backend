@@ -74,6 +74,18 @@ type PendingChangeData = {
     submittedBy: string;
 };
 
+type CashRegisterData = {
+    country: string;
+    environment: string;
+    state: string;
+    serialNumber: string | null;
+    submittedAt: string | null;
+    lastAttemptedAt: string | null;
+    registeredAt: string | null;
+    lastError: string | null;
+    canRetry: boolean;
+};
+
 type PaymentYearData = {
     year: number;
     paidCount: number;
@@ -108,6 +120,7 @@ type PageProps = {
     tab: string;
     vendorData: VendorData;
     pendingChanges?: PendingChangeData[];
+    cashRegister?: CashRegisterData | null;
     paymentData?: PaymentYearData[];
     paymentFailures24h?: number;
     subscriptionDetails?: SubscriptionDetailsData;
@@ -362,13 +375,120 @@ function OverviewTab({ vendor }: { vendor: VendorData }) {
 }
 
 /* ─── Pending Changes Tab ─── */
+const CASH_REGISTER_STATES: Record<string, { label: string; tone: string; detail: string }> = {
+    not_submitted: {
+        label: 'Not submitted',
+        tone: 'bg-gray-100 text-gray-700',
+        detail: 'The vendor has not supplied their cash register details yet.',
+    },
+    awaiting_approval: {
+        label: 'Awaiting approval',
+        tone: 'bg-amber-100 text-amber-800',
+        detail: 'Details received. Approving the legal changes below will register the cash register with the tax office.',
+    },
+    pending: {
+        label: 'Pending',
+        tone: 'bg-amber-100 text-amber-800',
+        detail: 'Registration has not completed yet.',
+    },
+    registered: {
+        label: 'Partly registered',
+        tone: 'bg-amber-100 text-amber-800',
+        detail: 'Registration started but did not finish. Retry to complete it.',
+    },
+    initialized: {
+        label: 'Registered',
+        tone: 'bg-green-100 text-green-700',
+        detail: 'The cash register is registered and receipts are being signed.',
+    },
+    failed: {
+        label: 'Failed',
+        tone: 'bg-red-100 text-red-700',
+        detail: 'Registration was rejected. Ask the vendor to check their details, then retry.',
+    },
+    disabled: {
+        label: 'Disabled',
+        tone: 'bg-gray-100 text-gray-700',
+        detail: 'Registration is switched off for this vendor.',
+    },
+};
+
+function CashRegisterCard({ vendorSlug }: { vendorSlug: string }) {
+    const { cashRegister } = usePage<PageProps>().props;
+
+    if (!cashRegister) return null;
+
+    const state = CASH_REGISTER_STATES[cashRegister.state] ?? CASH_REGISTER_STATES.pending;
+
+    return (
+        <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
+            <div className="flex items-center justify-between px-6 py-4">
+                <div className="flex items-center gap-4">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-100">
+                        <Info className="h-5 w-5 text-indigo-600" aria-hidden="true" />
+                    </div>
+                    <div className="text-left">
+                        <div className="font-semibold text-gray-900">
+                            Cash register ({cashRegister.country})
+                        </div>
+                        <div className="text-sm text-gray-600">
+                            {cashRegister.serialNumber ?? 'No serial number yet'} &middot; {cashRegister.environment}
+                        </div>
+                    </div>
+                </div>
+                <span className={`rounded-full px-3 py-1 text-xs font-medium ${state.tone}`}>
+                    {state.label}
+                </span>
+            </div>
+
+            <div className="border-t border-gray-200 px-6 py-4">
+                <p className="text-sm text-gray-600">{state.detail}</p>
+
+                <dl className="mt-3 grid grid-cols-3 gap-4 text-xs">
+                    <div>
+                        <dt className="font-medium text-gray-500 uppercase">Submitted</dt>
+                        <dd className="mt-0.5 text-gray-900">{cashRegister.submittedAt ?? '—'}</dd>
+                    </div>
+                    <div>
+                        <dt className="font-medium text-gray-500 uppercase">Last attempt</dt>
+                        <dd className="mt-0.5 text-gray-900">{cashRegister.lastAttemptedAt ?? '—'}</dd>
+                    </div>
+                    <div>
+                        <dt className="font-medium text-gray-500 uppercase">Registered</dt>
+                        <dd className="mt-0.5 text-gray-900">{cashRegister.registeredAt ?? '—'}</dd>
+                    </div>
+                </dl>
+
+                {cashRegister.lastError && (
+                    <div className="mt-4 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+                        <span className="font-medium">Last error:</span> {cashRegister.lastError}
+                    </div>
+                )}
+
+                {cashRegister.canRetry && (
+                    <button
+                        type="button"
+                        onClick={() =>
+                            router.post(`/admin/vendor/${vendorSlug}/fiscal/retry`, {}, { preserveScroll: true })
+                        }
+                        className="mt-4 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+                    >
+                        Retry registration
+                    </button>
+                )}
+            </div>
+        </div>
+    );
+}
+
 function PendingChangesTab({ vendorSlug }: { vendorSlug: string }) {
     const { pendingChanges } = usePage<PageProps>().props;
     const changes = pendingChanges ?? [];
 
     if (changes.length === 0) {
         return (
-            <div className="p-6">
+            <div className="space-y-6 p-6">
+                <CashRegisterCard vendorSlug={vendorSlug} />
                 <div className="rounded-lg border border-gray-200 bg-white p-8 text-center">
                     <Check className="mx-auto mb-3 h-8 w-8 text-green-500" />
                     <h3 className="font-medium text-gray-900">No Pending Changes</h3>
@@ -380,6 +500,7 @@ function PendingChangesTab({ vendorSlug }: { vendorSlug: string }) {
 
     return (
         <div className="space-y-6 p-6">
+            <CashRegisterCard vendorSlug={vendorSlug} />
             {changes.map((changeRequest) => (
             <div key={changeRequest.id} className="overflow-hidden rounded-lg border border-gray-200 bg-white">
                 <button className="flex w-full items-center justify-between px-6 py-4 transition-colors hover:bg-gray-50">

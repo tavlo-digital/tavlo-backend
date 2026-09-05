@@ -6,13 +6,13 @@
 //   node runner.mjs --tier all       # run all tiers sequentially
 //   node runner.mjs --tier 1 --dry   # dry run (log actions without HTTP)
 
-import { readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { execSync } from 'child_process';
+import { readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { runCustomer } from './actors/customer.mjs';
-import { runWaiter } from './actors/waiter.mjs';
 import { runKitchen } from './actors/kitchen.mjs';
-import { getMetrics, clearMetrics, summarizeMetrics, formatTable, log, sleep, randomInt } from './helpers.mjs';
+import { runWaiter } from './actors/waiter.mjs';
 import config from './config.mjs';
+import { getMetrics, clearMetrics, summarizeMetrics, formatTable, log, sleep, randomInt } from './helpers.mjs';
 
 const APP_PATH = '/home/1613226.cloudwaysapps.com/ynfjqwuxxs/public_html';
 

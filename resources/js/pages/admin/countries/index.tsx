@@ -1,6 +1,7 @@
 import { Head, router, useForm } from '@inertiajs/react';
 import { CircleCheckBig, CircleX, Edit2, Globe, Search, Trash2, X } from 'lucide-react';
-import { FormEvent, useMemo, useState } from 'react';
+import type { FormEvent} from 'react';
+import { useMemo, useState } from 'react';
 import AdminLayout from '@/layouts/admin-layout';
 
 type Country = {

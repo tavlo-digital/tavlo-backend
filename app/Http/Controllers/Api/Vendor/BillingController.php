@@ -9,6 +9,7 @@ use App\Models\SubscriptionPlan;
 use App\Models\Vendor;
 use App\Services\BillingService;
 use App\Services\StripeSubscriptionService;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -140,7 +141,7 @@ class BillingController extends Controller
             $subscription = $this->billingService->upgradePlan($vendor, (int) $data['planId']);
         } catch (\InvalidArgumentException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException) {
+        } catch (ModelNotFoundException) {
             return response()->json(['message' => 'Subscription plan not found.'], 404);
         }
 
@@ -166,7 +167,7 @@ class BillingController extends Controller
             $this->billingService->changeBillingCycle($vendor, $data['cycle']);
         } catch (\InvalidArgumentException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException) {
+        } catch (ModelNotFoundException) {
             return response()->json(['message' => 'No active subscription found.'], 404);
         }
 
@@ -219,7 +220,7 @@ class BillingController extends Controller
             $this->billingService->cancelSubscription($vendor);
         } catch (\InvalidArgumentException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException) {
+        } catch (ModelNotFoundException) {
             return response()->json(['message' => 'No active subscription found.'], 404);
         }
 

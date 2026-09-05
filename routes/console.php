@@ -13,5 +13,6 @@ Schedule::command('kitchen-orders:release-scheduled')->everyMinute()->withoutOve
 Schedule::command('payments:reconcile-stale')->everyMinute();
 Schedule::command('payments:release-stale-checkout-holds')->everyMinute();
 Schedule::command('subscriptions:reconcile-stale')->everyMinute();
+Schedule::command('fiskaly:retry-failed')->everyFiveMinutes()->withoutOverlapping();
 Schedule::command('notifications:prune-silent')->daily();
 Schedule::command('session-activities:prune')->daily();

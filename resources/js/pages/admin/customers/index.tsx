@@ -15,8 +15,8 @@ import {
     TriangleAlert,
 } from 'lucide-react';
 import { useState } from 'react';
-import AdminLayout from '@/layouts/admin-layout';
 import { CheckboxCustom } from '@/components/checkbox-custom';
+import AdminLayout from '@/layouts/admin-layout';
 
 type Stats = {
     totalCustomers: number;

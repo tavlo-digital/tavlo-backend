@@ -350,7 +350,6 @@ class TableController extends Controller
             return $this->closeScanSessionGroup($sessions, $data['force'] ?? false, 'Table session closed by staff.');
         });
 
-
         if ($result['outcome'] === 'not_found') {
             return response()->json(['message' => 'No active table session found.'], 404);
         }
@@ -686,7 +685,6 @@ class TableController extends Controller
         return "vendor:{$vendorId}:table:{$tableId}";
     }
 
-
     /**
      * POST /api/vendor/{vendorId}/scan-sessions/{sessionId}/close
      *
@@ -768,11 +766,11 @@ class TableController extends Controller
      * PIN-mates. The rules — nothing unserved, nothing unpaid unless forced —
      * must not fork, or staff get two different answers for the same table.
      *
-     * @param  \Illuminate\Support\Collection<int, TableScanSession>  $sessions
+     * @param  Collection<int, TableScanSession>  $sessions
      * @return array<string, mixed>
      */
     private function closeScanSessionGroup(
-        \Illuminate\Support\Collection $sessions,
+        Collection $sessions,
         bool $force,
         string $cancelReason,
     ): array {

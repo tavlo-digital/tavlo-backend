@@ -78,6 +78,7 @@ Route::middleware(['auth', 'verified', 'admin'])->prefix('admin')->name('admin.'
         ->where('tab', 'overview|pending-changes|payments|subscription|orders|reviews|activity');
     Route::redirect('vendor/{vendor}', '/admin/vendor/{vendor}/overview');
     Route::post('vendor/{vendor}/changes/{change}/approve', [VendorController::class, 'approveChange'])->name('vendor.changes.approve');
+    Route::post('vendor/{vendor}/fiscal/retry', [VendorController::class, 'retryCashRegister'])->name('vendor.fiscal.retry');
     Route::post('vendor/{vendor}/changes/{change}/decline', [VendorController::class, 'declineChange'])->name('vendor.changes.decline');
     // Subscription management
     Route::redirect('subscriptions', '/admin/subscriptions/plans')->name('subscriptions.index');

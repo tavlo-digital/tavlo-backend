@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef } from 'react';
 import { Clock, Users, AlertTriangle, Wifi, WifiOff, Volume2, VolumeX, Check, LayoutGrid, List } from 'lucide-react';
-import { api, vendorToken } from '@/lib/api';
+import { useState, useEffect, useRef } from 'react';
 import { toast } from 'sonner';
+import { api, vendorToken } from '@/lib/api';
 
 interface KitchenDisplaySystemProps {
   vendorId: string;

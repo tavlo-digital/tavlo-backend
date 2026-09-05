@@ -2,8 +2,8 @@
 // Polls for new confirmed orders and processes them:
 //   waiter-confirm → watch for ready items → serve → confirm cash
 
-import { api, sleep, randomInt, log, randomUUID } from '../helpers.mjs';
 import config from '../config.mjs';
+import { api, sleep, randomInt, log, randomUUID } from '../helpers.mjs';
 
 function extractOrdersFromSessions(sessions, statusFilter = null) {
   const orders = [];

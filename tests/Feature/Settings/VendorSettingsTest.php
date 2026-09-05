@@ -310,6 +310,7 @@ class VendorSettingsTest extends TestCase
                 'companyType' => 'GmbH',
                 'country' => 'AT',
                 'city' => 'Vienna',
+                'postalCode' => '1010',
                 'address' => 'Main Street 1',
             ],
             $this->authHeaders()
@@ -343,6 +344,7 @@ class VendorSettingsTest extends TestCase
                 'companyType',
                 'country',
                 'city',
+                'postalCode',
                 'address',
             ]);
     }
@@ -443,6 +445,7 @@ class VendorSettingsTest extends TestCase
             'company_type' => 'GmbH',
             'country' => 'AT',
             'city' => 'Vienna',
+            'postal_code' => '1010',
             'address' => 'Main Street 1',
             'status' => 'pending',
         ]);
@@ -459,6 +462,7 @@ class VendorSettingsTest extends TestCase
             ->assertJsonPath('legalInfo.companyType', 'GmbH')
             ->assertJsonPath('legalInfo.country', 'AT')
             ->assertJsonPath('legalInfo.city', 'Vienna')
+            ->assertJsonPath('legalInfo.postalCode', '1010')
             ->assertJsonPath('legalInfo.address', 'Main Street 1');
     }
 

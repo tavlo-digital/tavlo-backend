@@ -301,6 +301,32 @@ class NotificationService
         array $metadata,
         bool $silent = false,
     ): void {
+        // PaymentController sends customer-format snapshots. Build staff-format
+        // snapshots on the notification worker, after the payment commits. Each
+        // order needs its own event ID so clients do not deduplicate later orders.
+        if ($event === 'payment_updated' && ! isset($metadata['order']) && isset($metadata['order_snapshots'])) {
+            $orders = Order::where('vendor_id', $vendorId)
+                ->whereIn('id', collect($metadata['order_snapshots'])->pluck('order_id'))
+                ->orderBy('id')
+                ->get();
+
+            if ($orders->isNotEmpty()) {
+                foreach ($orders as $index => $order) {
+                    self::deliverOperations(
+                        "{$deliveryId}:order:{$order->id}",
+                        $vendorId,
+                        $event,
+                        $message,
+                        $audiences,
+                        [...$metadata, 'order' => self::operationalOrderSnapshot($order)],
+                        $silent || $index > 0,
+                    );
+                }
+
+                return;
+            }
+        }
+
         $audiences = array_values(array_unique($audiences));
         $now = now();
         $base = [

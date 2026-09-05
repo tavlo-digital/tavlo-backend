@@ -8,6 +8,7 @@ use App\Models\MenuCategory;
 use App\Models\MenuItem;
 use App\Models\ModifierGroup;
 use App\Models\ModifierOption;
+use App\Models\Vendor;
 use App\Services\MenuCustomizationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -25,7 +26,7 @@ class MenuController extends Controller
      */
     public function show(string $vendorId): JsonResponse
     {
-        $vendor = \App\Models\Vendor::where('vendor_public_id', $vendorId)
+        $vendor = Vendor::where('vendor_public_id', $vendorId)
             ->when(ctype_digit($vendorId), fn ($q) => $q->orWhere('id', $vendorId))
             ->firstOrFail();
 
@@ -63,7 +64,7 @@ class MenuController extends Controller
      */
     public function update(Request $request, string $vendorId): JsonResponse
     {
-        $vendor = \App\Models\Vendor::where('vendor_public_id', $vendorId)
+        $vendor = Vendor::where('vendor_public_id', $vendorId)
             ->when(ctype_digit($vendorId), fn ($q) => $q->orWhere('id', $vendorId))
             ->firstOrFail();
 
@@ -199,7 +200,7 @@ class MenuController extends Controller
      */
     public function updateItem(Request $request, string $vendorId, int $itemId): JsonResponse
     {
-        $vendor = \App\Models\Vendor::where('vendor_public_id', $vendorId)
+        $vendor = Vendor::where('vendor_public_id', $vendorId)
             ->when(ctype_digit($vendorId), fn ($q) => $q->orWhere('id', $vendorId))
             ->firstOrFail();
 
@@ -268,7 +269,7 @@ class MenuController extends Controller
         ];
     }
 
-    private function syncModifierGroups(MenuItem $item, \App\Models\Vendor $vendor, array $ids): void
+    private function syncModifierGroups(MenuItem $item, Vendor $vendor, array $ids): void
     {
         $ids = collect($ids)
             ->map(fn ($id) => (int) $id)
@@ -319,7 +320,7 @@ class MenuController extends Controller
         ];
     }
 
-    private function authorizeVendor(Request $request, \App\Models\Vendor $vendor): void
+    private function authorizeVendor(Request $request, Vendor $vendor): void
     {
         $user = $request->user();
         if ($user && $user->getTable() === 'vendors' && $user->id !== $vendor->id) {

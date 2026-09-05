@@ -39,8 +39,8 @@ class TeamController extends Controller
         $this->authorizeVendor($request, $vendor);
 
         $data = $request->validate([
-            'email'       => ['required', 'email', 'max:255'],
-            'role'        => ['required', Rule::in(['waiter', 'kitchen'])],
+            'email' => ['required', 'email', 'max:255'],
+            'role' => ['required', Rule::in(['waiter', 'kitchen'])],
         ]);
 
         $email = strtolower($data['email']);
@@ -56,13 +56,13 @@ class TeamController extends Controller
         $permissions = TeamMember::defaultPermissions($data['role']);
 
         $member = $vendor->teamMembers()->create([
-            'name'             => $this->nameFromEmail($email),
-            'email'            => $email,
-            'role'             => $data['role'],
-            'permissions'      => $permissions,
-            'status'           => 'invited',
+            'name' => $this->nameFromEmail($email),
+            'email' => $email,
+            'role' => $data['role'],
+            'permissions' => $permissions,
+            'status' => 'invited',
             'invitation_token' => TeamMember::generateInvitationToken(),
-            'invited_at'       => now(),
+            'invited_at' => now(),
         ]);
 
         Mail::to($member->email)->send(new TeamInvitationMail($member->load('vendor')));
@@ -98,15 +98,15 @@ class TeamController extends Controller
         ]);
 
         $member->update([
-            'password'         => $data['password'],
-            'status'           => 'active',
+            'password' => $data['password'],
+            'status' => 'active',
             'invitation_token' => null,
-            'joined_at'        => now(),
+            'joined_at' => now(),
         ]);
 
         return response()->json([
             'message' => 'Invitation accepted. You can now sign in.',
-            'member'  => $this->formatInvitation($member->fresh('vendor')),
+            'member' => $this->formatInvitation($member->fresh('vendor')),
         ]);
     }
 
@@ -121,10 +121,10 @@ class TeamController extends Controller
         $member = $vendor->teamMembers()->findOrFail($memberId);
 
         $data = $request->validate([
-            'name'        => ['sometimes', 'string', 'max:255'],
-            'role'        => ['sometimes', Rule::in(['waiter', 'kitchen'])],
+            'name' => ['sometimes', 'string', 'max:255'],
+            'role' => ['sometimes', Rule::in(['waiter', 'kitchen'])],
             'permissions' => ['sometimes', 'array'],
-            'status'      => ['sometimes', Rule::in(['invited', 'active', 'suspended'])],
+            'status' => ['sometimes', Rule::in(['invited', 'active', 'suspended'])],
         ]);
 
         if (isset($data['role']) && ! array_key_exists('permissions', $data)) {
@@ -150,7 +150,7 @@ class TeamController extends Controller
 
         $member->update([
             'invitation_token' => TeamMember::generateInvitationToken(),
-            'invited_at'       => now(),
+            'invited_at' => now(),
         ]);
 
         Mail::to($member->email)->send(new TeamInvitationMail($member->fresh('vendor')));
@@ -176,24 +176,24 @@ class TeamController extends Controller
     private function formatMember(TeamMember $member): array
     {
         return [
-            'id'          => (string) $member->id,
-            'name'        => $member->name,
-            'email'       => $member->email,
-            'role'        => $member->role,
+            'id' => (string) $member->id,
+            'name' => $member->name,
+            'email' => $member->email,
+            'role' => $member->role,
             'permissions' => $member->permissions ?? [],
-            'status'      => $member->status,
-            'invitedAt'   => $member->invited_at?->toISOString(),
-            'joinedAt'    => $member->joined_at?->toISOString(),
+            'status' => $member->status,
+            'invitedAt' => $member->invited_at?->toISOString(),
+            'joinedAt' => $member->joined_at?->toISOString(),
         ];
     }
 
     private function formatInvitation(TeamMember $member): array
     {
         return [
-            'email'      => $member->email,
-            'role'       => $member->role,
-            'status'     => $member->status,
-            'vendorId'   => $member->vendor ? (string) $member->vendor->id : null,
+            'email' => $member->email,
+            'role' => $member->role,
+            'status' => $member->status,
+            'vendorId' => $member->vendor ? (string) $member->vendor->id : null,
             'vendorName' => $member->vendor?->restaurant_name ?: $member->vendor?->name,
         ];
     }

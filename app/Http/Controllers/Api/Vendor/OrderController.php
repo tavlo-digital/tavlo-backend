@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\Vendor;
 
 use App\Exceptions\StaffCommandConflictException;
 use App\Http\Controllers\Api\Vendor\Concerns\QueuesStaffCommands;
+use App\Http\Controllers\Concerns\FormatsFiscalReceipts;
 use App\Http\Controllers\Controller;
 use App\Models\CartItem;
 use App\Models\Order;
@@ -14,6 +15,7 @@ use App\Models\TeamMember;
 use App\Models\Vendor;
 use App\Services\CustomerApiCache;
 use App\Services\InventoryConsumptionService;
+use App\Services\InvoiceNumberService;
 use App\Services\KitchenOrderReleaseService;
 use App\Services\LocaleService;
 use App\Services\MediaService;
@@ -37,7 +39,7 @@ use Throwable;
 
 class OrderController extends Controller
 {
-    use QueuesStaffCommands;
+    use FormatsFiscalReceipts, QueuesStaffCommands;
 
     public function __construct(
         private readonly LocaleService $locales,
@@ -51,6 +53,7 @@ class OrderController extends Controller
         private readonly KitchenOrderReleaseService $kitchenReleases,
         private readonly InventoryConsumptionService $inventoryConsumption,
         private readonly CustomerApiCache $customerApiCache,
+        private readonly InvoiceNumberService $invoiceNumbers,
     ) {}
 
     /**
@@ -1210,7 +1213,7 @@ class OrderController extends Controller
             'label' => $this->locales->translatedTaxCategoryName($group['tax_category'], $vendorCountry, $locale),
         ]), $taxGroups);
 
-        $invoiceNumber = $this->resolveReceiptInvoiceNumber($anchor, $settings);
+        $invoiceNumber = $this->resolveReceiptInvoiceNumber($anchor);
         $paymentDetails = $this->paymentMethods->details($payment, $order->payment_method);
 
         return response()->json([
@@ -1249,6 +1252,7 @@ class OrderController extends Controller
                     ),
                 ],
                 'legal' => $this->receiptLegalBlock($countryCode, $vendor),
+                'fiscal' => $this->fiscalBlock($anchor),
             ],
             'meta' => [
                 'generated_at' => $this->dateTimes->formatDateTime(now(), $vendor),
@@ -2132,28 +2136,13 @@ class OrderController extends Controller
         ];
     }
 
-    private function resolveReceiptInvoiceNumber(Order $order, $settings): string
+    /**
+     * Orders are numbered when their payment is confirmed. This only mints a
+     * number for orders that were paid before that was true.
+     */
+    private function resolveReceiptInvoiceNumber(Order $order): string
     {
-        if ($order->invoice_number) {
-            return $order->invoice_number;
-        }
-
-        $prefix = $settings?->invoice_prefix ?? 'INV';
-
-        $nextNumber = DB::table('vendor_settings')
-            ->where('vendor_id', $order->vendor_id)
-            ->lockForUpdate()
-            ->value('next_invoice_number') ?? 1001;
-
-        DB::table('vendor_settings')
-            ->where('vendor_id', $order->vendor_id)
-            ->increment('next_invoice_number');
-
-        $invoiceNumber = $prefix.'-'.str_pad((string) $nextNumber, 7, '0', STR_PAD_LEFT);
-
-        $order->update(['invoice_number' => $invoiceNumber]);
-
-        return $invoiceNumber;
+        return $this->invoiceNumbers->forOrder($order);
     }
 
     private function receiptPaidByPayload(Order $order): ?array

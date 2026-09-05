@@ -2,8 +2,8 @@
 // Polls for waiter-confirmed orders and processes items:
 //   mark preparing → wait (cook time) → mark ready → mark order ready
 
-import { api, sleep, randomInt, log, randomUUID } from '../helpers.mjs';
 import config from '../config.mjs';
+import { api, sleep, randomInt, log, randomUUID } from '../helpers.mjs';
 
 function extractOrdersFromSessions(sessions, statusFilter = null) {
   const orders = [];

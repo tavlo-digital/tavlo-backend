@@ -1,4 +1,4 @@
-import { type InputHTMLAttributes } from 'react';
+import type {InputHTMLAttributes} from 'react';
 
 type CheckboxCustomProps = Omit<InputHTMLAttributes<HTMLInputElement>, 'type' | 'className'>;
 

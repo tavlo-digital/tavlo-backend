@@ -2,8 +2,8 @@
 // Simulates one guest customer's full lifecycle:
 //   guest login → scan table → browse menu → add items → confirm order → pay
 
-import { api, sleep, randomInt, randomFrom, randomNote, randomDelay, pickPaymentMethod, log } from '../helpers.mjs';
 import config from '../config.mjs';
+import { api, sleep, randomInt, randomFrom, randomNote, randomDelay, pickPaymentMethod, log } from '../helpers.mjs';
 
 export async function runCustomer(opts) {
   const {

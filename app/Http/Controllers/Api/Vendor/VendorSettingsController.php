@@ -3,10 +3,12 @@
 namespace App\Http\Controllers\Api\Vendor;
 
 use App\Http\Controllers\Controller;
+use App\Models\FiscalDevice;
 use App\Models\Vendor;
 use App\Models\VendorRequestChange;
 use App\Models\VendorSetting;
 use App\Services\CustomerApiCache;
+use App\Services\Fiscal\FiscalizationService;
 use App\Services\LocaleService;
 use App\Services\MediaService;
 use App\Services\VendorMediaService;
@@ -64,6 +66,7 @@ class VendorSettingsController extends Controller
             'restaurantName' => ['sometimes', 'nullable', 'string', 'max:255'],
             'website' => ['sometimes', 'nullable', 'url', 'max:255'],
             'city' => ['sometimes', 'nullable', 'string', 'max:255'],
+            'postalCode' => ['sometimes', 'nullable', 'string', 'max:32'],
             'address' => ['sometimes', 'nullable', 'string', 'max:500'],
             'latitude' => ['sometimes', 'nullable', 'numeric', 'between:-90,90'],
             'longitude' => ['sometimes', 'nullable', 'numeric', 'between:-180,180'],
@@ -184,6 +187,9 @@ class VendorSettingsController extends Controller
         }
         if (isset($data['city'])) {
             $vendorFields['city'] = $data['city'];
+        }
+        if (isset($data['postalCode'])) {
+            $vendorFields['postal_code'] = $data['postalCode'];
         }
         if (isset($data['address'])) {
             $vendorFields['address'] = $data['address'];
@@ -366,6 +372,21 @@ class VendorSettingsController extends Controller
                     'message' => 'Legal information must be submitted and approved before your restaurant can go live.',
                 ], 422);
             }
+
+            // Approval can succeed while registration fails. Without this a
+            // vendor could take orders whose receipts never get signed.
+            $fiscalization = app(FiscalizationService::class);
+
+            if ($fiscalization->required($vendor)) {
+                $device = FiscalDevice::where('vendor_id', $vendor->id)->first();
+
+                if (! $device?->isUsable()) {
+                    return response()->json([
+                        'message' => 'Your cash register must be registered before your restaurant can go live. Our team will confirm this once your legal details are approved.',
+                        'code' => 'CASH_REGISTER_REQUIRED',
+                    ], 422);
+                }
+            }
         }
 
         if (! empty($settingsData)) {
@@ -434,8 +455,18 @@ class VendorSettingsController extends Controller
             'companyType' => [...$presenceRules, 'string', 'max:50'],
             'country' => [...$presenceRules, 'string', 'max:100'],
             'city' => [...$presenceRules, 'string', 'max:255'],
+            'postalCode' => [...$presenceRules, 'string', 'max:32'],
             'address' => [...$presenceRules, 'string', 'max:500'],
             'vendorNotes' => ['nullable', 'string', 'max:1000'],
+            // Cash register registration is part of the same legal identity, so
+            // it is submitted and approved together with the rest of it.
+            'fonParticipantId' => ['sometimes', 'nullable', 'string', 'min:8', 'max:12'],
+            'fonUserId' => ['sometimes', 'nullable', 'string', 'min:8', 'max:12', 'regex:/^(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9]+$/'],
+            'fonUserPin' => ['sometimes', 'nullable', 'string', 'min:8', 'max:128'],
+        ], [
+            'fonUserId.regex' => 'The Benutzer-ID must be 8–12 letters and digits, with at least one of each.',
+            'fonParticipantId.min' => 'The Teilnehmer-Identifikation must be 8–12 characters.',
+            'fonParticipantId.max' => 'The Teilnehmer-Identifikation must be 8–12 characters.',
         ]);
 
         $changeData = [
@@ -461,11 +492,20 @@ class VendorSettingsController extends Controller
             'city' => $data['city']
                 ?? $pendingChange?->city
                 ?? $vendor->city,
+            'postal_code' => $data['postalCode']
+                ?? $pendingChange?->postal_code
+                ?? $vendor->postal_code,
             'address' => $data['address']
                 ?? $pendingChange?->address
                 ?? $vendor->address,
             'vendor_notes' => $data['vendorNotes']
                 ?? $pendingChange?->vendor_notes,
+            'fon_participant_id' => $data['fonParticipantId']
+                ?? $pendingChange?->fon_participant_id,
+            'fon_user_id' => $data['fonUserId']
+                ?? $pendingChange?->fon_user_id,
+            'fon_user_pin' => $data['fonUserPin']
+                ?? $pendingChange?->fon_user_pin,
             'status' => 'pending',
             'admin_notes' => null,
             'checked_by' => null,
@@ -514,7 +554,11 @@ class VendorSettingsController extends Controller
                     ?? $vendor->vendorSetting?->company_type,
                 'country' => $latest->country,
                 'city' => $latest->city,
+                'postalCode' => $latest->postal_code,
                 'address' => $latest->address,
+                // The two ids are safe to show back; the PIN never is.
+                'fonParticipantId' => $latest->fon_participant_id,
+                'fonUserId' => $latest->fon_user_id,
             ],
             'adminNotes' => $latest->admin_notes,
             'vendorNotes' => $latest->vendor_notes,
@@ -662,6 +706,7 @@ class VendorSettingsController extends Controller
             'website' => $vendor->website,
             'country' => $vendor->country,
             'city' => $vendor->city,
+            'postalCode' => $vendor->postal_code,
             'address' => $vendor->address,
             'latitude' => $vendor->latitude !== null ? (float) $vendor->latitude : null,
             'longitude' => $vendor->longitude !== null ? (float) $vendor->longitude : null,

@@ -6,9 +6,9 @@
 //   3. Fetches menus, tables, and verifies staff logins
 //   4. Writes results/test-data.json for the runner
 
-import { api, log } from './helpers.mjs';
-import config from './config.mjs';
 import { writeFileSync, mkdirSync } from 'fs';
+import config from './config.mjs';
+import { api, log } from './helpers.mjs';
 
 const testData = { vendors: {}, generatedAt: new Date().toISOString() };
 

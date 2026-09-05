@@ -13,10 +13,10 @@ import {
     Info,
     Lock,
 } from 'lucide-react';
-import AdminLayout from '@/layouts/admin-layout';
+import { useState } from 'react';
 import AdminLanguageTabs, { languageDirection } from '@/components/admin-language-tabs';
 import type { AdminLanguage } from '@/components/admin-language-tabs';
-import { useState } from 'react';
+import AdminLayout from '@/layouts/admin-layout';
 
 type Tab = 'plans' | 'active' | 'overdue';
 

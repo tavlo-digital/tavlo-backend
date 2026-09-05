@@ -65,6 +65,7 @@ class Vendor extends Authenticatable
         'website',
         'country',
         'city',
+        'postal_code',
         'address',
         'latitude',
         'longitude',

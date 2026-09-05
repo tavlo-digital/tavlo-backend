@@ -62,6 +62,7 @@ class AnalyticsController extends Controller
                         ->where('product_uid', $row->product_uid)
                         ->latest()
                         ->first();
+
                 return [
                     'id' => (string) ($current?->id ?? 0),
                     'name' => $current?->name ?? 'Unknown',

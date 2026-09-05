@@ -1,5 +1,4 @@
 import { Head } from '@inertiajs/react';
-import AdminLayout from '@/layouts/admin-layout';
 import {
     Store,
     Users,
@@ -17,6 +16,7 @@ import {
     X,
     TrendingUp,
 } from 'lucide-react';
+import AdminLayout from '@/layouts/admin-layout';
 
 // ─── KPI Card ──────────────────────────────────────────────────
 function KpiCard({

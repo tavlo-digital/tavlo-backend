@@ -15,9 +15,10 @@ import {
     Bell,
     Send,
 } from 'lucide-react';
-import { FormEvent, useState } from 'react';
-import AdminLayout from '@/layouts/admin-layout';
+import type { FormEvent} from 'react';
+import { useState } from 'react';
 import { useNotifications } from '@/hooks/use-notifications';
+import AdminLayout from '@/layouts/admin-layout';
 
 type Check = {
     name: string;

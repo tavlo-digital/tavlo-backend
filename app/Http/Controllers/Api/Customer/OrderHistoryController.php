@@ -2,12 +2,14 @@
 
 namespace App\Http\Controllers\Api\Customer;
 
+use App\Http\Controllers\Concerns\FormatsFiscalReceipts;
 use App\Http\Controllers\Controller;
 use App\Models\CartItem;
 use App\Models\Order;
 use App\Models\OrderPayment;
 use App\Models\TableScanSession;
 use App\Models\Vendor;
+use App\Services\InvoiceNumberService;
 use App\Services\LocaleService;
 use App\Services\MediaService;
 use App\Services\MenuCustomizationService;
@@ -19,16 +21,18 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\DB;
 
 class OrderHistoryController extends Controller
 {
+    use FormatsFiscalReceipts;
+
     public function __construct(
         private readonly MediaService $media,
         private readonly VendorDateTimeService $dateTimes,
         private readonly LocaleService $locales,
         private readonly MenuCustomizationService $customizations,
         private readonly PaymentMethodDetailsService $paymentMethods,
+        private readonly InvoiceNumberService $invoiceNumbers,
     ) {}
 
     /**
@@ -257,7 +261,7 @@ class OrderHistoryController extends Controller
         $totals['total_tips'] = $receiptTip;
         $totals['grand_total'] = round($totals['grand_total'] + $receiptTip, 2);
 
-        $invoiceNumber = $this->resolveInvoiceNumber($order, $settings);
+        $invoiceNumber = $this->resolveInvoiceNumber($order);
 
         $payment = OrderPayment::where('order_id', $order->id)
             ->whereNotNull('paid_at')
@@ -331,6 +335,7 @@ class OrderHistoryController extends Controller
                     ),
                 ],
                 'legal' => $this->legalBlock($countryCode, $vendor),
+                'fiscal' => $this->fiscalBlock($order),
             ],
             'meta' => [
                 'generated_at' => $this->dateTimes->formatDateTime(now(), $vendor),
@@ -480,7 +485,7 @@ class OrderHistoryController extends Controller
                 ],
                 'receipt' => [
                     'receipt_id' => $payment->id,
-                    'invoice_number' => $this->resolveInvoiceNumber($anchor, $settings),
+                    'invoice_number' => $this->resolveInvoiceNumber($anchor),
                     'date' => $this->dateTimes->formatDate($payment->paid_at ?? $anchor->created_at, $vendor),
                     'time' => $this->dateTimes->formatTime($payment->paid_at ?? $anchor->created_at, $vendor),
                     'table' => $tableName,
@@ -500,6 +505,7 @@ class OrderHistoryController extends Controller
                     'paid_at' => $this->dateTimes->formatDateTime($payment->paid_at, $vendor),
                 ],
                 'legal' => $this->legalBlock($countryCode, $vendor),
+                'fiscal' => $this->fiscalBlock($anchor),
             ],
             'meta' => [
                 'generated_at' => $this->dateTimes->formatDateTime(now(), $vendor),
@@ -551,28 +557,13 @@ class OrderHistoryController extends Controller
         ];
     }
 
-    private function resolveInvoiceNumber(Order $order, $settings): string
+    /**
+     * Orders are numbered when their payment is confirmed. This only mints a
+     * number for orders that were paid before that was true.
+     */
+    private function resolveInvoiceNumber(Order $order): string
     {
-        if ($order->invoice_number) {
-            return $order->invoice_number;
-        }
-
-        $prefix = $settings?->invoice_prefix ?? 'INV';
-
-        $nextNumber = DB::table('vendor_settings')
-            ->where('vendor_id', $order->vendor_id)
-            ->lockForUpdate()
-            ->value('next_invoice_number') ?? 1001;
-
-        DB::table('vendor_settings')
-            ->where('vendor_id', $order->vendor_id)
-            ->increment('next_invoice_number');
-
-        $invoiceNumber = $prefix.'-'.str_pad((string) $nextNumber, 7, '0', STR_PAD_LEFT);
-
-        $order->update(['invoice_number' => $invoiceNumber]);
-
-        return $invoiceNumber;
+        return $this->invoiceNumbers->forOrder($order);
     }
 
     private function formatFullAddress($vendor): ?string

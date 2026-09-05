@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\Vendor\BillingController;
 use App\Http\Controllers\Api\Vendor\BroadcastAuthController;
 use App\Http\Controllers\Api\Vendor\DashboardController;
 use App\Http\Controllers\Api\Vendor\DietaryPreferenceController;
+use App\Http\Controllers\Api\Vendor\FiscalController;
 use App\Http\Controllers\Api\Vendor\InventoryController;
 use App\Http\Controllers\Api\Vendor\MenuCategoryController;
 use App\Http\Controllers\Api\Vendor\MenuController;
@@ -135,6 +136,10 @@ Route::middleware(['auth:vendor,team_member', 'vendor.staff.access'])->group(fun
     Route::get('{vendorId}/settings', [VendorSettingsController::class, 'show'])->name('settings.show');
     Route::put('{vendorId}/settings', [VendorSettingsController::class, 'update'])->name('settings.update');
     Route::get('{vendorId}/subscription', [VendorSettingsController::class, 'subscription'])->name('subscription');
+    Route::get('{vendorId}/fiscal/status', [FiscalController::class, 'status'])->name('fiscal.status');
+    Route::post('{vendorId}/fiscal/connect', [FiscalController::class, 'connect'])->name('fiscal.connect');
+    Route::post('{vendorId}/fiscal/send-instructions', [FiscalController::class, 'sendInstructions'])->name('fiscal.sendInstructions');
+
     Route::post('{vendorId}/legal-info', [VendorSettingsController::class, 'submitLegalInfo'])->name('legalInfo.submit');
     Route::get('{vendorId}/legal-info/status', [VendorSettingsController::class, 'getLegalChangeStatus'])->name('legalInfo.status');
     Route::post('{vendorId}/settings/logo', [VendorSettingsController::class, 'uploadLogo'])->name('settings.logo');

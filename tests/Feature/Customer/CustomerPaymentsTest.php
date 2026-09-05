@@ -2,6 +2,9 @@
 
 namespace Tests\Feature\Customer;
 
+use App\Events\OperationalRealtimeNotification;
+use App\Jobs\DeliverOperationalNotification;
+use App\Jobs\DeliverOperationalRealtime;
 use App\Models\CartItem;
 use App\Models\Customer;
 use App\Models\MenuCategory;
@@ -16,6 +19,9 @@ use App\Models\VendorSetting;
 use App\Services\CheckoutHoldService;
 use App\Services\StripePaymentService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Defer\DeferredCallbackCollection;
+use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Queue;
 use Tests\TestCase;
 use UnexpectedValueException;
 
@@ -332,6 +338,7 @@ class CustomerPaymentsTest extends TestCase
 
     public function test_request_cash_records_every_covered_order_id_and_pivot(): void
     {
+        Queue::fake();
         [$tablemate, $tablemateSession] = $this->tablemate();
         $first = $this->order(['payment_pending' => false]);
         $second = $this->order([
@@ -356,6 +363,76 @@ class CustomerPaymentsTest extends TestCase
         );
         $this->assertTrue((bool) $first->fresh()->payment_pending);
         $this->assertTrue((bool) $second->fresh()->payment_pending);
+
+        $this->app->make(DeferredCallbackCollection::class)->invoke();
+        $job = Queue::pushed(DeliverOperationalNotification::class)->sole();
+        $job->handle();
+        $job->handle(); // Retrying delivery must not duplicate the order updates.
+
+        $notifications = Notification::whereNull('customer_id')->where('vendor_id', $this->vendor->id)->get();
+        $this->assertCount(2, $notifications);
+        $this->assertEqualsCanonicalizing(
+            [(string) $first->id, (string) $second->id],
+            $notifications->pluck('metadata.order.id')->all(),
+        );
+        $this->assertCount(2, $notifications->pluck('metadata.event_id')->unique());
+        $this->assertCount(1, $notifications->where('is_silent', false));
+        foreach ($notifications as $notification) {
+            $this->assertSame('cash', $notification->metadata['order']['paymentMethod']);
+            $this->assertTrue($notification->metadata['order']['paymentPending']);
+            $this->assertFalse($notification->metadata['order']['paymentReceived']);
+            $this->assertIsArray($notification->metadata['order']['items']);
+        }
+
+        Event::fake([OperationalRealtimeNotification::class]);
+        (new DeliverOperationalRealtime($job->deliveryId))->handle();
+        Event::assertDispatchedTimes(OperationalRealtimeNotification::class, 2);
+    }
+
+    public function test_pickup_cash_notification_contains_staff_order_snapshot(): void
+    {
+        Queue::fake();
+        $this->settings->update(['accept_on_site' => true, 'accept_pickup_cash' => true]);
+        $this->session->update(['type' => 'pickup', 'restaurant_table_id' => null]);
+        $order = $this->order(['order_type' => 'pickup', 'payment_pending' => false]);
+
+        $this->withHeaders([...$this->headers, 'X-Order-Mode' => 'pickup'])
+            ->postJson('/api/customer/payments/request-cash')->assertOk();
+        $this->app->make(DeferredCallbackCollection::class)->invoke();
+        Queue::pushed(DeliverOperationalNotification::class)->sole()->handle();
+
+        $snapshot = Notification::whereNull('customer_id')
+            ->where('vendor_id', $this->vendor->id)->firstOrFail()->metadata['order'];
+        $this->assertSame((string) $order->id, $snapshot['id']);
+        $this->assertSame('pickup', $snapshot['orderMode']);
+        $this->assertSame('cash', $snapshot['paymentMethod']);
+        $this->assertTrue($snapshot['paymentPending']);
+    }
+
+    public function test_staff_snapshots_follow_hold_release_intent_and_cancellation(): void
+    {
+        Queue::fake();
+        $order = $this->order(['payment_pending' => false]);
+
+        foreach ([
+            ['post', 'checkout-hold', true],
+            ['delete', 'checkout-hold', false],
+            ['post', 'create-intent', true],
+            ['delete', 'intent', false],
+        ] as [$method, $path, $pending]) {
+            $this->withHeaders($this->headers)
+                ->json(strtoupper($method), '/api/customer/payments/'.$path)
+                ->assertOk();
+            $this->app->make(DeferredCallbackCollection::class)->invoke();
+            Queue::pushed(DeliverOperationalNotification::class)->last()->handle();
+
+            $snapshot = Notification::whereNull('customer_id')
+                ->where('vendor_id', $this->vendor->id)->latest('id')->firstOrFail()->metadata['order'];
+            $this->assertSame((string) $order->id, $snapshot['id']);
+            $this->assertSame($pending, $snapshot['paymentPending']);
+            $this->assertSame($order->fresh()->payment_method, $snapshot['paymentMethod']);
+            $this->assertIsArray($snapshot['items']);
+        }
     }
 
     public function test_payer_without_an_own_order_can_request_cash_for_an_assigned_order(): void

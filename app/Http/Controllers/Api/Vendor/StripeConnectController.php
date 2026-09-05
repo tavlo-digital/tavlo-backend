@@ -11,9 +11,7 @@ use Illuminate\Http\Request;
 
 class StripeConnectController extends Controller
 {
-    public function __construct(private readonly StripeConnectService $stripeService)
-    {
-    }
+    public function __construct(private readonly StripeConnectService $stripeService) {}
 
     /**
      * POST /api/vendor/{vendorId}/stripe/connect
@@ -24,12 +22,12 @@ class StripeConnectController extends Controller
         $vendor = $this->resolveVendor($vendorId);
         $this->authorizeVendor($request, $vendor);
 
-        $settings = $vendor->vendorSetting ?? new VendorSetting();
+        $settings = $vendor->vendorSetting ?? new VendorSetting;
 
         if ($settings->stripe_account_id) {
             return response()->json([
                 'stripeAccountId' => $settings->stripe_account_id,
-                'alreadyExists'   => true,
+                'alreadyExists' => true,
             ]);
         }
 
@@ -54,7 +52,7 @@ class StripeConnectController extends Controller
 
         $data = $request->validate([
             'refreshUrl' => ['required', 'url'],
-            'returnUrl'  => ['required', 'url'],
+            'returnUrl' => ['required', 'url'],
         ]);
 
         $settings = $vendor->vendorSetting;
@@ -85,7 +83,7 @@ class StripeConnectController extends Controller
 
         if (! $settings?->stripe_account_id) {
             return response()->json([
-                'connected'          => false,
+                'connected' => false,
                 'onboardingComplete' => false,
             ]);
         }
@@ -98,11 +96,11 @@ class StripeConnectController extends Controller
         }
 
         return response()->json([
-            'connected'          => true,
-            'stripeAccountId'    => $settings->stripe_account_id,
+            'connected' => true,
+            'stripeAccountId' => $settings->stripe_account_id,
             'onboardingComplete' => $status['onboarding_complete'],
-            'chargesEnabled'     => $status['charges_enabled'],
-            'payoutsEnabled'     => $status['payouts_enabled'],
+            'chargesEnabled' => $status['charges_enabled'],
+            'payoutsEnabled' => $status['payouts_enabled'],
         ]);
     }
 
@@ -127,9 +125,9 @@ class StripeConnectController extends Controller
         }
 
         $settings->update([
-            'stripe_account_id'          => null,
+            'stripe_account_id' => null,
             'stripe_onboarding_complete' => false,
-            'stripe_enabled'             => false,
+            'stripe_enabled' => false,
         ]);
 
         return response()->json(['message' => 'Stripe account disconnected successfully.']);

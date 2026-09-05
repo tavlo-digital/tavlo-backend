@@ -107,11 +107,11 @@ class ReviewController extends Controller
             ->get()
             ->groupBy('customer_id')
             ->map(fn ($orders) => [
-                'id'          => (string) $orders->first()->customer?->id,
-                'name'        => $orders->first()->customer?->name,
-                'email'       => $orders->first()->customer?->email,
-                'orderCount'  => $orders->count(),
-                'totalSpent'  => (float) $orders->sum('amount'),
+                'id' => (string) $orders->first()->customer?->id,
+                'name' => $orders->first()->customer?->name,
+                'email' => $orders->first()->customer?->email,
+                'orderCount' => $orders->count(),
+                'totalSpent' => (float) $orders->sum('amount'),
                 'lastOrderAt' => $orders->max('created_at'),
             ])
             ->sortByDesc('totalSpent')
