@@ -36,32 +36,28 @@ class ReceiptPayloadBuilder
         $taxGroups = TaxCalculationService::computeTaxGroups($items, $vendorCountry, true);
 
         $buckets = [];
+        $lineItems = [];
 
         foreach ($taxGroups as $group) {
-            $this->addToBucket(
-                $buckets,
-                $this->bucketName($countryCode, (float) $group['vat_rate']),
-                (float) $group['gross_amount'],
-            );
+            $bucket = $this->bucketName($countryCode, (float) $group['vat_rate']);
+            $amount = (float) $group['gross_amount'];
+            $this->addToBucket($buckets, $bucket, $amount);
+            $lineItems[] = $this->lineItem($group['label'], $amount, $bucket);
         }
 
         $serviceFee = round((float) ($order->service_fee ?? 0), 2);
         $tip = round((float) ($order->tip_amount ?? 0), 2);
 
         if ($serviceFee != 0.0) {
-            $this->addToBucket(
-                $buckets,
-                $this->configuredBucket($countryCode, 'service_fee_vat'),
-                $serviceFee,
-            );
+            $bucket = $this->configuredBucket($countryCode, 'service_fee_vat');
+            $this->addToBucket($buckets, $bucket, $serviceFee);
+            $lineItems[] = $this->lineItem('Service fee', $serviceFee, $bucket);
         }
 
         if ($tip != 0.0) {
-            $this->addToBucket(
-                $buckets,
-                $this->configuredBucket($countryCode, 'tip_vat'),
-                $tip,
-            );
+            $bucket = $this->configuredBucket($countryCode, 'tip_vat');
+            $this->addToBucket($buckets, $bucket, $tip);
+            $lineItems[] = $this->lineItem('Tip', $tip, $bucket);
         }
 
         // The charged amount is the authority: orders.amount already carries the
@@ -75,7 +71,7 @@ class ReceiptPayloadBuilder
             ]);
         }
 
-        $buckets = $this->reconcileToTotal($buckets, $charged, $order);
+        [$buckets, $lineItems] = $this->reconcileToTotal($buckets, $lineItems, $charged, $order);
 
         return [
             'amounts_per_vat_rate' => $this->formatBuckets($buckets),
@@ -83,6 +79,10 @@ class ReceiptPayloadBuilder
                 'payment_type' => $this->paymentType($order),
                 'amount' => $this->money($charged),
             ]],
+            // fiskaly SIGN AT's standard_v1 schema requires an itemized
+            // breakdown alongside the VAT-rate totals, not just the totals
+            // themselves — this is what ends up on the printed RKSV receipt.
+            'line_items' => $lineItems,
             'total_gross' => $charged,
             'currency' => strtoupper((string) ($order->currency ?? $order->vendor?->currency ?? 'EUR')),
             'tax_groups' => $taxGroups,
@@ -97,15 +97,16 @@ class ReceiptPayloadBuilder
      * upstream rather than rounding.
      *
      * @param  array<string, float>  $buckets
-     * @return array<string, float>
+     * @param  array<int, array{text: string, quantity: string, amount: string, price_per_unit: string, vat_rate: string}>  $lineItems
+     * @return array{0: array<string, float>, 1: array<int, array<string, string>>}
      */
-    private function reconcileToTotal(array $buckets, float $charged, Order $order): array
+    private function reconcileToTotal(array $buckets, array $lineItems, float $charged, Order $order): array
     {
         $sum = round(array_sum($buckets), 2);
         $delta = round($charged - $sum, 2);
 
         if ($delta == 0.0) {
-            return $buckets;
+            return [$buckets, $lineItems];
         }
 
         if (abs($delta) > 0.05) {
@@ -129,7 +130,18 @@ class ReceiptPayloadBuilder
         $largest = array_search(max($buckets), $buckets, true);
         $buckets[$largest] = round($buckets[$largest] + $delta, 2);
 
-        return $buckets;
+        // Keep the line items' own total in step with the bucket they came
+        // from, so the two never disagree on the printed receipt.
+        foreach ($lineItems as $index => $lineItem) {
+            if ($lineItem['vat_rate'] === $largest) {
+                $adjusted = round((float) $lineItem['amount'] + $delta, 2);
+                $lineItems[$index]['amount'] = $this->money($adjusted);
+                $lineItems[$index]['price_per_unit'] = $this->money($adjusted);
+                break;
+            }
+        }
+
+        return [$buckets, $lineItems];
     }
 
     /**
@@ -209,6 +221,18 @@ class ReceiptPayloadBuilder
     private function money(float $amount): string
     {
         return number_format($amount, 2, '.', '');
+    }
+
+    /** One aggregated line — per VAT bucket, not per cart row — at quantity 1. */
+    private function lineItem(string $text, float $amount, string $vatRate): array
+    {
+        return [
+            'text' => $text,
+            'quantity' => '1.00',
+            'amount' => $this->money($amount),
+            'price_per_unit' => $this->money($amount),
+            'vat_rate' => $vatRate,
+        ];
     }
 
     /**

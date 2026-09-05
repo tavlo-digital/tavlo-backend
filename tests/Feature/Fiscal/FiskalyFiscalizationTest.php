@@ -163,12 +163,18 @@ class FiskalyFiscalizationTest extends TestCase
         return $order->fresh();
     }
 
+    /**
+     * Mirrors fiskaly's real SIGN AT response shape, confirmed against the
+     * live sandbox on 2026-09-05: there is no top-level `signature` or
+     * `signature_counter` field for RKSV — the actual signature is embedded
+     * inside `qr_code_data`. That is unlike SIGN DE (see
+     * test_germany_opens_and_finishes_a_transaction), which does return both.
+     */
     private function fakeAustria(): void
     {
         Http::fake([
             '*/cash-register/*/receipt/*' => Http::response([
                 'qr_code_data' => '_R1-AT1_TAVLO-TEST_1_2026-09-02T12:00:00_28,00_0,00_0,00_0,00_0,00_sig',
-                'signature' => 'sig-value',
                 'receipt_number' => 42,
                 'cash_register_serial_number' => 'TAVLO-TEST',
             ]),
@@ -258,9 +264,45 @@ class FiskalyFiscalizationTest extends TestCase
         $receipt->refresh();
         $this->assertSame(FiscalReceipt::STATE_SIGNED, $receipt->state);
         $this->assertStringStartsWith('_R1-AT1_', $receipt->qr_code_data);
-        $this->assertSame('sig-value', $receipt->signature);
+        // SIGN AT has no separate signature field — see fakeAustria().
+        $this->assertNull($receipt->signature);
         $this->assertSame('42', $receipt->receipt_number);
         $this->assertNotNull($receipt->signed_at);
+    }
+
+    /**
+     * fiskaly's real SIGN AT schema rejects `standard_v1.receipt.*` — the
+     * fields belong directly under `standard_v1`, and `line_items` is
+     * required. Http::fake() does not validate outgoing shapes, so this once
+     * shipped broken: every real signing call 400'd against fiskaly's actual
+     * API despite every other test here passing. Verified against the live
+     * sandbox on 2026-09-05.
+     */
+    public function test_the_signing_request_matches_fiskalys_standard_v1_schema(): void
+    {
+        $vendor = $this->vendor('AT');
+        $this->device($vendor);
+        $this->fakeAustria();
+
+        $order = $this->paidOrder($vendor);
+        $order->update(['payment_confirmed_at' => now()]);
+        $receipt = FiscalReceipt::where('order_id', $order->id)->firstOrFail();
+
+        app(FiscalizationService::class)->sign($receipt);
+
+        Http::assertSent(function ($request) {
+            if (! str_contains($request->url(), '/receipt/')) {
+                return true; // not the signing call — ignore (e.g. /auth)
+            }
+
+            $schema = $request['schema'] ?? [];
+
+            return array_key_exists('standard_v1', $schema)
+                && ! array_key_exists('receipt', $schema['standard_v1'])
+                && array_key_exists('amounts_per_vat_rate', $schema['standard_v1'])
+                && array_key_exists('amounts_per_payment_type', $schema['standard_v1'])
+                && ! empty($schema['standard_v1']['line_items']);
+        });
     }
 
     public function test_signing_an_already_signed_receipt_is_a_no_op(): void

@@ -114,12 +114,14 @@ class FiskalyAustriaProvider implements FiscalProvider
             "/cash-register/{$device->register_id}/receipt/{$receipt->external_id}",
             [
                 'receipt_type' => 'NORMAL',
+                // fiskaly's standard_v1 schema takes these three keys directly
+                // — not nested under a "receipt" key, and line_items is
+                // required, not optional.
                 'schema' => [
                     'standard_v1' => [
-                        'receipt' => [
-                            'amounts_per_vat_rate' => $payload['amounts_per_vat_rate'],
-                            'amounts_per_payment_type' => $payload['amounts_per_payment_type'],
-                        ],
+                        'amounts_per_vat_rate' => $payload['amounts_per_vat_rate'],
+                        'amounts_per_payment_type' => $payload['amounts_per_payment_type'],
+                        'line_items' => $payload['line_items'],
                     ],
                 ],
             ],
