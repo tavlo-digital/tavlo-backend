@@ -4,6 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Rules
 
+## Editing rules
+- Always modify files with the Edit or Write tool.
+- Never use Python, sed, awk, perl, or shell heredocs to change source files.
+- If an edit fails to match, re-read the file and retry the edit. Do not fall back to a script.
+
 ### API Documentation
 After writing or changing an API endpoint, update the corresponding documentation file in the sibling `../tavlo-api-docs/` project:
 - Customer API → `../tavlo-api-docs/customer-api.md`
