@@ -12,6 +12,7 @@ class Country extends Model
         'name',
         'flag',
         'currency',
+        'default_language',
         'timezone',
         'is_active',
     ];

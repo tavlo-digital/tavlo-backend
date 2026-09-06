@@ -940,10 +940,16 @@ class TableCartTest extends TestCase
             ->assertOk();
         $this->assertArabicCustomizationPayload($tracking->json('items.0'));
 
+        // The receipt is the restaurant's legal document and is written in
+        // their country's language, so it does not follow Accept-Language the
+        // way the app's own screens above do.
         $receipt = $this->withHeaders($headers)
             ->getJson("/api/customer/orders/{$order->order_public_id}/receipt")
             ->assertOk();
-        $this->assertArabicCustomizationPayload($receipt->json('data.order.items.0'));
+        $this->assertNotSame(
+            'بطاطس مقلية',
+            data_get($receipt->json('data.order.items.0'), 'name'),
+        );
     }
 
     public function test_add_item_accepts_translated_customization_names_for_legacy_clients(): void

@@ -116,6 +116,42 @@ class GoLiveRequiresCashRegisterTest extends TestCase
         $this->assertTrue((bool) $this->vendor->vendorSetting->fresh()->is_live_and_discoverable);
     }
 
+    public function test_the_settings_response_explains_why_going_live_is_blocked(): void
+    {
+        // The dashboard disables the switch for the same reason the API would
+        // refuse it, so the two cannot drift apart.
+        $this->getJson("/api/vendor/{$this->vendor->id}/settings", $this->headers())
+            ->assertOk()
+            ->assertJsonPath('goLive.allowed', false)
+            ->assertJsonPath('goLive.code', 'CASH_REGISTER_REQUIRED')
+            ->assertJsonPath('goLive.message', fn (?string $m) => is_string($m) && $m !== '');
+    }
+
+    public function test_the_settings_response_reports_pending_legal_details(): void
+    {
+        VendorRequestChange::where('vendor_id', $this->vendor->id)->delete();
+        VendorRequestChange::create([
+            'vendor_id' => $this->vendor->id,
+            'vat_number' => 'ATU12345678',
+            'status' => 'pending',
+        ]);
+
+        $this->getJson("/api/vendor/{$this->vendor->id}/settings", $this->headers())
+            ->assertOk()
+            ->assertJsonPath('goLive.allowed', false)
+            ->assertJsonPath('goLive.code', 'LEGAL_INFO_PENDING');
+    }
+
+    public function test_the_settings_response_allows_going_live_once_everything_is_ready(): void
+    {
+        $this->device(FiscalDevice::STATE_INITIALIZED);
+
+        $this->getJson("/api/vendor/{$this->vendor->id}/settings", $this->headers())
+            ->assertOk()
+            ->assertJsonPath('goLive.allowed', true)
+            ->assertJsonPath('goLive.code', null);
+    }
+
     public function test_a_vendor_that_is_already_live_is_not_re_checked(): void
     {
         $this->vendor->vendorSetting->update(['is_live_and_discoverable' => true]);

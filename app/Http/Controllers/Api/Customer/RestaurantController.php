@@ -9,6 +9,7 @@ use App\Models\DietaryPreference;
 use App\Models\MenuCategory;
 use App\Models\MenuItem;
 use App\Models\RestaurantTable;
+use App\Models\Review;
 use App\Models\SpecialTag;
 use App\Models\Vendor;
 use App\Models\VendorSetting;
@@ -924,12 +925,16 @@ class RestaurantController extends Controller
         $setting = $vendor->vendorSetting;
         $availableLanguages = collect($this->locales->supportedLanguages($vendor));
 
+        // The restaurant's own language, from the country on their legal and
+        // tax details. Receipts are always written in it.
+        $defaultLanguage = $this->locales->defaultLanguage($vendor);
+
         return response()->json([
             'vendor' => [
                 'id' => $vendor->vendor_public_id,
                 'name' => $vendor->restaurant_name ?? $vendor->name,
             ],
-            'default_language' => 'en',
+            'default_language' => $defaultLanguage,
             'available_languages' => $availableLanguages->all(),
             'date_format' => $setting?->date_format ?? 'DD.MM.YYYY',
             'time_format' => $setting?->time_format ?? '24h',
@@ -937,7 +942,7 @@ class RestaurantController extends Controller
                 ->map(fn (string $code) => [
                     'code' => $code,
                     'name' => $this->languageName($code),
-                    'is_default' => $code === 'en',
+                    'is_default' => $code === $defaultLanguage,
                 ])
                 ->values()
                 ->all(),
@@ -951,7 +956,7 @@ class RestaurantController extends Controller
     {
         $vendor = $this->discoverableVendor($vendorPublicId);
 
-        $query = \App\Models\Review::where('vendor_id', $vendor->id)
+        $query = Review::where('vendor_id', $vendor->id)
             ->where('flagged', false)
             ->with([
                 'customer:id,first_name,last_name,profile_picture',
@@ -1058,7 +1063,7 @@ class RestaurantController extends Controller
 
         // Aggregate summary across ALL non-flagged reviews for this vendor
         // (independent of filters/pagination so the breakdown is stable).
-        $counts = \App\Models\Review::where('vendor_id', $vendor->id)
+        $counts = Review::where('vendor_id', $vendor->id)
             ->where('flagged', false)
             ->selectRaw('rating, COUNT(*) as count')
             ->groupBy('rating')

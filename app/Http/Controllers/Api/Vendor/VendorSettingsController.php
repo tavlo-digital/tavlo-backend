@@ -363,29 +363,10 @@ class VendorSettingsController extends Controller
         $requestingLive = ($data['isLiveAndDiscoverable'] ?? false) === true;
 
         if ($requestingLive && ! $currentlyLive) {
-            $hasApprovedLegal = $vendor->requestChanges()
-                ->where('status', 'approved')
-                ->exists();
+            $blocker = $this->goLiveBlocker($vendor);
 
-            if (! $hasApprovedLegal) {
-                return response()->json([
-                    'message' => 'Legal information must be submitted and approved before your restaurant can go live.',
-                ], 422);
-            }
-
-            // Approval can succeed while registration fails. Without this a
-            // vendor could take orders whose receipts never get signed.
-            $fiscalization = app(FiscalizationService::class);
-
-            if ($fiscalization->required($vendor)) {
-                $device = FiscalDevice::where('vendor_id', $vendor->id)->first();
-
-                if (! $device?->isUsable()) {
-                    return response()->json([
-                        'message' => 'Your cash register must be registered before your restaurant can go live. Our team will confirm this once your legal details are approved.',
-                        'code' => 'CASH_REGISTER_REQUIRED',
-                    ], 422);
-                }
+            if ($blocker) {
+                return response()->json($blocker, 422);
             }
         }
 
@@ -720,6 +701,17 @@ class VendorSettingsController extends Controller
             'coverPhoto' => $this->media->url($settings->getRawOriginal('cover_photo_url')),
             'backgroundImageUrl' => $settings->background_image_url,
             'isLiveAndDiscoverable' => (bool) $settings->is_live_and_discoverable,
+            // Why the visibility switch is unavailable, so the dashboard can say
+            // so rather than letting it be flipped into an error.
+            'goLive' => (function () use ($vendor) {
+                $blocker = $this->goLiveBlocker($vendor);
+
+                return [
+                    'allowed' => $blocker === null,
+                    'code' => $blocker['code'] ?? null,
+                    'message' => $blocker['message'] ?? null,
+                ];
+            })(),
             'businessHours' => $settings->business_hours ?? VendorSetting::defaultBusinessHours(),
             // payment
             'acceptOnSite' => $settings->accept_on_site ?? true,
@@ -803,6 +795,48 @@ class VendorSettingsController extends Controller
             'showEmailPublic' => $settings->show_email_public ?? false,
             'showWebsitePublic' => $settings->show_website_public ?? true,
         ];
+    }
+
+    /**
+     * What, if anything, stops this restaurant going live.
+     *
+     * Shared by the guard on the way in and by the settings response, so the
+     * dashboard can disable the switch for the same reason the API would
+     * refuse it. Two implementations of this rule would drift, and a vendor
+     * would meet an error on a control that looked available.
+     *
+     * @return array{message: string, code: string}|null
+     */
+    private function goLiveBlocker(Vendor $vendor): ?array
+    {
+        $hasApprovedLegal = $vendor->requestChanges()
+            ->where('status', 'approved')
+            ->exists();
+
+        if (! $hasApprovedLegal) {
+            return [
+                'message' => 'Your legal and tax details are still being reviewed by Tavlo. Your restaurant can go live once they are approved.',
+                'code' => 'LEGAL_INFO_PENDING',
+            ];
+        }
+
+        // Approval can succeed while registration fails, so approved legal
+        // details alone are not enough: without this a restaurant could take
+        // orders whose receipts never get signed.
+        $fiscalization = app(FiscalizationService::class);
+
+        if ($fiscalization->required($vendor)) {
+            $device = FiscalDevice::where('vendor_id', $vendor->id)->first();
+
+            if (! $device?->isUsable()) {
+                return [
+                    'message' => 'Your cash register must be registered before your restaurant can go live. Our team will confirm this once your details are approved.',
+                    'code' => 'CASH_REGISTER_REQUIRED',
+                ];
+            }
+        }
+
+        return null;
     }
 
     private function resolveVendor(string $vendorId): Vendor

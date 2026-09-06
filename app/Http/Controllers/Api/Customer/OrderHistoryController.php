@@ -250,7 +250,11 @@ class OrderHistoryController extends Controller
         $vendor = $order->vendor;
         $settings = $vendor?->vendorSetting;
         $vendorCountry = $vendor?->country ?? 'AT';
-        $contentLocale = $vendor ? $this->locales->resolveCustomerLocaleFromHeader($request, $vendor) : 'en';
+        // A receipt is the restaurant's legal document, so it is written in
+        // their country's language — not whatever the diner's browser asks
+        // for. The same order must not produce two differently worded
+        // documents depending on who opens it.
+        $contentLocale = $vendor ? $this->locales->defaultLanguage($vendor) : 'en';
         $items = $this->linkedCartItems($order);
 
         $taxGroups = TaxCalculationService::computeTaxGroups($items, $vendorCountry, true);
@@ -432,7 +436,11 @@ class OrderHistoryController extends Controller
         $vendor = $payment->vendor ?? $anchor->vendor;
         $settings = $vendor?->vendorSetting;
         $vendorCountry = $vendor?->country ?? 'AT';
-        $contentLocale = $vendor ? $this->locales->resolveCustomerLocaleFromHeader($request, $vendor) : 'en';
+        // A receipt is the restaurant's legal document, so it is written in
+        // their country's language — not whatever the diner's browser asks
+        // for. The same order must not produce two differently worded
+        // documents depending on who opens it.
+        $contentLocale = $vendor ? $this->locales->defaultLanguage($vendor) : 'en';
         $countryCode = TaxCalculationService::countryCode($vendorCountry);
         $receiptLocale = 'en-'.$countryCode;
 

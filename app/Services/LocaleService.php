@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\Country;
 use App\Models\Language;
 use App\Models\TaxCategory;
 use App\Models\Vendor;
@@ -58,10 +59,42 @@ class LocaleService
         $vendor->loadMissing('vendorSetting');
 
         return collect($this->normalizeList($vendor->vendorSetting?->supported_languages ?? []))
+            // The restaurant's own language is always offered, whether or not
+            // they remembered to tick it, because their receipts are written in
+            // it. English stays as the universal fallback.
+            ->prepend($this->defaultLanguage($vendor))
             ->prepend('en')
             ->unique()
             ->values()
             ->all();
+    }
+
+    /**
+     * The language this restaurant's documents are written in.
+     *
+     * Taken from the country on their approved legal and tax details — an
+     * Austrian or German restaurant issues German receipts — and falls back to
+     * English for a country with nothing configured. Receipts use this rather
+     * than the diner's Accept-Language: the same order must not produce two
+     * differently worded legal documents depending on who opens it.
+     */
+    public function defaultLanguage(Vendor $vendor): string
+    {
+        $countryCode = TaxCalculationService::countryCode((string) ($vendor->country ?? ''));
+
+        if ($countryCode === '') {
+            return 'en';
+        }
+
+        $language = $this->normalize(
+            Country::where('code', $countryCode)->value('default_language')
+        );
+
+        // A country pointing at a language nobody has enabled would leave the
+        // receipt untranslatable, so fall back rather than trust it blindly.
+        return $language && in_array($language, $this->activeLanguageCodes(), true)
+            ? $language
+            : 'en';
     }
 
     public function dashboardLanguage(Vendor $vendor): string

@@ -19,13 +19,14 @@ class CountryController extends Controller
             ->orderBy('name')
             ->get()
             ->map(fn (Country $c) => [
-                'id'               => $c->id,
-                'code'             => $c->code,
-                'name'             => $c->name,
-                'flag'             => $c->flag,
-                'currency'         => $c->currency,
-                'timezone'         => $c->timezone,
-                'isActive'         => $c->is_active,
+                'id' => $c->id,
+                'code' => $c->code,
+                'name' => $c->name,
+                'flag' => $c->flag,
+                'currency' => $c->currency,
+                'defaultLanguage' => $c->default_language,
+                'timezone' => $c->timezone,
+                'isActive' => $c->is_active,
                 'taxCategoryCount' => $c->tax_categories_count,
             ]);
 
@@ -37,20 +38,23 @@ class CountryController extends Controller
     public function store(Request $request): RedirectResponse
     {
         $validated = $request->validate([
-            'code'      => ['required', 'string', 'max:5', Rule::unique('countries', 'code')],
-            'name'      => ['required', 'string', 'max:255'],
-            'flag'      => ['nullable', 'string', 'max:10'],
-            'currency'  => ['required', 'string', 'max:5'],
-            'timezone'  => ['required', 'string', 'max:50', 'timezone:all'],
+            'code' => ['required', 'string', 'max:5', Rule::unique('countries', 'code')],
+            'name' => ['required', 'string', 'max:255'],
+            'flag' => ['nullable', 'string', 'max:10'],
+            'currency' => ['required', 'string', 'max:5'],
+            // The language this country's restaurants issue receipts in.
+            'default_language' => ['nullable', 'string', 'max:10', Rule::exists('languages', 'code')->where('is_active', true)],
+            'timezone' => ['required', 'string', 'max:50', 'timezone:all'],
             'is_active' => ['boolean'],
         ]);
 
         Country::create([
-            'code'      => strtoupper($validated['code']),
-            'name'      => $validated['name'],
-            'flag'      => $validated['flag'] ?? null,
-            'currency'  => strtoupper($validated['currency']),
-            'timezone'  => $validated['timezone'],
+            'code' => strtoupper($validated['code']),
+            'name' => $validated['name'],
+            'flag' => $validated['flag'] ?? null,
+            'currency' => strtoupper($validated['currency']),
+            'default_language' => $validated['default_language'] ?? 'en',
+            'timezone' => $validated['timezone'],
             'is_active' => $validated['is_active'] ?? true,
         ]);
 
@@ -60,20 +64,23 @@ class CountryController extends Controller
     public function update(Request $request, Country $country): RedirectResponse
     {
         $validated = $request->validate([
-            'code'      => ['required', 'string', 'max:5', Rule::unique('countries', 'code')->ignore($country->id)],
-            'name'      => ['required', 'string', 'max:255'],
-            'flag'      => ['nullable', 'string', 'max:10'],
-            'currency'  => ['required', 'string', 'max:5'],
-            'timezone'  => ['required', 'string', 'max:50', 'timezone:all'],
+            'code' => ['required', 'string', 'max:5', Rule::unique('countries', 'code')->ignore($country->id)],
+            'name' => ['required', 'string', 'max:255'],
+            'flag' => ['nullable', 'string', 'max:10'],
+            'currency' => ['required', 'string', 'max:5'],
+            // The language this country's restaurants issue receipts in.
+            'default_language' => ['nullable', 'string', 'max:10', Rule::exists('languages', 'code')->where('is_active', true)],
+            'timezone' => ['required', 'string', 'max:50', 'timezone:all'],
             'is_active' => ['boolean'],
         ]);
 
         $country->update([
-            'code'      => strtoupper($validated['code']),
-            'name'      => $validated['name'],
-            'flag'      => $validated['flag'] ?? null,
-            'currency'  => strtoupper($validated['currency']),
-            'timezone'  => $validated['timezone'],
+            'code' => strtoupper($validated['code']),
+            'name' => $validated['name'],
+            'flag' => $validated['flag'] ?? null,
+            'currency' => strtoupper($validated['currency']),
+            'default_language' => $validated['default_language'] ?? 'en',
+            'timezone' => $validated['timezone'],
             'is_active' => $validated['is_active'] ?? false,
         ]);
 

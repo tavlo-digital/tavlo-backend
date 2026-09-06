@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Customer;
 
+use App\Http\Middleware\CacheCustomerApiResponse;
 use App\Services\CustomerApiCache;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -45,7 +46,7 @@ class PaymentCacheInvalidationTest extends TestCase
     {
         // If this route ever leaves the cacheable list the invalidation above is
         // unnecessary — but while it is cached, it must be invalidated.
-        $reflection = new \ReflectionClass(\App\Http\Middleware\CacheCustomerApiResponse::class);
+        $reflection = new \ReflectionClass(CacheCustomerApiResponse::class);
         $cacheable = $reflection->getConstants()['CACHEABLE_ROUTES']
             ?? $reflection->getStaticPropertyValue('cacheableRoutes', null);
 

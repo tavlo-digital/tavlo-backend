@@ -3,7 +3,6 @@
 namespace Tests\Feature\Customer;
 
 use App\Models\Customer;
-use App\Models\CustomerLoyaltyPoint;
 use App\Models\Order;
 use App\Models\Vendor;
 use App\Models\VendorSetting;
@@ -17,6 +16,7 @@ class CustomerProfileTest extends TestCase
     use RefreshDatabase;
 
     private Customer $customer;
+
     private array $headers;
 
     protected function setUp(): void
@@ -26,7 +26,7 @@ class CustomerProfileTest extends TestCase
         $token = $this->customer->createToken('test', ['role:customer'])->plainTextToken;
         $this->headers = [
             'Authorization' => "Bearer {$token}",
-            'Accept'        => 'application/json',
+            'Accept' => 'application/json',
         ];
     }
 
@@ -94,7 +94,7 @@ class CustomerProfileTest extends TestCase
         VendorSetting::factory()->create(['vendor_id' => $vendor->id]);
         Order::factory()->create([
             'customer_id' => $this->customer->id,
-            'vendor_id'   => $vendor->id,
+            'vendor_id' => $vendor->id,
             'payment_received' => true,
             'payment_pending' => false,
             'status' => 'completed',
@@ -119,11 +119,11 @@ class CustomerProfileTest extends TestCase
     public function test_customer_can_update_profile(): void
     {
         $response = $this->patchJson('/api/customer/profile', [
-            'first_name'    => 'Sara',
-            'last_name'     => 'Khan',
-            'gender'        => 'male',
+            'first_name' => 'Sara',
+            'last_name' => 'Khan',
+            'gender' => 'male',
             'date_of_birth' => '1990-01-15',
-            'address'       => '123 Main St',
+            'address' => '123 Main St',
         ], $this->headers);
 
         $response->assertOk()
@@ -139,11 +139,11 @@ class CustomerProfileTest extends TestCase
     public function test_customer_can_update_profile_with_put(): void
     {
         $response = $this->putJson('/api/customer/profile', [
-            'first_name'      => 'Amina',
-            'last_name'       => 'Hassan',
-            'gender'          => 'female',
-            'date_of_birth'   => '1991-02-20',
-            'address'         => '123 Main Street, Vienna',
+            'first_name' => 'Amina',
+            'last_name' => 'Hassan',
+            'gender' => 'female',
+            'date_of_birth' => '1991-02-20',
+            'address' => '123 Main Street, Vienna',
             'profile_picture' => 'http://localhost:8000/media/customers/1/avatar/abc123.jpg',
         ], $this->headers);
 
@@ -275,7 +275,7 @@ class CustomerProfileTest extends TestCase
 
         $response = $this->putJson('/api/customer/profile/change-email', [
             'current_email' => $this->customer->email,
-            'new_email'     => 'new-email@example.com',
+            'new_email' => 'new-email@example.com',
         ], $this->headers);
 
         $response->assertOk()
@@ -288,7 +288,7 @@ class CustomerProfileTest extends TestCase
     {
         $response = $this->postJson('/api/customer/profile/change-email', [
             'current_email' => $this->customer->email,
-            'new_email'     => 'post-email@example.com',
+            'new_email' => 'post-email@example.com',
         ], $this->headers);
 
         $response->assertOk()
@@ -299,7 +299,7 @@ class CustomerProfileTest extends TestCase
     {
         $response = $this->putJson('/api/customer/profile/change-email', [
             'current_email' => 'wrong@example.com',
-            'new_email'     => 'new-email@example.com',
+            'new_email' => 'new-email@example.com',
         ], $this->headers);
 
         $response->assertUnprocessable()
@@ -312,7 +312,7 @@ class CustomerProfileTest extends TestCase
 
         $response = $this->putJson('/api/customer/profile/change-email', [
             'current_email' => $this->customer->email,
-            'new_email'     => $other->email,
+            'new_email' => $other->email,
         ], $this->headers);
 
         $response->assertUnprocessable()
@@ -326,8 +326,8 @@ class CustomerProfileTest extends TestCase
     public function test_customer_can_change_password(): void
     {
         $response = $this->postJson('/api/customer/profile/password', [
-            'current_password'      => 'password',
-            'password'              => 'newpassword123',
+            'current_password' => 'password',
+            'password' => 'newpassword123',
             'password_confirmation' => 'newpassword123',
         ], $this->headers);
 
@@ -338,8 +338,8 @@ class CustomerProfileTest extends TestCase
     public function test_change_password_fails_with_wrong_current(): void
     {
         $response = $this->postJson('/api/customer/profile/password', [
-            'current_password'      => 'wrong-password',
-            'password'              => 'newpassword123',
+            'current_password' => 'wrong-password',
+            'password' => 'newpassword123',
             'password_confirmation' => 'newpassword123',
         ], $this->headers);
 

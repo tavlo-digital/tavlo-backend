@@ -1143,7 +1143,9 @@ class OrderController extends Controller
 
         $settings = $vendor->vendorSetting;
         $vendorCountry = $vendor->country ?? 'AT';
-        $locale = $this->locales->dashboardLanguage($vendor);
+        // The same language the customer's copy is written in, so the two are
+        // one document rather than two translations of it.
+        $locale = $this->locales->defaultLanguage($vendor);
         $countryCode = TaxCalculationService::countryCode($vendorCountry);
         $receiptLocale = 'en-'.$countryCode;
 

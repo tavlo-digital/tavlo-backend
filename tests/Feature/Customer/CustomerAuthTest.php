@@ -19,11 +19,11 @@ class CustomerAuthTest extends TestCase
     public function test_customer_can_register(): void
     {
         $response = $this->postJson('/api/customer/register', [
-            'first_name'            => 'John',
-            'last_name'             => 'Doe',
-            'phone'                 => '+43123456789',
-            'email'                 => 'john@example.com',
-            'password'              => 'password123',
+            'first_name' => 'John',
+            'last_name' => 'Doe',
+            'phone' => '+43123456789',
+            'email' => 'john@example.com',
+            'password' => 'password123',
             'password_confirmation' => 'password123',
         ]);
 
@@ -34,9 +34,9 @@ class CustomerAuthTest extends TestCase
             ->assertJsonPath('user.last_name', 'Doe');
 
         $this->assertDatabaseHas('customers', [
-            'email'      => 'john@example.com',
+            'email' => 'john@example.com',
             'first_name' => 'John',
-            'last_name'  => 'Doe',
+            'last_name' => 'Doe',
         ]);
     }
 
@@ -53,11 +53,11 @@ class CustomerAuthTest extends TestCase
         Customer::factory()->create(['email' => 'john@example.com']);
 
         $response = $this->postJson('/api/customer/register', [
-            'first_name'            => 'John',
-            'last_name'             => 'Doe',
-            'phone'                 => '+43999999999',
-            'email'                 => 'john@example.com',
-            'password'              => 'password123',
+            'first_name' => 'John',
+            'last_name' => 'Doe',
+            'phone' => '+43999999999',
+            'email' => 'john@example.com',
+            'password' => 'password123',
             'password_confirmation' => 'password123',
         ]);
 
@@ -70,11 +70,11 @@ class CustomerAuthTest extends TestCase
         Customer::factory()->create(['phone' => '+43123456789']);
 
         $response = $this->postJson('/api/customer/register', [
-            'first_name'            => 'Jane',
-            'last_name'             => 'Doe',
-            'phone'                 => '+43123456789',
-            'email'                 => 'jane@example.com',
-            'password'              => 'password123',
+            'first_name' => 'Jane',
+            'last_name' => 'Doe',
+            'phone' => '+43123456789',
+            'email' => 'jane@example.com',
+            'password' => 'password123',
             'password_confirmation' => 'password123',
         ]);
 
@@ -85,11 +85,11 @@ class CustomerAuthTest extends TestCase
     public function test_register_rejects_short_password(): void
     {
         $response = $this->postJson('/api/customer/register', [
-            'first_name'            => 'John',
-            'last_name'             => 'Doe',
-            'phone'                 => '+43123456789',
-            'email'                 => 'john@example.com',
-            'password'              => 'short',
+            'first_name' => 'John',
+            'last_name' => 'Doe',
+            'phone' => '+43123456789',
+            'email' => 'john@example.com',
+            'password' => 'short',
             'password_confirmation' => 'short',
         ]);
 
@@ -137,7 +137,7 @@ class CustomerAuthTest extends TestCase
         ]);
 
         $response = $this->postJson('/api/customer/login', [
-            'email'    => 'john@example.com',
+            'email' => 'john@example.com',
             'password' => 'password',
         ]);
 
@@ -150,7 +150,7 @@ class CustomerAuthTest extends TestCase
         Customer::factory()->create(['email' => 'john@example.com']);
 
         $response = $this->postJson('/api/customer/login', [
-            'email'    => 'john@example.com',
+            'email' => 'john@example.com',
             'password' => 'wrong-password',
         ]);
 
@@ -161,7 +161,7 @@ class CustomerAuthTest extends TestCase
     public function test_login_fails_with_nonexistent_email(): void
     {
         $response = $this->postJson('/api/customer/login', [
-            'email'    => 'nonexistent@example.com',
+            'email' => 'nonexistent@example.com',
             'password' => 'password',
         ]);
 
@@ -177,13 +177,13 @@ class CustomerAuthTest extends TestCase
     {
         $this->mockSocialAuth('google', 'valid-token', [
             'provider_id' => 'google-id-123',
-            'email'       => 'social@example.com',
-            'first_name'  => 'Social',
-            'last_name'   => 'User',
+            'email' => 'social@example.com',
+            'first_name' => 'Social',
+            'last_name' => 'User',
         ]);
 
         $response = $this->postJson('/api/customer/social/register', [
-            'provider'     => 'google',
+            'provider' => 'google',
             'access_token' => 'valid-token',
         ]);
 
@@ -192,7 +192,7 @@ class CustomerAuthTest extends TestCase
             ->assertJsonPath('user.email', 'social@example.com');
 
         $this->assertDatabaseHas('customers', [
-            'email'           => 'social@example.com',
+            'email' => 'social@example.com',
             'social_provider' => 'google',
         ]);
     }
@@ -203,13 +203,13 @@ class CustomerAuthTest extends TestCase
 
         $this->mockSocialAuth('google', 'valid-token', [
             'provider_id' => 'google-id-456',
-            'email'       => 'existing@example.com',
-            'first_name'  => 'Existing',
-            'last_name'   => 'User',
+            'email' => 'existing@example.com',
+            'first_name' => 'Existing',
+            'last_name' => 'User',
         ]);
 
         $response = $this->postJson('/api/customer/social/register', [
-            'provider'     => 'google',
+            'provider' => 'google',
             'access_token' => 'valid-token',
         ]);
 
@@ -222,19 +222,19 @@ class CustomerAuthTest extends TestCase
     public function test_social_register_returns_existing_social_user(): void
     {
         Customer::factory()->social('google')->create([
-            'email'              => 'social@example.com',
+            'email' => 'social@example.com',
             'social_provider_id' => 'google-id-789',
         ]);
 
         $this->mockSocialAuth('google', 'valid-token', [
             'provider_id' => 'google-id-789',
-            'email'       => 'social@example.com',
-            'first_name'  => 'Social',
-            'last_name'   => 'User',
+            'email' => 'social@example.com',
+            'first_name' => 'Social',
+            'last_name' => 'User',
         ]);
 
         $response = $this->postJson('/api/customer/social/register', [
-            'provider'     => 'google',
+            'provider' => 'google',
             'access_token' => 'valid-token',
         ]);
 
@@ -248,7 +248,7 @@ class CustomerAuthTest extends TestCase
     public function test_social_register_rejects_invalid_provider(): void
     {
         $response = $this->postJson('/api/customer/social/register', [
-            'provider'     => 'twitter',
+            'provider' => 'twitter',
             'access_token' => 'some-token',
         ]);
 
@@ -265,7 +265,7 @@ class CustomerAuthTest extends TestCase
         $this->app->instance(SocialAuthService::class, $mock);
 
         $response = $this->postJson('/api/customer/social/register', [
-            'provider'     => 'google',
+            'provider' => 'google',
             'access_token' => 'bad-token',
         ]);
 
@@ -277,13 +277,13 @@ class CustomerAuthTest extends TestCase
     {
         $this->mockSocialAuth('facebook', 'fb-token', [
             'provider_id' => 'fb-id-123',
-            'email'       => 'fb@example.com',
-            'first_name'  => 'FB',
-            'last_name'   => 'User',
+            'email' => 'fb@example.com',
+            'first_name' => 'FB',
+            'last_name' => 'User',
         ]);
 
         $response = $this->postJson('/api/customer/social/register', [
-            'provider'     => 'facebook',
+            'provider' => 'facebook',
             'access_token' => 'fb-token',
         ]);
 
@@ -291,7 +291,7 @@ class CustomerAuthTest extends TestCase
             ->assertJsonStructure(['user', 'token']);
 
         $this->assertDatabaseHas('customers', [
-            'email'           => 'fb@example.com',
+            'email' => 'fb@example.com',
             'social_provider' => 'facebook',
         ]);
     }
@@ -301,25 +301,25 @@ class CustomerAuthTest extends TestCase
         $this->mockSocialAuthMany('google', [
             'token-one' => [
                 'provider_id' => 'google-id-1',
-                'email'       => 'first@example.com',
-                'first_name'  => 'First',
-                'last_name'   => 'User',
+                'email' => 'first@example.com',
+                'first_name' => 'First',
+                'last_name' => 'User',
             ],
             'token-two' => [
                 'provider_id' => 'google-id-2',
-                'email'       => 'second@example.com',
-                'first_name'  => 'Second',
-                'last_name'   => 'User',
+                'email' => 'second@example.com',
+                'first_name' => 'Second',
+                'last_name' => 'User',
             ],
         ]);
 
         $this->postJson('/api/customer/social/register', [
-            'provider'     => 'google',
+            'provider' => 'google',
             'access_token' => 'token-one',
         ])->assertOk();
 
         $this->postJson('/api/customer/social/register', [
-            'provider'     => 'google',
+            'provider' => 'google',
             'access_token' => 'token-two',
         ])->assertOk();
 
@@ -334,25 +334,25 @@ class CustomerAuthTest extends TestCase
         $this->mockSocialAuthMany('apple', [
             'token-one' => [
                 'provider_id' => 'apple-id-1',
-                'email'       => '',
-                'first_name'  => '',
-                'last_name'   => '',
+                'email' => '',
+                'first_name' => '',
+                'last_name' => '',
             ],
             'token-two' => [
                 'provider_id' => 'apple-id-2',
-                'email'       => '',
-                'first_name'  => '',
-                'last_name'   => '',
+                'email' => '',
+                'first_name' => '',
+                'last_name' => '',
             ],
         ]);
 
         $this->postJson('/api/customer/social/register', [
-            'provider'     => 'apple',
+            'provider' => 'apple',
             'access_token' => 'token-one',
         ])->assertOk();
 
         $this->postJson('/api/customer/social/register', [
-            'provider'     => 'apple',
+            'provider' => 'apple',
             'access_token' => 'token-two',
         ])->assertOk();
 
@@ -365,13 +365,13 @@ class CustomerAuthTest extends TestCase
     {
         $this->mockSocialAuth('google', 'valid-token', [
             'provider_id' => 'google-id-123',
-            'email'       => 'social@example.com',
-            'first_name'  => 'Social',
-            'last_name'   => 'User',
+            'email' => 'social@example.com',
+            'first_name' => 'Social',
+            'last_name' => 'User',
         ]);
 
         $this->postJson('/api/customer/social/register', [
-            'provider'     => 'google',
+            'provider' => 'google',
             'access_token' => 'valid-token',
         ])->assertOk();
 
@@ -390,13 +390,13 @@ class CustomerAuthTest extends TestCase
 
         $this->mockSocialAuth('google', 'valid-token', [
             'provider_id' => 'google-id-login',
-            'email'       => 'test@example.com',
-            'first_name'  => 'Test',
-            'last_name'   => 'User',
+            'email' => 'test@example.com',
+            'first_name' => 'Test',
+            'last_name' => 'User',
         ]);
 
         $response = $this->postJson('/api/customer/social/login', [
-            'provider'     => 'google',
+            'provider' => 'google',
             'access_token' => 'valid-token',
         ]);
 
@@ -408,13 +408,13 @@ class CustomerAuthTest extends TestCase
     {
         $this->mockSocialAuth('google', 'valid-token', [
             'provider_id' => 'unknown-id',
-            'email'       => 'test@example.com',
-            'first_name'  => 'Test',
-            'last_name'   => 'User',
+            'email' => 'test@example.com',
+            'first_name' => 'Test',
+            'last_name' => 'User',
         ]);
 
         $response = $this->postJson('/api/customer/social/login', [
-            'provider'     => 'google',
+            'provider' => 'google',
             'access_token' => 'valid-token',
         ]);
 
@@ -431,7 +431,7 @@ class CustomerAuthTest extends TestCase
         $this->app->instance(SocialAuthService::class, $mock);
 
         $response = $this->postJson('/api/customer/social/login', [
-            'provider'     => 'google',
+            'provider' => 'google',
             'access_token' => 'bad-token',
         ]);
 
@@ -450,7 +450,7 @@ class CustomerAuthTest extends TestCase
 
         $response = $this->getJson('/api/customer/me', [
             'Authorization' => "Bearer {$token}",
-            'Accept'        => 'application/json',
+            'Accept' => 'application/json',
         ]);
 
         $response->assertOk()
@@ -474,7 +474,7 @@ class CustomerAuthTest extends TestCase
 
         $response = $this->postJson('/api/customer/logout', [], [
             'Authorization' => "Bearer {$token}",
-            'Accept'        => 'application/json',
+            'Accept' => 'application/json',
         ]);
 
         $response->assertOk()
@@ -494,7 +494,7 @@ class CustomerAuthTest extends TestCase
 
         $response = $this->postJson('/api/customer/logout-all', [], [
             'Authorization' => "Bearer {$token}",
-            'Accept'        => 'application/json',
+            'Accept' => 'application/json',
         ]);
 
         $response->assertOk()

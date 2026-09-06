@@ -678,6 +678,9 @@ class RestaurantBrowsingTest extends TestCase
 
     public function test_can_get_restaurant_languages_without_authentication(): void
     {
+        // A UK restaurant, so English is both its default and its receipt
+        // language. See ReceiptLanguageTest for the country-driven default.
+        $this->vendor->update(['country' => 'GB']);
         $this->vendor->vendorSetting->update([
             'supported_languages' => ['de', 'it'],
             'date_format' => 'MM/DD/YYYY',
@@ -700,6 +703,7 @@ class RestaurantBrowsingTest extends TestCase
 
     public function test_restaurant_languages_include_english_when_supported_languages_are_empty(): void
     {
+        $this->vendor->update(['country' => 'GB']);
         $this->vendor->vendorSetting->update([
             'supported_languages' => null,
         ]);
