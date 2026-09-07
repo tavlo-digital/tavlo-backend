@@ -113,12 +113,42 @@ class OrderSessionService
             ->values();
     }
 
+    /**
+     * How staff should see the guest who caused an event.
+     *
+     * A waiter reading "Guest L2K5YI requested cash payment" knows neither who
+     * that is nor where they are sitting; the table is the only thing they can
+     * act on. Off-premise there is no table, so the name is all there is — and
+     * at a pickup counter it is what gets called out anyway.
+     */
+    public function operationsActorLabel(TableScanSession $session, string $customerName): string
+    {
+        if ($this->isOffPremise($session)) {
+            return $customerName;
+        }
+
+        $table = $session->relationLoaded('restaurantTable')
+            ? $session->restaurantTable
+            : $session->loadMissing('restaurantTable')->restaurantTable;
+
+        if (! $table) {
+            return $customerName;
+        }
+
+        return $table->name ?: 'Table '.$table->number;
+    }
+
+    /**
+     * @param  string|null  $operationsMessage  Staff-facing wording. Defaults to
+     *                                          the guest-facing message.
+     */
     public function notifyCustomers(
         TableScanSession $session,
         string $event,
         string $message,
         array $metadata = [],
         bool $notifyOperations = true,
+        ?string $operationsMessage = null,
     ): void {
         if (! $this->isOffPremise($session)) {
             NotificationService::notifyTableCustomers(
@@ -127,6 +157,7 @@ class OrderSessionService
                 $message,
                 $metadata,
                 $notifyOperations,
+                $operationsMessage,
             );
 
             return;
@@ -159,7 +190,7 @@ class OrderSessionService
         NotificationService::notifyOperations(
             (int) $session->vendor_id,
             $event,
-            $message,
+            $operationsMessage ?? $message,
             [NotificationService::VENDOR, NotificationService::WAITER],
             [
                 ...$metadata,

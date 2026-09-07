@@ -466,6 +466,49 @@ class VendorSettingsTest extends TestCase
             ->assertJsonPath('legalInfo.address', 'Main Street 1');
     }
 
+    public function test_legal_change_status_reports_no_prior_approval_on_first_submission(): void
+    {
+        VendorRequestChange::create([
+            'vendor_id' => $this->vendor->id,
+            'legal_entity_name' => 'Test GmbH',
+            'status' => 'pending',
+        ]);
+
+        $this->getJson(
+            "/api/vendor/{$this->vendor->vendor_public_id}/legal-info/status",
+            $this->authHeaders()
+        )
+            ->assertOk()
+            ->assertJsonPath('status', 'pending')
+            ->assertJsonPath('hasApprovedLegal', false);
+    }
+
+    public function test_legal_change_status_reports_prior_approval_when_editing(): void
+    {
+        // "Latest" is ordered by created_at, so the approval has to sit clearly
+        // in the past for the edit to be the one reported back.
+        $approved = VendorRequestChange::create([
+            'vendor_id' => $this->vendor->id,
+            'legal_entity_name' => 'Approved GmbH',
+            'status' => 'approved',
+        ]);
+        $approved->forceFill(['created_at' => now()->subDay()])->save();
+
+        VendorRequestChange::create([
+            'vendor_id' => $this->vendor->id,
+            'legal_entity_name' => 'Edited GmbH',
+            'status' => 'pending',
+        ]);
+
+        $this->getJson(
+            "/api/vendor/{$this->vendor->vendor_public_id}/legal-info/status",
+            $this->authHeaders()
+        )
+            ->assertOk()
+            ->assertJsonPath('status', 'pending')
+            ->assertJsonPath('hasApprovedLegal', true);
+    }
+
     public function test_legal_change_status_falls_back_to_current_company_type(): void
     {
         $this->vendor->vendorSetting()->create([

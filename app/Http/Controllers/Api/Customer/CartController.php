@@ -440,6 +440,9 @@ class CartController extends Controller
                 ),
                 ...$realtimeCart,
             ],
+            true,
+            $this->orderSessions->operationsActorLabel($mySession, $customerName)
+                ." added {$itemName} to the cart.",
         );
 
         return response()->json([
@@ -572,6 +575,9 @@ class CartController extends Controller
                 ),
                 ...$realtimeCart,
             ],
+            true,
+            $this->orderSessions->operationsActorLabel($mySession, $customerName)
+                ." updated {$itemName} in the cart.",
         );
 
         return response()->json([
@@ -660,6 +666,9 @@ class CartController extends Controller
                 ),
                 ...$realtimeCart,
             ],
+            true,
+            $this->orderSessions->operationsActorLabel($mySession, $customerName)
+                ." removed {$itemName} from the cart.",
         );
 
         return response()->json([
@@ -862,6 +871,9 @@ class CartController extends Controller
                     'order_snapshots' => [NotificationService::orderSnapshot($existingOrder->fresh()->load('paidBy'))],
                     'person_snapshot' => $personSnapshot,
                 ],
+                true,
+                $this->orderSessions->operationsActorLabel($mySession, $customerName)
+                    .' updated their order draft.',
             );
 
             return response()->json($history);
@@ -921,6 +933,9 @@ class CartController extends Controller
                     : [],
                 'person_snapshot' => $personSnapshot,
             ],
+            true,
+            $this->orderSessions->operationsActorLabel($mySession, $customerName)
+                .' created an order draft.',
         );
 
         return response()->json($history, 201);
@@ -984,6 +999,9 @@ class CartController extends Controller
                 'command_id' => $request->attributes->get('customer_command_id'),
                 'command_status' => $request->attributes->get('customer_command_id') ? 'completed' : null,
             ],
+            true,
+            $this->orderSessions->operationsActorLabel($mySession, $customerName)
+                .' updated item sharing on the order.',
         );
 
         return response()->json([
@@ -1182,7 +1200,8 @@ class CartController extends Controller
         NotificationService::notifyOperations(
             $mySession->vendor_id,
             'order_confirmed',
-            "{$customerName} confirmed their order.",
+            $this->orderSessions->operationsActorLabel($mySession, $customerName)
+                .' confirmed their order.',
             [NotificationService::VENDOR, NotificationService::WAITER, NotificationService::KITCHEN],
             [
                 'resources' => ['orders', 'tables', 'dashboard', 'notifications'],

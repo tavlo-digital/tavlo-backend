@@ -285,6 +285,10 @@ class TableScanController extends Controller
                     'status' => $session->status,
                 ],
             ],
+            true,
+            // Staff are told which table filled up, not which guest name they
+            // have no way to match to a person in the room.
+            'A guest joined '.($table->name ?: 'Table '.$table->number).'.',
         );
 
         return response()->json($this->sessionResponsePayload($session, $table, $vendor, [

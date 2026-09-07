@@ -33,12 +33,19 @@ class NotificationService
 
     private const TYPE_OPERATION_ACTOR = 'operation_actor';
 
+    /**
+     * @param  string|null  $operationsMessage  Staff read the same event
+     *                                          differently: they need the table,
+     *                                          not the guest's name. Defaults to
+     *                                          the guest-facing message.
+     */
     public static function notifyTableCustomers(
         ?int $restaurantTableId,
         string $event,
         string $message,
         array $metadata = [],
         bool $notifyOperations = true,
+        ?string $operationsMessage = null,
     ): void {
         if ($restaurantTableId === null) {
             return;
@@ -48,6 +55,7 @@ class NotificationService
             'restaurant_table_id' => $restaurantTableId,
             'event' => $event,
             'message' => $message,
+            'operations_message' => $operationsMessage,
             'metadata' => $metadata,
             'notify_operations' => $notifyOperations,
         ]);
@@ -244,7 +252,9 @@ class NotificationService
             $deliveryId,
             $table,
             $payload['event'],
-            $payload['message'],
+            // Jobs queued before this key existed carry only the guest-facing
+            // message, so fall back rather than lose the notification.
+            $payload['operations_message'] ?? $payload['message'],
             $payload['metadata'],
         );
     }

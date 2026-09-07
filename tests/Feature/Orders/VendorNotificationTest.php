@@ -2,9 +2,12 @@
 
 namespace Tests\Feature\Orders;
 
+use App\Jobs\DeliverNotification;
 use App\Jobs\DeliverOperationalNotification;
 use App\Models\Customer;
 use App\Models\Notification;
+use App\Models\RestaurantTable;
+use App\Models\TableScanSession;
 use App\Models\TeamMember;
 use App\Models\Vendor;
 use App\Services\NotificationService;
@@ -85,6 +88,96 @@ class VendorNotificationTest extends TestCase
             ->assertJsonPath('unread_count', 0);
         $this->getJson('/api/vendor/notifications', $this->headers($this->vendor))
             ->assertJsonPath('unread_count', 0);
+    }
+
+    public function test_table_event_reads_by_table_for_staff_and_by_name_for_guests(): void
+    {
+        Queue::fake();
+
+        $table = RestaurantTable::create([
+            'vendor_id' => $this->vendor->id,
+            'number' => 7,
+            'name' => 'Table 7',
+            'qr_token' => RestaurantTable::generateQrToken(),
+            'is_active' => true,
+            'qr_created_at' => now(),
+        ]);
+        $customer = Customer::factory()->create();
+        TableScanSession::create([
+            'vendor_id' => $this->vendor->id,
+            'restaurant_table_id' => $table->id,
+            'customer_id' => $customer->id,
+            'pin' => '1234',
+            'status' => 'active',
+            'scanned_at' => now(),
+        ]);
+
+        NotificationService::notifyTableCustomers(
+            $table->id,
+            'payment_updated',
+            'Guest L2K5YI requested cash payment.',
+            ['template' => 'payment.cash_requested'],
+            true,
+            'Table 7 requested cash payment.',
+        );
+        $this->invokeDeferredCallbacks();
+        foreach (Queue::pushed(DeliverOperationalNotification::class) as $job) {
+            $job->handle();
+        }
+        foreach (Queue::pushed(DeliverNotification::class) as $job) {
+            $job->handle();
+        }
+
+        // The waiter is told where to go; the guest still sees who acted.
+        $this->assertDatabaseHas('notifications', [
+            'vendor_id' => $this->vendor->id,
+            'customer_id' => null,
+            'message' => 'Table 7 requested cash payment.',
+        ]);
+        $this->assertDatabaseHas('notifications', [
+            'customer_id' => $customer->id,
+            'message' => 'Guest L2K5YI requested cash payment.',
+        ]);
+    }
+
+    public function test_table_event_without_staff_wording_still_reaches_staff(): void
+    {
+        Queue::fake();
+
+        $table = RestaurantTable::create([
+            'vendor_id' => $this->vendor->id,
+            'number' => 9,
+            'name' => 'Table 9',
+            'qr_token' => RestaurantTable::generateQrToken(),
+            'is_active' => true,
+            'qr_created_at' => now(),
+        ]);
+        TableScanSession::create([
+            'vendor_id' => $this->vendor->id,
+            'restaurant_table_id' => $table->id,
+            'customer_id' => Customer::factory()->create()->id,
+            'pin' => '1234',
+            'status' => 'active',
+            'scanned_at' => now(),
+        ]);
+
+        // Jobs queued before the staff wording existed carry only one message.
+        NotificationService::notifyTableCustomers(
+            $table->id,
+            'payment_updated',
+            'A guest requested cash payment.',
+            ['template' => 'payment.cash_requested'],
+        );
+        $this->invokeDeferredCallbacks();
+        foreach (Queue::pushed(DeliverOperationalNotification::class) as $job) {
+            $job->handle();
+        }
+
+        $this->assertDatabaseHas('notifications', [
+            'vendor_id' => $this->vendor->id,
+            'customer_id' => null,
+            'message' => 'A guest requested cash payment.',
+        ]);
     }
 
     public function test_silent_notifications_are_realtime_only_and_not_unread(): void

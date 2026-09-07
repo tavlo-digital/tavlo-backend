@@ -652,6 +652,9 @@ class PaymentController extends Controller
                     removedItemIds: $removedItemIds,
                 ),
             ],
+            true,
+            $this->orderSessions->operationsActorLabel($payerSession, $customerName)
+                .($held ? ' started checking out.' : ' left the checkout.'),
         );
     }
 
@@ -778,6 +781,9 @@ class PaymentController extends Controller
                     'order_snapshots' => $snapshots,
                     'state_patch' => $statePatch,
                 ],
+                true,
+                $this->orderSessions->operationsActorLabel($payerSession, $customerName)
+                    .' canceled the payment.',
             );
         }
 
@@ -1010,6 +1016,9 @@ class PaymentController extends Controller
                     'order_snapshots' => $snapshots,
                     'state_patch' => $statePatch,
                 ],
+                true,
+                $this->orderSessions->operationsActorLabel($order->tableScanSession, $customerName)
+                    .' initiated a payment.',
             );
         }
 
@@ -1200,6 +1209,9 @@ class PaymentController extends Controller
                     'order_snapshots' => $snapshots,
                     'state_patch' => $statePatch,
                 ],
+                true,
+                $this->orderSessions->operationsActorLabel($order->tableScanSession, $customerName)
+                    .' requested cash payment.',
             );
         }
 
@@ -1351,6 +1363,9 @@ class PaymentController extends Controller
                     'order_snapshots' => $snapshots,
                     'state_patch' => $statePatch,
                 ],
+                true,
+                $this->orderSessions->operationsActorLabel($order->tableScanSession, $customerName)
+                    .' updated the payment.',
             );
         }
 
@@ -1731,6 +1746,10 @@ class PaymentController extends Controller
                 'order_snapshots' => $snapshots,
                 'state_patch' => $statePatch,
             ],
+            true,
+            // "this table" means nothing in a staff feed covering every table.
+            $this->orderSessions->operationsActorLabel($session, 'A guest')
+                .' completed a payment.',
         );
     }
 

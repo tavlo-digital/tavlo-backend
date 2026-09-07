@@ -526,6 +526,13 @@ class VendorSettingsController extends Controller
         return response()->json([
             'id' => $latest->id,
             'status' => $latest->status,
+            // Whether this vendor has ever cleared review. A pending change
+            // means something different either side of it: a restaurant still
+            // waiting on its very first approval cannot trade at all, while one
+            // that has been approved before is only waiting on an edit.
+            'hasApprovedLegal' => $vendor->requestChanges()
+                ->where('status', 'approved')
+                ->exists(),
             'legalInfo' => [
                 'restaurantName' => $latest->restaurant_name,
                 'legalEntityName' => $latest->legal_entity_name,
