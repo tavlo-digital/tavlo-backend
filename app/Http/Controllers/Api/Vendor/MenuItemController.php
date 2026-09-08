@@ -9,6 +9,7 @@ use App\Models\ModifierOption;
 use App\Models\TaxCategory;
 use App\Models\TeamMember;
 use App\Models\Vendor;
+use App\Models\VendorActivity;
 use App\Services\LocaleService;
 use App\Services\MediaService;
 use App\Services\MenuCustomizationService;
@@ -590,7 +591,29 @@ class MenuItemController extends Controller
         $vendor = $request->user();
         $item = $vendor->menuItems()->where('is_active', true)->findOrFail($itemId);
 
+        $wasAvailable = $item->available;
         $item->update(['available' => ! $item->available]);
+
+        // `available` deliberately isn't in hasVersionedFieldChanged()'s list —
+        // toggling it shouldn't fork a new menu-item version — but that also
+        // means it leaves no history anywhere else. VendorActivity exists for
+        // exactly this kind of vendor-side event log and had nothing writing to
+        // it; this is its first writer, powering the "sold out N times" insight.
+        VendorActivity::create([
+            'vendor_id' => $vendor->id,
+            'event_type' => 'menu_item.availability_toggled',
+            'title' => $item->available ? 'Marked available' : 'Marked unavailable',
+            'description' => sprintf('%s was marked %s', $item->name, $item->available ? 'available' : 'unavailable'),
+            'color' => $item->available ? 'emerald' : 'red',
+            'actor' => $vendor->name ?? 'Vendor',
+            'metadata' => [
+                'menu_item_id' => $item->id,
+                'menu_item_name' => $item->name,
+                'from' => $wasAvailable,
+                'to' => $item->available,
+            ],
+        ]);
+
         $item->load([
             'itemTranslations',
             'category.masterCategory',

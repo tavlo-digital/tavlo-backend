@@ -8,6 +8,7 @@ use App\Models\CartItem;
 use App\Models\DietaryPreference;
 use App\Models\MenuCategory;
 use App\Models\MenuItem;
+use App\Models\MenuItemView;
 use App\Models\RestaurantTable;
 use App\Models\Review;
 use App\Models\SpecialTag;
@@ -515,6 +516,17 @@ class RestaurantController extends Controller
                     ]),
             ])
             ->firstOrFail();
+
+        // This route sits in the public (no customer auth) group specifically so
+        // browsing works before a guest signs in, so this is the only point that
+        // ever sees a raw "someone opened this item" signal — TrackSessionActivity
+        // only logs for authenticated customers and skips it. table_scan_session_id
+        // is optional: a guest may be browsing before scanning/joining a table.
+        MenuItemView::create([
+            'vendor_id' => $vendor->id,
+            'menu_item_id' => $item->id,
+            'table_scan_session_id' => $request->integer('table_scan_session_id') ?: null,
+        ]);
 
         $vendorCountry = $vendor->country;
         $vatRate = TaxCalculationService::itemVatRate($item, $vendorCountry);

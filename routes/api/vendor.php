@@ -193,8 +193,17 @@ Route::middleware(['auth:vendor,team_member', 'vendor.staff.access'])->group(fun
     Route::patch('{vendorId}/team/{memberId}', [TeamController::class, 'update'])->name('team.update');
     Route::delete('{vendorId}/team/{memberId}', [TeamController::class, 'destroy'])->name('team.destroy');
 
-    // Analytics
-    Route::get('{vendorId}/analytics', [AnalyticsController::class, 'index'])->name('analytics');
+    // Analytics — throttled: these rebuild most of their payload from scratch
+    // every call (only the raw orders fetch is cached, ~120s — see
+    // VendorAnalyticsService), so an unthrottled client can still sustain
+    // heavy DB/CPU load.
+    Route::middleware('throttle:analytics')->group(function () {
+        Route::get('{vendorId}/analytics', [AnalyticsController::class, 'index'])->name('analytics');
+        Route::get('{vendorId}/analytics/insights', [AnalyticsController::class, 'insights'])->name('analytics.insights');
+        Route::post('{vendorId}/analytics/insights/ask', [AnalyticsController::class, 'askInsights'])->name('analytics.insights.ask');
+        Route::get('{vendorId}/analytics/insights/suggested-questions', [AnalyticsController::class, 'suggestedQuestions'])->name('analytics.insights.suggestedQuestions');
+        Route::get('{vendorId}/analytics/forecast', [AnalyticsController::class, 'forecast'])->name('analytics.forecast');
+    });
 
     // Billing & Subscription
     Route::get('billing/plans', [BillingController::class, 'plans'])->name('billing.plans');

@@ -13,6 +13,7 @@ class CustomerLoyaltyPoint extends Model
         'points_balance',
         'total_earned',
         'total_redeemed',
+        'source',
     ];
 
     public function customer(): BelongsTo

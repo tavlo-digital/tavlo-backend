@@ -15,6 +15,7 @@ class LoyaltyTransaction extends Model
         'reference_type',
         'reference_id',
         'description',
+        'source',
     ];
 
     public function customer(): BelongsTo

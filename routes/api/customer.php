@@ -76,7 +76,11 @@ Route::middleware('customer.response.cache')->group(function () {
         Route::get('{vendorPublicId}', [RestaurantController::class, 'show'])->name('show');
         Route::get('{vendorPublicId}/categories', [RestaurantController::class, 'categories'])->name('categories');
         Route::get('{vendorPublicId}/menu', [RestaurantController::class, 'menu'])->name('menu');
-        Route::get('{vendorPublicId}/menu/{itemId}', [RestaurantController::class, 'menuItem'])->name('menu.item');
+        // Throttled — see AppServiceProvider::configureRateLimiting()'s
+        // 'menu-item-view' comment (2026-09-08 audit finding: this write a
+        // MenuItemView row that feeds an Analytics insight on every call and
+        // had no rate limit at all, unlike its sibling `table/pin` route).
+        Route::get('{vendorPublicId}/menu/{itemId}', [RestaurantController::class, 'menuItem'])->middleware('throttle:menu-item-view')->name('menu.item');
         Route::get('{vendorPublicId}/tables', [RestaurantController::class, 'tables'])->name('tables');
         Route::get('{vendorPublicId}/reviews', [RestaurantController::class, 'reviews'])->name('reviews');
         Route::get('{vendorPublicId}/about', [RestaurantController::class, 'about'])->name('about');
