@@ -105,6 +105,18 @@ class AppServiceProvider extends ServiceProvider
             return Limit::perMinute(30)->by(self::rateLimitActorKey($request));
         });
 
+        // Financial expense create/update/delete/upload-attachment — these
+        // were previously unthrottled entirely (2026-09-07 audit finding),
+        // unlike every other Analytics/Financial-Reports route. Writes, not
+        // reads, so the risk is DB/storage bloat (unlimited expense rows,
+        // unlimited receipt uploads) rather than CPU load — a lower, write-
+        // appropriate limit than the 30/min read bucket above, still well
+        // above any realistic burst of a vendor entering several expenses in
+        // one sitting.
+        RateLimiter::for('financial-expenses', function (Request $request) {
+            return Limit::perMinute(20)->by(self::rateLimitActorKey($request));
+        });
+
         // Customer menu-item detail view — unauthenticated by design (guests
         // browse before logging in), but every hit also writes a
         // MenuItemView row that feeds Analytics' "high interest, low

@@ -16,3 +16,6 @@ Schedule::command('subscriptions:reconcile-stale')->everyMinute();
 Schedule::command('fiskaly:retry-failed')->everyFiveMinutes()->withoutOverlapping();
 Schedule::command('notifications:prune-silent')->daily();
 Schedule::command('session-activities:prune')->daily();
+// 2026-09-08 audit finding: an uploaded financial-expense receipt that's
+// never attached to a saved expense was never cleaned up.
+Schedule::command('financials:cleanup-orphaned-attachments')->daily();

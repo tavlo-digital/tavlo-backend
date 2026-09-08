@@ -7,6 +7,8 @@ use App\Http\Controllers\Api\Vendor\BillingController;
 use App\Http\Controllers\Api\Vendor\BroadcastAuthController;
 use App\Http\Controllers\Api\Vendor\DashboardController;
 use App\Http\Controllers\Api\Vendor\DietaryPreferenceController;
+use App\Http\Controllers\Api\Vendor\FinancialExpenseController;
+use App\Http\Controllers\Api\Vendor\FinancialReportController;
 use App\Http\Controllers\Api\Vendor\FiscalController;
 use App\Http\Controllers\Api\Vendor\InventoryController;
 use App\Http\Controllers\Api\Vendor\MenuCategoryController;
@@ -203,6 +205,20 @@ Route::middleware(['auth:vendor,team_member', 'vendor.staff.access'])->group(fun
         Route::post('{vendorId}/analytics/insights/ask', [AnalyticsController::class, 'askInsights'])->name('analytics.insights.ask');
         Route::get('{vendorId}/analytics/insights/suggested-questions', [AnalyticsController::class, 'suggestedQuestions'])->name('analytics.insights.suggestedQuestions');
         Route::get('{vendorId}/analytics/forecast', [AnalyticsController::class, 'forecast'])->name('analytics.forecast');
+
+        // Financial Reports
+        Route::get('{vendorId}/financial-reports', [FinancialReportController::class, 'index'])->name('financial-reports.index');
+    });
+
+    // Financial Reports — manual "other cost" entries (rent, repairs, equipment, etc.)
+    // Throttled separately from the read-only `analytics` bucket above: these
+    // are writes (including a file upload), so unbounded requests risk DB/
+    // storage bloat rather than just CPU load — 2026-09-07 audit finding.
+    Route::middleware('throttle:financial-expenses')->group(function () {
+        Route::post('{vendorId}/financial-expenses/upload-attachment', [FinancialExpenseController::class, 'uploadAttachment'])->name('financial-expenses.uploadAttachment');
+        Route::post('{vendorId}/financial-expenses', [FinancialExpenseController::class, 'store'])->name('financial-expenses.store');
+        Route::put('{vendorId}/financial-expenses/{expenseId}', [FinancialExpenseController::class, 'update'])->name('financial-expenses.update');
+        Route::delete('{vendorId}/financial-expenses/{expenseId}', [FinancialExpenseController::class, 'destroy'])->name('financial-expenses.destroy');
     });
 
     // Billing & Subscription
@@ -221,3 +237,18 @@ Route::middleware(['auth:vendor,team_member', 'vendor.staff.access'])->group(fun
     Route::post('{vendorId}/billing/portal', [BillingController::class, 'portalSession'])->name('billing.portal');
 
 });
+
+// Financial-expense attachment — deliberately outside the auth:vendor group
+// above. Reached only via a short-lived signed URL minted by
+// FinancialExpenseController::attachmentUrl(), not a bearer token, since the
+// frontend opens it as a plain link/new tab, which cannot attach an
+// Authorization header — the `signed` middleware IS the auth here (see
+// FinancialExpenseController::showAttachment()'s doc comment). Replaces the
+// previous storage of these files on the app-wide public `/media/*` path,
+// which had no auth check and a same-directory fallback that let an
+// unauthenticated request fetch a vendor's receipt without even guessing the
+// right filename (2026-09-08 audit finding).
+Route::get('{vendorId}/financial-expenses/attachment/{path}', [FinancialExpenseController::class, 'showAttachment'])
+    ->where('path', '.*')
+    ->middleware('signed')
+    ->name('financial-expenses.attachment');
