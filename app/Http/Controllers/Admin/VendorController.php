@@ -203,10 +203,12 @@ class VendorController extends Controller
                 'exception' => $exception,
             ]);
 
-            return redirect()->back()->with(
-                'warning',
+            // First line is the headline, the rest are the reasons — the
+            // banner renders them as a list.
+            return redirect()->back()->with('warning', implode("\n", [
+                'The cash register was not registered.',
                 FiscalizationService::friendlyError($exception),
-            );
+            ]));
         }
 
         return redirect()->back()->with(
@@ -312,23 +314,26 @@ class VendorController extends Controller
         if (! ($exception instanceof FiscalizationException && $exception->isVendorDataRejection())) {
             // Ours to fix. The submission stays pending so the admin can simply
             // approve again once the problem is resolved.
-            return redirect()->back()->with(
-                'warning',
-                'Nothing was approved. '.$reason.' The request is still pending — try approving again.',
-            );
+            return redirect()->back()->with('warning', implode("\n", [
+                'Nothing was approved. The request is still pending — try approving again once this is sorted.',
+                $reason,
+            ]));
         }
 
         $change->forceFill([
             'status' => 'rejected',
             'checked_by' => auth()->id(),
+            // What the restaurant reads. Plain English only: fiskaly's own
+            // wording goes in the detail column, which they never see.
             'admin_notes' => $reason,
+            'admin_notes_detail' => FiscalizationService::technicalDetail($exception),
             'reviewed_at' => now(),
         ])->save();
 
-        return redirect()->back()->with(
-            'warning',
-            'Changes were not approved — '.$reason.' The restaurant has been asked to submit corrected details.',
-        );
+        return redirect()->back()->with('warning', implode("\n", [
+            'Changes were not approved. The restaurant has been asked to submit corrected details.',
+            $reason,
+        ]));
     }
 
     /**
@@ -372,10 +377,12 @@ class VendorController extends Controller
             ?? ($device?->last_error ? $device->updated_at : null);
         $rejectedErrorAt = $rejected?->reviewed_at ?? $rejected?->updated_at;
         $lastError = $device?->last_error;
+        $lastErrorDetail = $device?->last_error_detail;
 
         if ($rejected && $rejectedErrorAt
             && (! $deviceErrorAt || $rejectedErrorAt->greaterThanOrEqualTo($deviceErrorAt))) {
             $lastError = $rejected->admin_notes;
+            $lastErrorDetail = $rejected->admin_notes_detail;
         }
 
         return [
@@ -389,10 +396,28 @@ class VendorController extends Controller
             'submittedAt' => ($device?->submitted_at ?? $pending?->created_at)?->diffForHumans(),
             'lastAttemptedAt' => $device?->last_attempted_at?->diffForHumans(),
             'registeredAt' => $device?->initialized_at?->diffForHumans(),
-            'lastError' => $awaiting ? null : $lastError,
+            // One reason per line: a rejection usually carries several, and a
+            // single run-on sentence hides all but the first.
+            'lastErrors' => $awaiting ? [] : self::errorLines($lastError),
+            // fiskaly's own wording, for support tickets. Admin surface only.
+            'lastErrorDetail' => $awaiting ? null : $lastErrorDetail,
             // Nothing to retry while an approval is what it is waiting for.
             'canRetry' => $device !== null && $device->needsRegistration() && ! $awaiting,
         ];
+    }
+
+    /**
+     * Splits a stored reason back into the lines it was written as.
+     *
+     * @return list<string>
+     */
+    private static function errorLines(?string $error): array
+    {
+        if (blank($error)) {
+            return [];
+        }
+
+        return array_values(array_filter(array_map('trim', explode("\n", $error))));
     }
 
     public function declineChange(Request $request, int|string $vendor, int $change)

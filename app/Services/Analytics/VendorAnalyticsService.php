@@ -671,7 +671,7 @@ class VendorAnalyticsService
 
         $allItems = MenuItem::where('vendor_id', $vendor->id)
             ->with('category.masterCategory')
-            ->get(['id', 'product_uid', 'name', 'category_id', 'available']);
+            ->get(['id', 'product_uid', 'name', 'menu_category_id', 'available']);
 
         // Real "someone opened this dish" signal, not a proxy — MenuItemView is
         // written by the customer-facing item-detail endpoint on every open.
@@ -1968,7 +1968,13 @@ class VendorAnalyticsService
             ->groupBy('inventory_item_id')
             ->map(fn ($g) => abs((float) $g->sum('quantity_change')));
 
-        $periodDays = max(1, $period->queryStart()->diffInDays($period->queryEnd()));
+        // Carbon 3's diffInDays() returns a float, and a whole-day span lands
+        // just under the round number (a 365-day period reads 364.9999999999884).
+        // Rounding first keeps every consumer on the same integer denominator:
+        // the daily-rate divisions below used the raw float while
+        // inventoryExpiryRiskPlaceholder()'s int parameter silently truncated
+        // it, so one report divided by two different day counts.
+        $periodDays = max(1, (int) round($period->queryStart()->diffInDays($period->queryEnd())));
 
         $usage = $items
             ->map(function ($item) use ($usageByInventoryId, $periodDays) {

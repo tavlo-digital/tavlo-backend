@@ -18,7 +18,7 @@ class ReviewController extends Controller
     {
         $vendor = $this->resolveVendor($vendorId);
 
-        $query = $vendor->reviews()->with(['customer:id,name,email', 'items.menuItem:id,name,image_url']);
+        $query = $vendor->reviews()->with(['customer:id,first_name,last_name,email', 'items.menuItem:id,name,image_url']);
 
         $filter = $request->query('filter', 'all');
         if ($filter === 'pending') {
@@ -34,7 +34,12 @@ class ReviewController extends Controller
                 'reviewPublicId' => $r->review_public_id,
                 'customer' => $r->customer ? [
                     'id' => (string) $r->customer->id,
-                    'name' => $r->customer->name,
+                    // `customers` has no `name` column — same first/last join
+                    // ReservationController and DashboardController use.
+                    'name' => trim(implode(' ', array_filter([
+                        $r->customer->first_name,
+                        $r->customer->last_name,
+                    ]))),
                     'email' => $r->customer->email,
                 ] : null,
                 'rating' => $r->rating,
@@ -100,7 +105,7 @@ class ReviewController extends Controller
 
         $since = now()->subMonths($months);
 
-        $topCustomers = Order::with('customer:id,name,email')
+        $topCustomers = Order::with('customer:id,first_name,last_name,email')
             ->where('vendor_id', $vendor->id)
             ->where('created_at', '>=', $since)
             ->whereIn('status', Order::COMPLETED_STATUSES)
@@ -108,7 +113,10 @@ class ReviewController extends Controller
             ->groupBy('customer_id')
             ->map(fn ($orders) => [
                 'id' => (string) $orders->first()->customer?->id,
-                'name' => $orders->first()->customer?->name,
+                'name' => trim(implode(' ', array_filter([
+                    $orders->first()->customer?->first_name,
+                    $orders->first()->customer?->last_name,
+                ]))),
                 'email' => $orders->first()->customer?->email,
                 'orderCount' => $orders->count(),
                 'totalSpent' => (float) $orders->sum('amount'),

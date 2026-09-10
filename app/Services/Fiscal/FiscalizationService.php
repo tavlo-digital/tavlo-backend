@@ -172,7 +172,7 @@ class FiscalizationService
         } catch (Throwable $exception) {
             $receipt->forceFill([
                 'state' => FiscalReceipt::STATE_FAILED,
-                'last_error' => Str::limit($exception->getMessage(), 1000),
+                'last_error' => Str::limit(self::friendlyError($exception), 1000),
             ])->save();
 
             throw $exception;
@@ -331,8 +331,10 @@ class FiscalizationService
                 ->where('vendor_id', $vendor->id)
                 ->update([
                     'state' => FiscalDevice::STATE_FAILED,
-                    // Store what an admin can act on, not the raw summary.
+                    // Store what an admin can act on, not the raw summary. The
+                    // provider's own wording rides alongside it for support.
                     'last_error' => Str::limit(self::friendlyError($exception), 1000),
+                    'last_error_detail' => self::technicalDetail($exception),
                     'updated_at' => now(),
                 ]);
 
@@ -389,62 +391,32 @@ class FiscalizationService
 
     /**
      * fiskaly's own errors are aimed at integrators. Restaurant owners and the
-     * admins chasing them get something they can act on, with the detail left
-     * in the log.
+     * admins chasing them get sentences they can act on — one per line, since
+     * a rejection usually carries more than one — with the provider's raw
+     * wording left to technicalDetail() and the log.
      */
     public static function friendlyError(Throwable $exception): string
     {
-        $summary = $exception instanceof FiscalizationException
-            ? $exception->summary
-            : $exception->getMessage();
-
-        $detail = $exception instanceof FiscalizationException
-            ? $exception->providerDetail()
-            : null;
-
-        if (str_contains($summary, 'FinanzOnline web-service credentials are required')) {
-            return 'The FinanzOnline details are incomplete — all three values are needed.';
-        }
-
-        if (str_contains($summary, 'no VAT number')) {
-            return 'A VAT number is required to register a cash register in Austria.';
-        }
-
-        if (str_contains($summary, 'credentials are not configured')) {
-            return 'No fiskaly API credentials are configured on this environment.';
-        }
-
-        if (str_contains($summary, 'legal name, address, postal code')) {
-            return 'Legal entity name, legal address, postal code, and city are required to register with fiskaly.';
-        }
-
-        if (str_contains($summary, 'one-time secret is unavailable')) {
-            return $summary;
-        }
-
-        if (str_contains($summary, 'authentication failed')) {
-            return 'Tavlo could not authenticate with fiskaly. Check FISKALY_API_KEY and FISKALY_API_SECRET.'
-                .self::suffix($detail);
-        }
-
-        if (str_contains($summary, 'No fiskaly provider is configured')
-            || str_contains($summary, 'No fiskaly base URL')) {
-            return 'Tavlo does not support cash register registration in this country yet.';
-        }
-
-        if (str_contains($summary, 'rejected the request')) {
-            // Whatever the provider said is the only thing that tells an admin
-            // which field to send the restaurant back to.
-            return 'fiskaly rejected the registration.'.self::suffix($detail)
-                .($detail ? '' : ' Check the VAT number and the FinanzOnline details, then retry.');
-        }
-
-        return 'The cash register could not be registered.'.self::suffix($detail);
+        return FiskalyErrorTranslator::text($exception);
     }
 
-    private static function suffix(?string $detail): string
+    /**
+     * The same reasons as separate lines, for callers that render a list.
+     *
+     * @return list<string>
+     */
+    public static function friendlyErrorLines(Throwable $exception): array
     {
-        return $detail ? ' '.Str::limit($detail, 300) : '';
+        return FiskalyErrorTranslator::lines($exception);
+    }
+
+    /**
+     * fiskaly's own words. For the admin surface and support tickets only —
+     * this is the jargon the vendor must never be shown.
+     */
+    public static function technicalDetail(Throwable $exception): ?string
+    {
+        return FiskalyErrorTranslator::technical($exception);
     }
 
     private function deviceFor(FiscalReceipt $receipt): FiscalDevice

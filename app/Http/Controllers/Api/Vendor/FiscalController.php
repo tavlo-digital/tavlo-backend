@@ -63,6 +63,12 @@ class FiscalController extends Controller
             'lastError' => $device?->state === FiscalDevice::STATE_FAILED
                 ? $device->last_error
                 : null,
+            // The same reasons split into lines, so the vendor sees each thing
+            // to fix on its own row rather than one run-on paragraph. Never the
+            // provider's raw wording — last_error_detail stays admin-only.
+            'lastErrors' => $device?->state === FiscalDevice::STATE_FAILED
+                ? self::errorLines($device->last_error)
+                : [],
             'environment' => (string) config('services.fiskaly.environment', 'sandbox'),
             'legalInfoSubmitted' => $legalSubmitted,
             'vatNumber' => $this->resolveVatNumber($vendor),
@@ -71,6 +77,20 @@ class FiscalController extends Controller
             'activationComplete' => $legalSubmitted && (! $required || $submitted),
             'needsMerchantAction' => $needsCredentials && ! $submitted,
         ]);
+    }
+
+    /**
+     * Splits a stored reason back into the lines it was written as.
+     *
+     * @return list<string>
+     */
+    private static function errorLines(?string $error): array
+    {
+        if (blank($error)) {
+            return [];
+        }
+
+        return array_values(array_filter(array_map('trim', explode("\n", $error))));
     }
 
     /**

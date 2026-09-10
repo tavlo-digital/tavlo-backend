@@ -189,7 +189,13 @@ final class AnalyticsPeriod
             $end = $start->addDays(self::MAX_CUSTOM_DAYS)->endOfDay();
         }
 
-        $days = $start->diffInDays($end) + 1;
+        // $end is an endOfDay, so Carbon 3's float diffInDays() reports an
+        // N-day inclusive span as (N-1).9999…; the "+ 1" below assumes the
+        // whole-number (N-1) Carbon 2 returned. Without the cast a 31-day
+        // range measures 31.9999 and falls through the `<= 31` arm into
+        // weekly buckets, so the chart silently loses daily granularity at
+        // the boundary (same story at the 182-day `week`/`month` arm).
+        $days = (int) $start->diffInDays($end) + 1;
         $unit = match (true) {
             $days <= 31 => 'day',
             $days <= 182 => 'week',

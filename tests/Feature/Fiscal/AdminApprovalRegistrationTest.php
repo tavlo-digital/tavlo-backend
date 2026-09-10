@@ -159,7 +159,7 @@ class AdminApprovalRegistrationTest extends TestCase
         $card = $this->cashRegisterCard();
         $this->assertSame(FiscalDevice::STATE_FAILED, $card['state']);
         $this->assertTrue($card['canRetry']);
-        $this->assertNotNull($card['lastError']);
+        $this->assertNotEmpty($card['lastErrors']);
     }
 
     public function test_the_admin_card_shows_the_latest_rejection_instead_of_a_stale_device_error(): void
@@ -173,14 +173,20 @@ class AdminApprovalRegistrationTest extends TestCase
         $change = $this->pendingChange();
         $change->forceFill([
             'status' => 'rejected',
-            'admin_notes' => 'fiskaly rejected the registration. E_SCU_LIMIT_REACHED.',
+            'admin_notes' => "The fiskaly account has no free signature units left.\nA Tavlo admin needs to raise the plan limit.",
+            'admin_notes_detail' => 'E_SCU_LIMIT_REACHED · HTTP 400',
             'reviewed_at' => now(),
         ])->save();
 
         $card = $this->cashRegisterCard();
 
-        $this->assertStringContainsString('E_SCU_LIMIT_REACHED', $card['lastError']);
-        $this->assertStringNotContainsString('Old VAT validation error', $card['lastError']);
+        // One reason per line, so the card can list them.
+        $this->assertSame([
+            'The fiskaly account has no free signature units left.',
+            'A Tavlo admin needs to raise the plan limit.',
+        ], $card['lastErrors']);
+        $this->assertStringContainsString('E_SCU_LIMIT_REACHED', $card['lastErrorDetail']);
+        $this->assertNotContains('Old VAT validation error', $card['lastErrors']);
     }
 
     public function test_a_corrected_resubmission_hides_the_previous_device_failure(): void
@@ -191,7 +197,8 @@ class AdminApprovalRegistrationTest extends TestCase
         $card = $this->cashRegisterCard();
 
         $this->assertSame(FiscalDevice::STATE_AWAITING_APPROVAL, $card['state']);
-        $this->assertNull($card['lastError']);
+        $this->assertSame([], $card['lastErrors']);
+        $this->assertNull($card['lastErrorDetail']);
         $this->assertFalse($card['canRetry']);
     }
 
@@ -307,7 +314,13 @@ class AdminApprovalRegistrationTest extends TestCase
         // the details behind it are wrong.
         $change->refresh();
         $this->assertSame('rejected', $change->status);
-        $this->assertStringContainsString('shorter than 8 characters', (string) $change->admin_notes);
+
+        // What the restaurant reads: the field, in words, with the rule spelled
+        // out — not "body.fon_participant_id should NOT be shorter than 8".
+        $this->assertStringContainsString('Teilnehmer-Identifikation', (string) $change->admin_notes);
+        $this->assertStringContainsString('at least 8 characters', (string) $change->admin_notes);
+        $this->assertStringNotContainsString('body.', (string) $change->admin_notes);
+        $this->assertStringNotContainsString('E_FAILED_SCHEMA_VALIDATION', (string) $change->admin_notes);
 
         // The vendor record is untouched, so it cannot go live. The prepared
         // ids remain locally so a correction resumes the same remote resources.
@@ -401,13 +414,21 @@ class AdminApprovalRegistrationTest extends TestCase
 
         $this->approve($change);
 
-        // "fiskaly rejected the request" on its own tells nobody anything. The
-        // provider's own words have to reach the restaurant, which reads them
-        // as the reason its submission came back.
-        $reason = (string) $change->fresh()->admin_notes;
+        // The restaurant reads the reason, so it has to name the field it can
+        // actually retype — no error codes, no JSON paths.
+        $change = $change->fresh();
+        $reason = (string) $change->admin_notes;
 
-        $this->assertStringContainsString('E_FAILED_SCHEMA_VALIDATION', $reason);
-        $this->assertStringContainsString('longer than 12 characters', $reason);
+        $this->assertStringContainsString('Teilnehmer-Identifikation', $reason);
+        $this->assertStringContainsString('at most 12 characters', $reason);
+        $this->assertStringNotContainsString('E_FAILED_SCHEMA_VALIDATION', $reason);
+
+        // fiskaly's own wording still has to survive somewhere: it is what an
+        // admin quotes when raising a ticket with them.
+        $detail = (string) $change->admin_notes_detail;
+
+        $this->assertStringContainsString('E_FAILED_SCHEMA_VALIDATION', $detail);
+        $this->assertStringContainsString('body.fon_participant_id', $detail);
     }
 
     public function test_a_configuration_failure_names_the_missing_credentials(): void
@@ -419,7 +440,7 @@ class AdminApprovalRegistrationTest extends TestCase
         // Our missing credentials are not the restaurant's fault, so the
         // submission is held rather than sent back.
         $this->approve($change)
-            ->assertSessionHas('warning', fn (string $message) => str_contains($message, 'credentials are configured'));
+            ->assertSessionHas('warning', fn (string $message) => str_contains($message, 'no fiskaly API credentials'));
 
         $this->assertSame('pending', $change->fresh()->status);
     }

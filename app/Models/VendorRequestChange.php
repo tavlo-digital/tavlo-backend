@@ -22,6 +22,7 @@ class VendorRequestChange extends Model
         'fon_user_id',
         'fon_user_pin',
         'admin_notes',
+        'admin_notes_detail',
         'vendor_notes',
         'status',
         'checked_by',

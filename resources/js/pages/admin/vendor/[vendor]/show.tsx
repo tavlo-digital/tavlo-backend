@@ -82,7 +82,10 @@ type CashRegisterData = {
     submittedAt: string | null;
     lastAttemptedAt: string | null;
     registeredAt: string | null;
-    lastError: string | null;
+    /** One plain-English reason per line. */
+    lastErrors: string[];
+    /** fiskaly's own wording. Admin-only — never shown to the vendor. */
+    lastErrorDetail: string | null;
     canRetry: boolean;
 };
 
@@ -125,11 +128,52 @@ type PageProps = {
     paymentFailures24h?: number;
     subscriptionDetails?: SubscriptionDetailsData;
     activities?: ActivityData[];
+    /** Set by a redirect back after approve / decline / retry. */
+    success?: string | null;
+    warning?: string | null;
     [key: string]: unknown;
 };
 
+/**
+ * Flash messages carry one reason per line — a fiskaly rejection usually has
+ * several, and a run-on sentence hides all but the first.
+ */
+function FlashBanner({ tone, message }: { tone: 'success' | 'warning'; message: string }) {
+    const lines = message
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean);
+
+    if (lines.length === 0) return null;
+
+    const [headline, ...rest] = lines;
+
+    return (
+        <div
+            className={`mx-6 mt-4 rounded-lg border px-4 py-3 text-sm ${
+                tone === 'success'
+                    ? 'border-green-200 bg-green-50 text-green-800'
+                    : 'border-amber-200 bg-amber-50 text-amber-900'
+            }`}
+            role="status"
+        >
+            <p className="font-medium">{headline}</p>
+            {rest.length > 0 && (
+                <ul className="mt-1.5 space-y-1">
+                    {rest.map((line, i) => (
+                        <li key={i} className="flex gap-2">
+                            <span aria-hidden="true" className="select-none">&bull;</span>
+                            <span>{line}</span>
+                        </li>
+                    ))}
+                </ul>
+            )}
+        </div>
+    );
+}
+
 export default function VendorOverview() {
-    const { vendor: vendorSlug, tab, vendorData } = usePage<PageProps>().props;
+    const { vendor: vendorSlug, tab, vendorData, success, warning } = usePage<PageProps>().props;
     const activeTab = tab && tabs.some((t) => t.slug === tab) ? tab : 'overview';
 
     const vendor = vendorData;
@@ -157,6 +201,9 @@ export default function VendorOverview() {
                         </div>
                     </div>
                 </div>
+
+                {success && <FlashBanner tone="success" message={success} />}
+                {warning && <FlashBanner tone="warning" message={warning} />}
 
                 {/* Tabs */}
                 <div className="border-b border-gray-200 bg-white px-6">
@@ -459,9 +506,39 @@ function CashRegisterCard({ vendorSlug }: { vendorSlug: string }) {
                     </div>
                 </dl>
 
-                {cashRegister.lastError && (
-                    <div className="mt-4 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
-                        <span className="font-medium">Last error:</span> {cashRegister.lastError}
+                {cashRegister.lastErrors.length > 0 && (
+                    <div className="mt-4 rounded border border-red-200 bg-red-50 px-3 py-3 text-sm text-red-800">
+                        <p className="font-medium">
+                            {cashRegister.lastErrors.length === 1
+                                ? 'What went wrong'
+                                : `What went wrong (${cashRegister.lastErrors.length} issues)`}
+                        </p>
+
+                        {/* One issue per line: a rejection usually carries
+                            several, and a run-on sentence hides all but the
+                            first. */}
+                        <ul className="mt-1.5 space-y-1">
+                            {cashRegister.lastErrors.map((reason, i) => (
+                                <li key={i} className="flex gap-2">
+                                    <span aria-hidden="true" className="select-none">&bull;</span>
+                                    <span>{reason}</span>
+                                </li>
+                            ))}
+                        </ul>
+
+                        {/* fiskaly's own words, folded away. Needed when
+                            raising a ticket with them, useless to everyone
+                            else. */}
+                        {cashRegister.lastErrorDetail && (
+                            <details className="mt-2.5">
+                                <summary className="cursor-pointer text-xs text-red-700 underline underline-offset-2">
+                                    Technical detail from fiskaly
+                                </summary>
+                                <p className="mt-1.5 rounded bg-red-100/60 px-2 py-1.5 font-mono text-xs break-words text-red-900">
+                                    {cashRegister.lastErrorDetail}
+                                </p>
+                            </details>
+                        )}
                     </div>
                 )}
 

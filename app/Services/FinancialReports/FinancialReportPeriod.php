@@ -190,7 +190,11 @@ final class FinancialReportPeriod
     /** Bucket granularity for the trend chart + period breakdown table. */
     public function bucketUnit(): string
     {
-        $days = $this->start->diffInDays($this->end) + 1;
+        // Cast before the "+ 1": $end is an endOfDay, so Carbon 3's float
+        // diffInDays() reports an N-day inclusive span as (N-1).9999… and an
+        // exactly-62-day range measures 62.9999, dropping out of the `<= 62`
+        // day arm into weekly buckets (same at the 370-day arm).
+        $days = (int) $this->start->diffInDays($this->end) + 1;
 
         return match (true) {
             $days <= 62 => 'day',

@@ -50,6 +50,11 @@ class HandleInertiaRequests extends Middleware
             ],
             'sidebarOpen' => ! $request->hasCookie('sidebar_state') || $request->cookie('sidebar_state') === 'true',
             'flash' => $request->session()->get('flash'),
+            // Controllers redirect back with these two after an action. They
+            // were never shared, so a failed approval or retry told the admin
+            // nothing at all. Multi-line: one reason per line.
+            'success' => $request->session()->get('success'),
+            'warning' => $request->session()->get('warning'),
         ];
     }
 }

@@ -123,7 +123,7 @@ class CountryCoverageTest extends TestCase
             ->assertRedirect()
             ->assertSessionHas(
                 'warning',
-                fn (string $message) => str_contains($message, 'does not support cash register registration'),
+                fn (string $message) => str_contains($message, 'does not support registering a cash register'),
             );
 
         // A misconfiguration is ours, not the restaurant's: the submission is

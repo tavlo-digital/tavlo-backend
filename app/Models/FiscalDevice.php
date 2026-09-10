@@ -38,6 +38,7 @@ class FiscalDevice extends Model
         'submitted_at',
         'last_attempted_at',
         'last_error',
+        'last_error_detail',
         'credentials',
         'registered_at',
         'initialized_at',
