@@ -346,4 +346,60 @@ class CustomerProfileTest extends TestCase
         $response->assertUnprocessable()
             ->assertJsonValidationErrors(['current_password']);
     }
+
+    public function test_change_password_revokes_other_devices_but_keeps_the_current_one(): void
+    {
+        $otherDevice = $this->customer->createToken('other-device', ['role:customer'])->plainTextToken;
+
+        $this->postJson('/api/customer/profile/password', [
+            'current_password' => 'password',
+            'password' => 'newpassword123',
+            'password_confirmation' => 'newpassword123',
+        ], $this->headers)->assertOk();
+
+        $this->assertEquals(1, $this->customer->tokens()->count());
+
+        // The device that changed the password carries on.
+        $this->forgetGuards();
+        $this->getJson('/api/customer/me', $this->headers)->assertOk();
+
+        // The other one is locked out from the next request on. Guards are
+        // dropped first: the manager keeps the user it already resolved, so
+        // without this the revoked token would be waved through on the
+        // previous request's answer.
+        $this->forgetGuards();
+        $this->getJson('/api/customer/me', [
+            'Authorization' => "Bearer {$otherDevice}",
+            'Accept' => 'application/json',
+        ])->assertUnauthorized();
+    }
+
+    public function test_failed_password_change_leaves_other_devices_signed_in(): void
+    {
+        $otherDevice = $this->customer->createToken('other-device', ['role:customer'])->plainTextToken;
+
+        $this->postJson('/api/customer/profile/password', [
+            'current_password' => 'wrong-password',
+            'password' => 'newpassword123',
+            'password_confirmation' => 'newpassword123',
+        ], $this->headers)->assertUnprocessable();
+
+        $this->forgetGuards();
+        $this->getJson('/api/customer/me', [
+            'Authorization' => "Bearer {$otherDevice}",
+            'Accept' => 'application/json',
+        ])->assertOk();
+    }
+
+    /**
+     * Drop resolved guards so the next request authenticates its own token.
+     *
+     * The auth manager lives for the whole test, not one request, and holds on
+     * to the user it resolved first — which quietly makes a second request
+     * pass on the first one's credentials.
+     */
+    private function forgetGuards(): void
+    {
+        $this->app->make('auth')->forgetGuards();
+    }
 }

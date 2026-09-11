@@ -188,6 +188,16 @@ class ProfileController extends Controller
 
         $customer->update(['password' => $request->password]);
 
+        // Changing a password is how someone locks out a device they no longer
+        // control, so every other token has to die with the old password — the
+        // caller's own stays alive, otherwise the act of securing the account
+        // would sign you out of the screen you are standing on.
+        $currentTokenId = $customer->currentAccessToken()?->getKey();
+
+        $customer->tokens()
+            ->when($currentTokenId, fn ($query) => $query->whereKeyNot($currentTokenId))
+            ->delete();
+
         return response()->json(['message' => 'Password changed successfully.']);
     }
 }

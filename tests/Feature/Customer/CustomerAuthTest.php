@@ -404,6 +404,36 @@ class CustomerAuthTest extends TestCase
             ->assertJsonStructure(['user', 'token']);
     }
 
+    public function test_social_login_leaves_other_devices_signed_in(): void
+    {
+        $customer = Customer::factory()->social('google')->create([
+            'social_provider_id' => 'google-id-login',
+        ]);
+
+        $existingDevice = $customer->createToken('phone', ['role:customer'])->plainTextToken;
+
+        $this->mockSocialAuth('google', 'valid-token', [
+            'provider_id' => 'google-id-login',
+            'email' => 'test@example.com',
+            'first_name' => 'Test',
+            'last_name' => 'User',
+        ]);
+
+        $this->postJson('/api/customer/social/login', [
+            'provider' => 'google',
+            'access_token' => 'valid-token',
+        ])->assertOk();
+
+        // Signing in on a laptop used to delete every token the account had,
+        // so the phone was silently logged out by someone else's sign-in.
+        $this->getJson('/api/customer/me', [
+            'Authorization' => "Bearer {$existingDevice}",
+            'Accept' => 'application/json',
+        ])->assertOk();
+
+        $this->assertEquals(2, $customer->tokens()->count());
+    }
+
     public function test_social_login_fails_for_unknown_provider_id(): void
     {
         $this->mockSocialAuth('google', 'valid-token', [

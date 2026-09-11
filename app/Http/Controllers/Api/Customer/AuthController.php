@@ -291,7 +291,6 @@ class AuthController extends Controller
             }
         }
 
-        $customer->tokens()->delete();
         $token = $customer->createToken('customer-token', ['role:customer'])->plainTextToken;
 
         return response()->json([
@@ -398,7 +397,6 @@ class AuthController extends Controller
 
         $customer->update(['last_active_at' => now()]);
 
-        $customer->tokens()->delete();
         $token = $customer->createToken('customer-token', ['role:customer'])->plainTextToken;
 
         return response()->json([

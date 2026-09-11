@@ -106,6 +106,14 @@ class AuthController extends Controller
 
         $user->update(['password' => $validated['password']]);
 
+        // Same rule as the customer side: the old password stops opening doors
+        // everywhere except the device that just changed it.
+        $currentTokenId = $user->currentAccessToken()?->getKey();
+
+        $user->tokens()
+            ->when($currentTokenId, fn ($query) => $query->whereKeyNot($currentTokenId))
+            ->delete();
+
         return response()->json(['message' => 'Password changed successfully.']);
     }
 

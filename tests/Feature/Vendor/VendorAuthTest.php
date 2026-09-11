@@ -140,4 +140,34 @@ class VendorAuthTest extends TestCase
 
         $this->assertTrue(Hash::check('old-password', $vendor->fresh()->password));
     }
+
+    public function test_change_password_revokes_other_devices_but_keeps_the_current_one(): void
+    {
+        $vendor = Vendor::factory()->create(['password' => 'old-password']);
+        $otherDevice = $vendor->createToken('tablet')->plainTextToken;
+        $token = $vendor->createToken('test')->plainTextToken;
+
+        $this->postJson('/api/vendor/profile/password', [
+            'current_password' => 'old-password',
+            'password' => 'new-password',
+            'password_confirmation' => 'new-password',
+        ], ['Authorization' => "Bearer {$token}"])->assertOk();
+
+        $this->assertEquals(1, $vendor->tokens()->count());
+
+        // Guards are dropped between requests because the auth manager caches
+        // the user it resolved first, which would let the revoked token ride
+        // in on the previous request's answer.
+        $this->app->make('auth')->forgetGuards();
+        $this->getJson('/api/vendor/me', [
+            'Authorization' => "Bearer {$token}",
+            'Accept' => 'application/json',
+        ])->assertOk();
+
+        $this->app->make('auth')->forgetGuards();
+        $this->getJson('/api/vendor/me', [
+            'Authorization' => "Bearer {$otherDevice}",
+            'Accept' => 'application/json',
+        ])->assertUnauthorized();
+    }
 }
