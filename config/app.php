@@ -54,7 +54,8 @@ return [
 
     'url' => env('APP_URL', 'http://localhost'),
 
-    'vendor_frontend_url' => env('VENDOR_FRONTEND_URL', 'http://localhost:3000'),
+    // 3001 is the vendor app; 3000 is the customer app (see start-tavlo.sh).
+    'vendor_frontend_url' => env('VENDOR_FRONTEND_URL', 'http://localhost:3001'),
 
     /*
     |--------------------------------------------------------------------------
